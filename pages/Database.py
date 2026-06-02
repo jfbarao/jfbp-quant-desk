@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pandas as pd
 import streamlit as st
 
@@ -1128,10 +1130,56 @@ def run_page():
 
     if broker_snapshot_timestamp:
 
+        snapshot_age_seconds = None
+
+        try:
+
+            snapshot_dt = datetime.fromisoformat(
+                str(broker_snapshot_timestamp)
+                .replace("Z", "+00:00")
+            )
+
+            now_dt = datetime.now(timezone.utc)
+
+            snapshot_age_seconds = (
+                now_dt - snapshot_dt
+            ).total_seconds()
+
+        except Exception:
+
+            snapshot_age_seconds = None
+
         st.caption(
             f"Broker snapshot timestamp: "
             f"{broker_snapshot_timestamp}"
         )
+
+        if snapshot_age_seconds is not None:
+
+            snapshot_age_minutes = round(
+                snapshot_age_seconds / 60,
+                2,
+            )
+
+            st.session_state[
+                "broker_snapshot_age_minutes"
+            ] = snapshot_age_minutes
+
+            if snapshot_age_seconds > 3600:
+
+                st.warning(
+                    "⚠️ Broker snapshot is stale "
+                    f"({snapshot_age_minutes} minutes old). "
+                    "Pull a fresh broker snapshot before "
+                    "applying repair operations."
+                )
+
+            else:
+
+                st.success(
+                    "✅ Broker snapshot freshness OK "
+                    f"({snapshot_age_minutes} minutes old)"
+                )
 
     if broker_snapshot_errors:
 
