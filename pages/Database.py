@@ -1006,6 +1006,23 @@ def run_page():
         and not qty_mismatches
     )
 
+    broker_drift_count = (
+        len(missing_in_broker)
+        + len(unexpected_in_broker)
+        + len(qty_mismatches)
+    )
+
+    st.session_state["broker_auto_drift_report"] = {
+        "snapshot_available": broker_snapshot_available,
+        "broker_match": broker_match,
+        "drift_count": broker_drift_count,
+        "missing_in_broker": list(missing_in_broker),
+        "unexpected_in_broker": list(unexpected_in_broker),
+        "qty_mismatches": list(qty_mismatches),
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "truth_source": "database_auto_warning_only",
+    }
+
     b1, b2, b3, b4 = st.columns(4)
 
     b1.metric(
@@ -1026,6 +1043,11 @@ def run_page():
     b4.metric(
         "Broker Match",
         "MATCH" if broker_match else "CHECK",
+        delta=(
+            None
+            if broker_match or not broker_snapshot_available
+            else f"{broker_drift_count} drift"
+        ),
     )
 
     if not broker_snapshot_available:
@@ -1044,9 +1066,16 @@ def run_page():
 
     else:
 
-        st.warning(
-            "⚠️ Broker reconciliation requires review. "
-            "This does not mutate runtime automatically."
+        st.error(
+            "🚨 Automatic broker drift warning: broker snapshot does not match "
+            "portfolio runtime. No automatic repair was applied."
+        )
+
+        st.caption(
+            f"Drift count: {broker_drift_count} | "
+            f"Missing in broker: {len(missing_in_broker)} | "
+            f"Unexpected in broker: {len(unexpected_in_broker)} | "
+            f"Quantity mismatches: {len(qty_mismatches)}"
         )
 
         drift_rows = []
