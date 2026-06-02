@@ -517,8 +517,7 @@ def refresh_positions(self) -> Dict[str, float]:
                 for pos in ib_positions
             ]
 
-            print("IB_POSITIONS_COUNT:", self.last_positions_raw_count)
-            print("IB_POSITIONS_RAW:", self.last_positions_raw_debug)
+
 
         except Exception as exc:
             self.last_error = f"IB position debug trace failed: {exc}"
