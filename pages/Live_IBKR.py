@@ -677,12 +677,121 @@ def page():
             errors.append(f"account_summary: {exc}")
 
         # ---------------------------------------------
+        # EXECUTIONS / FILLS
+        # ---------------------------------------------
+
+        broker_fills = []
+
+        try:
+
+            raw_fills = []
+
+            if (
+                hasattr(gateway, "ib")
+                and gateway.ib is not None
+            ):
+
+                try:
+
+                    raw_fills = _as_list(
+                        gateway.ib.fills()
+                    )
+
+                except Exception as fills_exc:
+
+                    errors.append(
+                        f"ib.fills(): {fills_exc}"
+                    )
+
+            normalized_fills = []
+
+            for fill in raw_fills:
+
+                try:
+
+                    execution = getattr(
+                        fill,
+                        "execution",
+                        None,
+                    )
+
+                    contract = getattr(
+                        fill,
+                        "contract",
+                        None,
+                    )
+
+                    if execution is None:
+                        continue
+
+                    symbol = getattr(
+                        contract,
+                        "symbol",
+                        "",
+                    )
+
+                    side = getattr(
+                        execution,
+                        "side",
+                        "",
+                    )
+
+                    shares = getattr(
+                        execution,
+                        "shares",
+                        0,
+                    )
+
+                    price = getattr(
+                        execution,
+                        "price",
+                        0,
+                    )
+
+                    exec_id = getattr(
+                        execution,
+                        "execId",
+                        "",
+                    )
+
+                    timestamp = getattr(
+                        execution,
+                        "time",
+                        "",
+                    )
+
+                    normalized_fills.append(
+                        {
+                            "exec_id": str(exec_id),
+                            "symbol": str(symbol).upper().strip(),
+                            "action": str(side).upper().strip(),
+                            "qty": float(shares),
+                            "price": float(price),
+                            "timestamp": str(timestamp),
+                            "source": "ibkr_live_execution_snapshot",
+                        }
+                    )
+
+                except Exception as fill_exc:
+
+                    errors.append(
+                        f"normalize_fill: {fill_exc}"
+                    )
+
+            broker_fills = normalized_fills
+
+        except Exception as exc:
+
+            errors.append(f"broker_fills: {exc}")            
+
+        # ---------------------------------------------
         # STORE SNAPSHOTS
         # ---------------------------------------------
 
         st.session_state["broker_snapshot_positions"] = broker_positions
         st.session_state["broker_snapshot_open_orders"] = broker_open_orders
         st.session_state["broker_snapshot_account_summary"] = broker_account_summary
+        st.session_state["broker_snapshot_fills"] = broker_fills
         st.session_state["broker_snapshot_timestamp"] = now()
         st.session_state["broker_snapshot_errors"] = errors
 
@@ -720,6 +829,11 @@ def page():
         [],
     )
 
+    broker_snapshot_fills = st.session_state.get(
+        "broker_snapshot_fills",
+        [],
+    )
+
     broker_snapshot_timestamp = st.session_state.get(
         "broker_snapshot_timestamp",
         "",
@@ -730,7 +844,7 @@ def page():
         [],
     )
 
-    snap1, snap2, snap3, snap4 = st.columns(4)
+    snap1, snap2, snap3, snap4, snap5 = st.columns(5)
 
     snap1.metric(
         "Broker Positions",
@@ -748,6 +862,11 @@ def page():
     )
 
     snap4.metric(
+        "Broker Fills",
+        _safe_len(broker_snapshot_fills),
+    )
+
+    snap5.metric(
         "Snapshot Cached",
         "YES" if broker_snapshot_timestamp else "NO",
     )
