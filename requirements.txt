@@ -1,0 +1,10 @@
+streamlit==1.50.0
+numpy==1.26.4
+pandas>=2.0
+pyarrow
+requests
+pillow
+tornado
+pydeck
+protobuf
+torch==2.2.2
