@@ -20,6 +20,11 @@ try:
 except Exception:
     JFBP_UNIVERSE = {}
 
+try:
+    from universe.ost_universe import OST_UNIVERSE
+except Exception:
+    OST_UNIVERSE = {}
+
 
 # =========================================================
 # PAGE ALIAS
@@ -68,12 +73,65 @@ def run_page():
     st.title("📡 Scanner")
     st.subheader("Research-Model Scanner Execution — Batch Rotation Mode")
 
-    st.session_state.setdefault("scanner_last_raw_signals", [])
-    st.session_state.setdefault("scanner_last_risk_plan", [])
-    st.session_state.setdefault("scanner_last_hold_rows", [])
-    st.session_state.setdefault("scanner_last_execution_results", [])
-    st.session_state.setdefault("scanner_last_status", "READY")
-    st.session_state.setdefault("scanner_last_error", "")
+    # =====================================================
+    # UNIVERSE SELECTION
+    # =====================================================
+
+    universe_options = [
+        "JFBP",
+        "OST",
+        "FALLBACK",
+    ]
+
+    current_universe_mode = st.session_state.get(
+        "scanner_universe_mode",
+        "JFBP",
+    )
+
+    if current_universe_mode not in universe_options:
+        current_universe_mode = "JFBP"
+
+    u1, u2 = st.columns([1, 3])
+
+    with u1:
+        universe_mode = st.selectbox(
+            "Universe",
+            universe_options,
+            index=universe_options.index(current_universe_mode),
+            key="scanner_universe_mode_selector",
+        )
+
+    st.session_state["scanner_universe_mode"] = universe_mode
+
+    if universe_mode == "OST":
+
+        active_universe = (
+            OST_UNIVERSE
+            if isinstance(OST_UNIVERSE, dict)
+            and OST_UNIVERSE
+            else fallback_universe()
+        )
+
+    elif universe_mode == "FALLBACK":
+
+        active_universe = fallback_universe()
+
+    else:
+
+        active_universe = (
+            JFBP_UNIVERSE
+            if isinstance(JFBP_UNIVERSE, dict)
+            and JFBP_UNIVERSE
+            else fallback_universe()
+        )
+
+    st.session_state["universe"] = active_universe
+
+    with u2:
+        st.caption(
+            f"Active universe: {universe_mode} "
+            f"({len(active_universe)} symbols)"
+        )
 
     # =====================================================
     # LOCAL HELPERS
@@ -531,18 +589,43 @@ def run_page():
     def generate_signals() -> List[Dict[str, Any]]:
         clear_scanner_warning()
 
-        universe = JFBP_UNIVERSE if isinstance(JFBP_UNIVERSE, dict) and JFBP_UNIVERSE else None
+        universe_mode = st.session_state.get(
+            "scanner_universe_mode",
+            "JFBP",
+        )
 
-        if not universe:
-            universe = st.session_state.get("universe")
+        universe = st.session_state.get("universe")
 
         if not isinstance(universe, dict) or not universe:
-            universe = fallback_universe()
+
+            if universe_mode == "OST":
+
+                universe = (
+                    OST_UNIVERSE
+                    if isinstance(OST_UNIVERSE, dict)
+                    and OST_UNIVERSE
+                    else fallback_universe()
+                )
+
+            elif universe_mode == "FALLBACK":
+
+                universe = fallback_universe()
+
+            else:
+
+                universe = (
+                    JFBP_UNIVERSE
+                    if isinstance(JFBP_UNIVERSE, dict)
+                    and JFBP_UNIVERSE
+                    else fallback_universe()
+                )
+
             st.session_state["universe"] = universe
 
         rows = []
 
         for symbol, meta in universe.items():
+
             symbol = str(symbol).upper().strip()
 
             if not symbol:
@@ -556,7 +639,9 @@ def run_page():
             rows.append(row)
 
         st.session_state["scanner_last_raw_signals"] = rows
-        st.session_state["scanner_last_status"] = f"GENERATED_{len(rows)}_RESEARCH_MODEL_SIGNALS"
+        st.session_state["scanner_last_status"] = (
+            f"GENERATED_{len(rows)}_RESEARCH_MODEL_SIGNALS"
+        )
 
         return rows
 
@@ -656,6 +741,7 @@ def run_page():
                 if isinstance(check_result, tuple):
                     approved = bool(check_result[0])
                     reason = check_result[1] if len(check_result) > 1 else ""
+
                 elif isinstance(check_result, dict):
                     approved = bool(
                         check_result.get("approved")
@@ -666,6 +752,7 @@ def run_page():
                         or check_result.get("risk_reason")
                         or ""
                     )
+
                 else:
                     approved = bool(check_result)
                     reason = "APPROVED" if approved else "BLOCKED"
@@ -675,6 +762,7 @@ def run_page():
             reason = str(exc)
 
         risk_snapshot = safe_snapshot(risk_engine)
+
         last_check = (
             risk_snapshot.get("last_check", {})
             if isinstance(risk_snapshot, dict)
@@ -682,7 +770,11 @@ def run_page():
         )
 
         execution_action = normalize_action(signal.get("execution_action"))
-        executable = bool(approved) and execution_action in ("BUY", "SELL")
+
+        executable = (
+            bool(approved)
+            and execution_action in ("BUY", "SELL")
+        )
 
         return {
             **signal,
@@ -706,7 +798,10 @@ def run_page():
 
         sync_risk()
 
-        normalized = [normalize_signal(signal) for signal in signals]
+        normalized = [
+            normalize_signal(signal)
+            for signal in signals
+        ]
 
         executable_signals = [
             signal
@@ -721,6 +816,7 @@ def run_page():
         ]
 
         if st.session_state.get("risk_kill_switch", False):
+
             plan = [
                 {
                     **signal,
@@ -753,6 +849,7 @@ def run_page():
             and hasattr(risk_engine, "check_batch")
             and executable_signals
         ):
+
             try:
                 raw_batch_rows = risk_engine.check_batch(executable_signals)
                 batch_rows = coerce_batch_rows(raw_batch_rows)
@@ -809,6 +906,7 @@ def run_page():
                 ]
 
         else:
+
             plan = [
                 check_single_signal(signal)
                 for signal in executable_signals
@@ -821,77 +919,6 @@ def run_page():
         )
 
         return plan
-
-    def normalize_execution_result(
-        raw: Any,
-        signal: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        signal = signal if isinstance(signal, dict) else {}
-
-        base = {
-            "timestamp": now(),
-            "symbol": signal.get("symbol"),
-            "scanner_action": signal.get("scanner_action"),
-            "risk_action": signal.get("risk_action"),
-            "execution_action": signal.get("execution_action"),
-            "action": signal.get("execution_action"),
-            "qty": signal.get("qty"),
-            "price": signal.get("price"),
-            "fill_price": None,
-            "status": "UNKNOWN",
-            "reason": "",
-            "risk_approved": signal.get("risk_approved"),
-            "position_action": signal.get("position_action"),
-            "position_before": signal.get("position_before"),
-            "position_after_expected": signal.get("position_after"),
-            "lifecycle_stage": None,
-            "realized_delta": None,
-            "order_id": None,
-            "fill_id": None,
-            "source": signal.get("source"),
-        }
-
-        if raw is None:
-            base["status"] = "NO_RESULT"
-            base["reason"] = "pipeline returned None"
-            return base
-
-        if not isinstance(raw, dict):
-            base["status"] = "NON_DICT_RESULT"
-            base["reason"] = str(raw)
-            return base
-
-        status = (
-            raw.get("execution_status")
-            or raw.get("status")
-            or "UNKNOWN"
-        )
-
-        base.update({
-            "timestamp": raw.get("timestamp", base["timestamp"]),
-            "status": status,
-            "reason": raw.get("reason", ""),
-            "fill_price": raw.get("fill_price") or raw.get("avg_fill_price"),
-            "lifecycle_stage": raw.get("lifecycle_stage"),
-            "realized_delta": raw.get("realized_delta"),
-            "order_id": raw.get("order_id"),
-            "fill_id": raw.get("fill_id"),
-        })
-
-        if raw.get("symbol"):
-            base["symbol"] = raw["symbol"]
-
-        if raw.get("action"):
-            base["execution_action"] = normalize_action(raw["action"])
-            base["action"] = base["execution_action"]
-
-        if raw.get("qty") is not None:
-            base["qty"] = raw["qty"]
-
-        if raw.get("price") is not None:
-            base["price"] = raw["price"]
-
-        return base
 
     # =====================================================
     # EXECUTION ENGINE
