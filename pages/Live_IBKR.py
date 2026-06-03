@@ -691,16 +691,10 @@ def page():
                 and gateway.ib is not None
             ):
 
-                ib = gateway.ib
-
-                # ---------------------------------
-                # PRIMARY: LOCAL SESSION FILLS
-                # ---------------------------------
-
                 try:
 
                     raw_fills = _as_list(
-                        ib.fills()
+                        gateway.ib.fills()
                     )
 
                 except Exception as fills_exc:
@@ -708,27 +702,6 @@ def page():
                     errors.append(
                         f"ib.fills(): {fills_exc}"
                     )
-
-                # ---------------------------------
-                # FALLBACK: REQUEST EXECUTIONS
-                # ---------------------------------
-
-                if not raw_fills:
-
-                    try:
-
-                        execution_results = _as_list(
-                            ib.reqExecutions()
-                        )
-
-                        if execution_results:
-                            raw_fills = execution_results
-
-                    except Exception as exec_exc:
-
-                        errors.append(
-                            f"reqExecutions(): {exec_exc}"
-                        )
 
             normalized_fills = []
 
@@ -747,16 +720,6 @@ def page():
                         "contract",
                         None,
                     )
-
-                    # ---------------------------------
-                    # reqExecutions() compatibility
-                    # ---------------------------------
-
-                    if execution is None and hasattr(fill, "execution"):
-                        execution = fill.execution
-
-                    if contract is None and hasattr(fill, "contract"):
-                        contract = fill.contract
 
                     if execution is None:
                         continue
@@ -805,7 +768,7 @@ def page():
                             "qty": float(shares),
                             "price": float(price),
                             "timestamp": str(timestamp),
-                            "source": "ibkr_live_execution_snapshot",
+                            "source": "ibkr_live_session_fills_snapshot",
                         }
                     )
 
@@ -864,8 +827,12 @@ def page():
         st.write(
             {
                 "mode": mode,
-                "live_trading_armed": st.session_state.get("live_trading_armed"),
-                "risk_kill_switch": st.session_state.get("risk_kill_switch"),
+                "live_trading_armed": st.session_state.get(
+                    "live_trading_armed"
+                ),
+                "risk_kill_switch": st.session_state.get(
+                    "risk_kill_switch"
+                ),
                 "pipeline_ready": pipeline is not None,
                 "oms_ready": oms is not None,
                 "gateway_connected": connected,
@@ -876,11 +843,30 @@ def page():
     with st.expander("Cached broker snapshot detail"):
         st.write(
             {
-                "positions": broker_snapshot_positions,
-                "open_orders": broker_snapshot_open_orders,
-                "account_summary": broker_snapshot_account_summary,
-                "timestamp": broker_snapshot_timestamp,
-                "errors": broker_snapshot_errors,
+                "positions": st.session_state.get(
+                    "broker_snapshot_positions",
+                    [],
+                ),
+                "open_orders": st.session_state.get(
+                    "broker_snapshot_open_orders",
+                    [],
+                ),
+                "account_summary": st.session_state.get(
+                    "broker_snapshot_account_summary",
+                    [],
+                ),
+                "fills": st.session_state.get(
+                    "broker_snapshot_fills",
+                    [],
+                ),
+                "timestamp": st.session_state.get(
+                    "broker_snapshot_timestamp",
+                    "",
+                ),
+                "errors": st.session_state.get(
+                    "broker_snapshot_errors",
+                    [],
+                ),
             }
         )
 
