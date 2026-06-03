@@ -629,25 +629,19 @@ def refresh_positions(self) -> Dict[str, float]:
 
             event = {
                 "event": "ORDER_STATUS",
-
                 "broker_order_id": broker_order_id,
                 "broker_id": broker_order_id,
-
                 "perm_id": perm_id,
                 "permId": perm_id,
-
                 "order_id": self.broker_order_map.get(
                     broker_order_id,
                     broker_order_id,
                 ),
-
                 "symbol": symbol,
-
                 "status": str(
                     getattr(status, "status", "")
                     or ""
                 ).upper().strip(),
-
                 "filled_qty": self._safe_float(
                     getattr(status, "filled", 0)
                 ),
@@ -657,7 +651,6 @@ def refresh_positions(self) -> Dict[str, float]:
                 "avg_fill_price": self._safe_float(
                     getattr(status, "avgFillPrice", 0)
                 ),
-
                 "timestamp": self._now(),
                 "truth_source": TRUTH_SOURCE,
             }
@@ -681,99 +674,153 @@ def refresh_positions(self) -> Dict[str, float]:
         except Exception as exc:
             self.last_error = f"orderStatus handler failed: {exc}"
 
-    def _handle_exec_details(self, trade, fill) -> None:
+    def _normalize_ib_fill_event(self, trade, fill) -> Dict[str, Any]:
+        execution = getattr(fill, "execution", None)
+        contract = getattr(fill, "contract", None)
+        order = getattr(trade, "order", None)
+
+        broker_order_id = str(
+            getattr(execution, "orderId", "")
+            or getattr(order, "orderId", "")
+            or ""
+        ).strip()
+
+        perm_id = str(
+            getattr(execution, "permId", "")
+            or getattr(order, "permId", "")
+            or ""
+        ).strip()
+
+        exec_id = str(
+            getattr(execution, "execId", "")
+            or ""
+        ).strip()
+
+        symbol = str(
+            getattr(contract, "symbol", "")
+            or ""
+        ).upper().strip()
+
+        side = str(
+            getattr(execution, "side", "")
+            or getattr(order, "action", "")
+            or ""
+        ).upper().strip()
+
+        if side == "BOT":
+            side = "BUY"
+        elif side == "SLD":
+            side = "SELL"
+
+        shares = self._safe_int(
+            getattr(execution, "shares", 0)
+        )
+
+        price = self._safe_float(
+            getattr(execution, "price", 0)
+        )
+
+        timestamp = (
+            str(getattr(execution, "time", "") or "")
+            or self._now()
+        )
+
+        return {
+            "event": "EXECUTION_FILL",
+            "execution_id": exec_id,
+            "exec_id": exec_id,
+            "broker_order_id": broker_order_id,
+            "broker_id": broker_order_id,
+            "perm_id": perm_id,
+            "permId": perm_id,
+            "order_id": self.broker_order_map.get(broker_order_id),
+            "symbol": symbol,
+            "action": side,
+            "side": side,
+            "qty": shares,
+            "quantity": shares,
+            "filled_qty": shares,
+            "fill_qty": shares,
+            "execution_qty": shares,
+            "price": price,
+            "fill_price": price,
+            "execution_price": price,
+            "avg_fill_price": price,
+            "status": "FILLED",
+            "execution_status": "FILLED",
+            "order_status": "FILLED",
+            "timestamp": timestamp,
+            "mode": LIVE,
+            "source": "ibkr_live_gateway",
+            "is_true_fill": True,
+            "truth_source": TRUTH_SOURCE,
+        }
+
+    def _cache_execution_event(self, event: Dict[str, Any]) -> None:
         try:
-            execution = getattr(fill, "execution", None)
-            contract = getattr(fill, "contract", None)
-            order = getattr(trade, "order", None)
-
-            broker_order_id = str(
-                getattr(execution, "orderId", "")
-                or getattr(order, "orderId", "")
-                or ""
-            ).strip()
-
-            perm_id = str(
-                getattr(execution, "permId", "")
-                or getattr(order, "permId", "")
-                or ""
-            ).strip()
+            if not isinstance(event, dict):
+                return
 
             exec_id = str(
-                getattr(execution, "execId", "")
+                event.get("exec_id")
+                or event.get("execution_id")
                 or ""
             ).strip()
 
-            symbol = str(
-                getattr(contract, "symbol", "")
-                or ""
-            ).upper().strip()
+            if not exec_id:
+                exec_id = (
+                    f"{event.get('symbol')}|"
+                    f"{event.get('side')}|"
+                    f"{event.get('qty')}|"
+                    f"{event.get('price')}|"
+                    f"{event.get('timestamp')}"
+                )
 
-            side = str(
-                getattr(execution, "side", "")
-                or getattr(order, "action", "")
-                or ""
-            ).upper().strip()
+            if not hasattr(self, "execution_cache"):
+                self.execution_cache = {}
 
-            if side == "BOT":
-                side = "BUY"
-            elif side == "SLD":
-                side = "SELL"
+            self.execution_cache[exec_id] = dict(event)
 
-            shares = self._safe_int(
-                getattr(execution, "shares", 0)
+            if not hasattr(self, "execution_detail_cache"):
+                self.execution_detail_cache = []
+
+            self.execution_detail_cache = list(
+                self.execution_cache.values()
             )
 
-            price = self._safe_float(
-                getattr(execution, "price", 0)
+        except Exception as exc:
+            self.last_error = f"Execution cache update failed: {exc}"
+
+    def get_executions(self) -> List[Dict[str, Any]]:
+        try:
+            if not hasattr(self, "execution_cache"):
+                self.execution_cache = {}
+
+            return list(self.execution_cache.values())
+
+        except Exception as exc:
+            self.last_error = f"Execution cache read failed: {exc}"
+            return []
+
+    def fills_snapshot(self) -> List[Dict[str, Any]]:
+        return self.get_executions()
+
+    def _handle_exec_details(self, trade, fill) -> None:
+        try:
+            event = self._normalize_ib_fill_event(
+                trade,
+                fill,
             )
 
-            event = {
-                "event": "EXECUTION_FILL",
-
-                "execution_id": exec_id,
-                "exec_id": exec_id,
-
-                "broker_order_id": broker_order_id,
-                "broker_id": broker_order_id,
-
-                "perm_id": perm_id,
-                "permId": perm_id,
-
-                "order_id": self.broker_order_map.get(broker_order_id),
-
-                "symbol": symbol,
-
-                "action": side,
-                "side": side,
-
-                "qty": shares,
-                "quantity": shares,
-                "filled_qty": shares,
-                "fill_qty": shares,
-                "execution_qty": shares,
-
-                "price": price,
-                "fill_price": price,
-                "execution_price": price,
-                "avg_fill_price": price,
-
-                "status": "FILLED",
-                "execution_status": "FILLED",
-                "order_status": "FILLED",
-
-                "timestamp": self._now(),
-                "mode": LIVE,
-                "source": "ibkr_live_gateway",
-                "is_true_fill": True,
-                "truth_source": TRUTH_SOURCE,
-            }
+            self._cache_execution_event(event)
 
             self.last_error = (
                 f"EXEC CALLBACK FIRED: "
-                f"{symbol} {side} {shares} @ {price} "
-                f"exec_id={exec_id} "
-                f"broker_order_id={broker_order_id}"
+                f"{event.get('symbol')} "
+                f"{event.get('side')} "
+                f"{event.get('qty')} @ {event.get('price')} "
+                f"exec_id={event.get('exec_id')} "
+                f"broker_order_id={event.get('broker_order_id')}"
             )
 
             self.refresh_positions()
