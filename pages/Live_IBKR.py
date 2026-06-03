@@ -691,10 +691,16 @@ def page():
                 and gateway.ib is not None
             ):
 
+                ib = gateway.ib
+
+                # ---------------------------------
+                # PRIMARY: LOCAL SESSION FILLS
+                # ---------------------------------
+
                 try:
 
                     raw_fills = _as_list(
-                        gateway.ib.fills()
+                        ib.fills()
                     )
 
                 except Exception as fills_exc:
@@ -702,6 +708,27 @@ def page():
                     errors.append(
                         f"ib.fills(): {fills_exc}"
                     )
+
+                # ---------------------------------
+                # FALLBACK: REQUEST EXECUTIONS
+                # ---------------------------------
+
+                if not raw_fills:
+
+                    try:
+
+                        execution_results = _as_list(
+                            ib.reqExecutions()
+                        )
+
+                        if execution_results:
+                            raw_fills = execution_results
+
+                    except Exception as exec_exc:
+
+                        errors.append(
+                            f"reqExecutions(): {exec_exc}"
+                        )
 
             normalized_fills = []
 
@@ -720,6 +747,16 @@ def page():
                         "contract",
                         None,
                     )
+
+                    # ---------------------------------
+                    # reqExecutions() compatibility
+                    # ---------------------------------
+
+                    if execution is None and hasattr(fill, "execution"):
+                        execution = fill.execution
+
+                    if contract is None and hasattr(fill, "contract"):
+                        contract = fill.contract
 
                     if execution is None:
                         continue
@@ -783,106 +820,6 @@ def page():
         except Exception as exc:
 
             errors.append(f"broker_fills: {exc}")
-
-        # ---------------------------------------------
-        # STORE SNAPSHOTS
-        # ---------------------------------------------
-
-        st.session_state["broker_snapshot_positions"] = broker_positions
-        st.session_state["broker_snapshot_open_orders"] = broker_open_orders
-        st.session_state["broker_snapshot_account_summary"] = broker_account_summary
-        st.session_state["broker_snapshot_fills"] = broker_fills
-        st.session_state["broker_snapshot_timestamp"] = now()
-        st.session_state["broker_snapshot_errors"] = errors
-
-        reset_operator_intent()
-
-        if errors:
-            st.warning(
-                "Broker snapshot completed with partial errors: "
-                + " | ".join(errors)
-            )
-
-        else:
-            st.success(
-                "Broker snapshot pull completed successfully."
-            )
-
-        st.rerun()
-
-    # =====================================================
-    # SNAPSHOT STATUS
-    # =====================================================
-
-    broker_snapshot_positions = st.session_state.get(
-        "broker_snapshot_positions",
-        [],
-    )
-
-    broker_snapshot_open_orders = st.session_state.get(
-        "broker_snapshot_open_orders",
-        [],
-    )
-
-    broker_snapshot_account_summary = st.session_state.get(
-        "broker_snapshot_account_summary",
-        [],
-    )
-
-    broker_snapshot_fills = st.session_state.get(
-        "broker_snapshot_fills",
-        [],
-    )
-
-    broker_snapshot_timestamp = st.session_state.get(
-        "broker_snapshot_timestamp",
-        "",
-    )
-
-    broker_snapshot_errors = st.session_state.get(
-        "broker_snapshot_errors",
-        [],
-    )
-
-    snap1, snap2, snap3, snap4, snap5 = st.columns(5)
-
-    snap1.metric(
-        "Broker Positions",
-        _safe_len(broker_snapshot_positions),
-    )
-
-    snap2.metric(
-        "Broker Open Orders",
-        _safe_len(broker_snapshot_open_orders),
-    )
-
-    snap3.metric(
-        "Account Summary Rows",
-        _safe_len(broker_snapshot_account_summary),
-    )
-
-    snap4.metric(
-        "Broker Fills",
-        _safe_len(broker_snapshot_fills),
-    )
-
-    snap5.metric(
-        "Snapshot Cached",
-        "YES" if broker_snapshot_timestamp else "NO",
-    )
-
-    if broker_snapshot_timestamp:
-        st.caption(
-            f"Last broker snapshot: {broker_snapshot_timestamp}"
-        )
-
-    if broker_snapshot_errors:
-        st.warning(
-            "Last broker snapshot warnings: "
-            + " | ".join(str(e) for e in broker_snapshot_errors)
-        )
-
-    st.divider()
 
     # =====================================================
     # COMPONENT STATUS
