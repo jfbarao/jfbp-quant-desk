@@ -782,7 +782,7 @@ def page():
 
         except Exception as exc:
 
-            errors.append(f"broker_fills: {exc}")            
+            errors.append(f"broker_fills: {exc}")
 
         # ---------------------------------------------
         # STORE SNAPSHOTS
