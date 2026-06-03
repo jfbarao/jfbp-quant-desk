@@ -686,8 +686,35 @@ def page():
 
             raw_fills = []
 
+            # -----------------------------------------
+            # PRIMARY: GATEWAY EXECUTION CACHE
+            # -----------------------------------------
+
             if (
-                hasattr(gateway, "ib")
+                hasattr(gateway, "get_executions")
+            ):
+
+                try:
+
+                    cached_fills = gateway.get_executions()
+
+                    raw_fills = _as_list(
+                        cached_fills
+                    )
+
+                except Exception as cache_exc:
+
+                    errors.append(
+                        f"gateway.get_executions(): {cache_exc}"
+                    )
+
+            # -----------------------------------------
+            # FALLBACK: IB LOCAL SESSION FILLS
+            # -----------------------------------------
+
+            if (
+                not raw_fills
+                and hasattr(gateway, "ib")
                 and gateway.ib is not None
             ):
 
@@ -709,66 +736,128 @@ def page():
 
                 try:
 
-                    execution = getattr(
-                        fill,
-                        "execution",
-                        None,
-                    )
+                    # ---------------------------------
+                    # Already-normalized gateway cache
+                    # ---------------------------------
 
-                    contract = getattr(
-                        fill,
-                        "contract",
-                        None,
-                    )
+                    if isinstance(fill, dict):
 
-                    if execution is None:
+                        symbol = str(
+                            fill.get("symbol")
+                            or ""
+                        ).upper().strip()
+
+                        action = str(
+                            fill.get("action")
+                            or fill.get("side")
+                            or ""
+                        ).upper().strip()
+
+                        qty = float(
+                            fill.get("qty")
+                            or fill.get("quantity")
+                            or fill.get("filled_qty")
+                            or 0
+                        )
+
+                        price = float(
+                            fill.get("price")
+                            or fill.get("fill_price")
+                            or fill.get("execution_price")
+                            or 0
+                        )
+
+                        exec_id = str(
+                            fill.get("exec_id")
+                            or fill.get("execution_id")
+                            or ""
+                        )
+
+                        timestamp = str(
+                            fill.get("timestamp")
+                            or ""
+                        )
+
+                        source = str(
+                            fill.get("source")
+                            or "ibkr_gateway_execution_cache"
+                        )
+
+                    else:
+
+                        execution = getattr(
+                            fill,
+                            "execution",
+                            None,
+                        )
+
+                        contract = getattr(
+                            fill,
+                            "contract",
+                            None,
+                        )
+
+                        if execution is None:
+                            continue
+
+                        symbol = str(
+                            getattr(contract, "symbol", "")
+                            or ""
+                        ).upper().strip()
+
+                        action = str(
+                            getattr(execution, "side", "")
+                            or ""
+                        ).upper().strip()
+
+                        if action == "BOT":
+                            action = "BUY"
+                        elif action == "SLD":
+                            action = "SELL"
+
+                        qty = float(
+                            getattr(execution, "shares", 0)
+                            or 0
+                        )
+
+                        price = float(
+                            getattr(execution, "price", 0)
+                            or 0
+                        )
+
+                        exec_id = str(
+                            getattr(execution, "execId", "")
+                            or ""
+                        )
+
+                        timestamp = str(
+                            getattr(execution, "time", "")
+                            or ""
+                        )
+
+                        source = "ibkr_live_session_fills_snapshot"
+
+                    if not symbol or abs(qty) <= 0:
                         continue
-
-                    symbol = getattr(
-                        contract,
-                        "symbol",
-                        "",
-                    )
-
-                    side = getattr(
-                        execution,
-                        "side",
-                        "",
-                    )
-
-                    shares = getattr(
-                        execution,
-                        "shares",
-                        0,
-                    )
-
-                    price = getattr(
-                        execution,
-                        "price",
-                        0,
-                    )
-
-                    exec_id = getattr(
-                        execution,
-                        "execId",
-                        "",
-                    )
-
-                    timestamp = getattr(
-                        execution,
-                        "time",
-                        "",
-                    )
 
                     normalized_fills.append(
                         {
-                            "exec_id": str(exec_id),
-                            "symbol": str(symbol).upper().strip(),
-                            "action": str(side).upper().strip(),
-                            "qty": float(shares),
-                            "price": float(price),
-                            "timestamp": str(timestamp),
-                            "source": "ibkr_live_session_fills_snapshot",
+                            "exec_id": exec_id,
+                            "execution_id": exec_id,
+                            "symbol": symbol,
+                            "action": action,
+                            "side": action,
+                            "qty": qty,
+                            "quantity": qty,
+                            "filled_qty": qty,
+                            "price": price,
+                            "fill_price": price,
+                            "execution_price": price,
+                            "timestamp": timestamp,
+                            "status": "FILLED",
+                            "execution_status": "FILLED",
+                            "source": source,
+                            "is_true_fill": True,
                         }
                     )
 
