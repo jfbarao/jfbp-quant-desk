@@ -469,8 +469,8 @@ def page():
 
     with sync_col2:
         st.caption(
-            "Pulls broker positions, open orders, "
-            "and account summary into session cache."
+            "Pulls broker positions, open orders, account summary, "
+            "and cached executions into session cache."
         )
 
     if pull_snapshot_btn:
@@ -478,7 +478,7 @@ def page():
         broker_positions = []
         broker_open_orders = []
         broker_account_summary = []
-
+        broker_fills = []
         errors = []
 
         # ---------------------------------------------
@@ -486,89 +486,41 @@ def page():
         # ---------------------------------------------
 
         try:
-
-            # ---------------------------------
-            # HARD REFRESH
-            # ---------------------------------
-
             if hasattr(gateway, "refresh_positions"):
-
-                refreshed_positions = gateway.refresh_positions()
-
                 broker_positions = _as_list(
-                    refreshed_positions
+                    gateway.refresh_positions()
                 )
-
-            # ---------------------------------
-            # SNAPSHOT CACHE
-            # ---------------------------------
 
             if (
                 not broker_positions
-                and hasattr(gateway, "positions_snapshot")
+                and hasattr(gateway, "positions_detail_cache")
             ):
-
-                snapshot_positions = (
-                    gateway.positions_snapshot()
-                )
-
                 broker_positions = _as_list(
-                    snapshot_positions
+                    getattr(gateway, "positions_detail_cache", [])
                 )
-
-            # ---------------------------------
-            # GENERIC ACCESSOR
-            # ---------------------------------
 
             if (
                 not broker_positions
                 and hasattr(gateway, "get_positions")
             ):
-
-                fetched_positions = (
+                broker_positions = _as_list(
                     gateway.get_positions()
                 )
-
-                broker_positions = _as_list(
-                    fetched_positions
-                )
-
-            # ---------------------------------
-            # RAW IBKR FALLBACK
-            # ---------------------------------
 
             if (
                 not broker_positions
                 and hasattr(gateway, "ib")
                 and gateway.ib is not None
             ):
-
-                try:
-
-                    raw_positions = gateway.ib.positions()
-
-                    broker_positions = _as_list(
-                        raw_positions
-                    )
-
-                except Exception as raw_exc:
-
-                    errors.append(
-                        f"ib.positions(): {raw_exc}"
-                    )
-
-            # ---------------------------------
-            # NORMALIZE
-            # ---------------------------------
+                broker_positions = _as_list(
+                    gateway.ib.positions()
+                )
 
             normalized_positions = []
 
             for p in broker_positions:
-
                 try:
-
                     if isinstance(p, dict):
-
                         symbol = (
                             p.get("symbol")
                             or p.get("localSymbol")
@@ -579,57 +531,46 @@ def page():
                             p.get("position")
                             or p.get("qty")
                             or p.get("quantity")
+                            or p.get("signed_qty")
                             or 0
                         )
 
                         avg_cost = (
-                            p.get("avgCost")
-                            or p.get("avg_cost")
+                            p.get("avg_cost")
+                            or p.get("avgCost")
                             or p.get("average_cost")
                             or 0
                         )
 
                     else:
+                        contract = getattr(p, "contract", None)
+                        symbol = getattr(contract, "symbol", "")
+                        qty = getattr(p, "position", 0)
+                        avg_cost = getattr(p, "avgCost", 0)
 
-                        contract = getattr(
-                            p,
-                            "contract",
-                            None,
-                        )
+                    symbol = str(symbol).upper().strip()
+                    qty = float(qty or 0)
+                    avg_cost = float(avg_cost or 0)
 
-                        symbol = getattr(
-                            contract,
-                            "symbol",
-                            "",
-                        )
-
-                        qty = getattr(
-                            p,
-                            "position",
-                            0,
-                        )
-
-                        avg_cost = getattr(
-                            p,
-                            "avgCost",
-                            0,
-                        )
-
-                    qty = float(qty)
+                    if not symbol:
+                        continue
 
                     if abs(qty) <= 0.000001:
                         continue
 
                     normalized_positions.append(
                         {
-                            "symbol": str(symbol).upper().strip(),
+                            "symbol": symbol,
                             "qty": qty,
-                            "avg_cost": float(avg_cost),
+                            "position": qty,
+                            "signed_qty": qty,
+                            "avg_cost": avg_cost,
+                            "avgCost": avg_cost,
+                            "source": "ibkr_live_position_snapshot",
                         }
                     )
 
                 except Exception as pos_exc:
-
                     errors.append(
                         f"normalize_position: {pos_exc}"
                     )
@@ -637,7 +578,6 @@ def page():
             broker_positions = normalized_positions
 
         except Exception as exc:
-
             errors.append(f"positions: {exc}")
 
         # ---------------------------------------------
@@ -650,7 +590,10 @@ def page():
                     gateway.refresh_open_orders()
                 )
 
-            elif hasattr(gateway, "get_open_orders"):
+            if (
+                not broker_open_orders
+                and hasattr(gateway, "get_open_orders")
+            ):
                 broker_open_orders = _as_list(
                     gateway.get_open_orders()
                 )
@@ -668,7 +611,10 @@ def page():
                     gateway.refresh_account_summary()
                 )
 
-            elif hasattr(gateway, "get_account_summary"):
+            if (
+                not broker_account_summary
+                and hasattr(gateway, "get_account_summary")
+            ):
                 broker_account_summary = _as_list(
                     gateway.get_account_summary()
                 )
@@ -680,71 +626,38 @@ def page():
         # EXECUTIONS / FILLS
         # ---------------------------------------------
 
-        broker_fills = []
-
         try:
-
             raw_fills = []
 
-            # -----------------------------------------
-            # PRIMARY: GATEWAY EXECUTION CACHE
-            # -----------------------------------------
+            if hasattr(gateway, "get_executions"):
+                raw_fills = _as_list(
+                    gateway.get_executions()
+                )
 
             if (
-                hasattr(gateway, "get_executions")
+                not raw_fills
+                and hasattr(gateway, "fills_snapshot")
             ):
-
-                try:
-
-                    cached_fills = gateway.get_executions()
-
-                    raw_fills = _as_list(
-                        cached_fills
-                    )
-
-                except Exception as cache_exc:
-
-                    errors.append(
-                        f"gateway.get_executions(): {cache_exc}"
-                    )
-
-            # -----------------------------------------
-            # FALLBACK: IB LOCAL SESSION FILLS
-            # -----------------------------------------
+                raw_fills = _as_list(
+                    gateway.fills_snapshot()
+                )
 
             if (
                 not raw_fills
                 and hasattr(gateway, "ib")
                 and gateway.ib is not None
             ):
-
-                try:
-
-                    raw_fills = _as_list(
-                        gateway.ib.fills()
-                    )
-
-                except Exception as fills_exc:
-
-                    errors.append(
-                        f"ib.fills(): {fills_exc}"
-                    )
+                raw_fills = _as_list(
+                    gateway.ib.fills()
+                )
 
             normalized_fills = []
 
             for fill in raw_fills:
-
                 try:
-
-                    # ---------------------------------
-                    # Already-normalized gateway cache
-                    # ---------------------------------
-
                     if isinstance(fill, dict):
-
                         symbol = str(
-                            fill.get("symbol")
-                            or ""
+                            fill.get("symbol") or ""
                         ).upper().strip()
 
                         action = str(
@@ -774,8 +687,7 @@ def page():
                         )
 
                         timestamp = str(
-                            fill.get("timestamp")
-                            or ""
+                            fill.get("timestamp") or ""
                         )
 
                         source = str(
@@ -784,30 +696,18 @@ def page():
                         )
 
                     else:
-
-                        execution = getattr(
-                            fill,
-                            "execution",
-                            None,
-                        )
-
-                        contract = getattr(
-                            fill,
-                            "contract",
-                            None,
-                        )
+                        execution = getattr(fill, "execution", None)
+                        contract = getattr(fill, "contract", None)
 
                         if execution is None:
                             continue
 
                         symbol = str(
-                            getattr(contract, "symbol", "")
-                            or ""
+                            getattr(contract, "symbol", "") or ""
                         ).upper().strip()
 
                         action = str(
-                            getattr(execution, "side", "")
-                            or ""
+                            getattr(execution, "side", "") or ""
                         ).upper().strip()
 
                         if action == "BOT":
@@ -816,28 +716,27 @@ def page():
                             action = "SELL"
 
                         qty = float(
-                            getattr(execution, "shares", 0)
-                            or 0
+                            getattr(execution, "shares", 0) or 0
                         )
 
                         price = float(
-                            getattr(execution, "price", 0)
-                            or 0
+                            getattr(execution, "price", 0) or 0
                         )
 
                         exec_id = str(
-                            getattr(execution, "execId", "")
-                            or ""
+                            getattr(execution, "execId", "") or ""
                         )
 
                         timestamp = str(
-                            getattr(execution, "time", "")
-                            or ""
+                            getattr(execution, "time", "") or ""
                         )
 
                         source = "ibkr_live_session_fills_snapshot"
 
-                    if not symbol or abs(qty) <= 0:
+                    if not symbol:
+                        continue
+
+                    if abs(qty) <= 0.000001:
                         continue
 
                     normalized_fills.append(
@@ -862,7 +761,6 @@ def page():
                     )
 
                 except Exception as fill_exc:
-
                     errors.append(
                         f"normalize_fill: {fill_exc}"
                     )
@@ -870,8 +768,279 @@ def page():
             broker_fills = normalized_fills
 
         except Exception as exc:
-
             errors.append(f"broker_fills: {exc}")
+
+        # ---------------------------------------------
+        # STORE SNAPSHOTS
+        # ---------------------------------------------
+
+        st.session_state["broker_snapshot_positions"] = broker_positions
+        st.session_state["broker_snapshot_open_orders"] = broker_open_orders
+        st.session_state["broker_snapshot_account_summary"] = broker_account_summary
+        st.session_state["broker_snapshot_fills"] = broker_fills
+        st.session_state["broker_snapshot_timestamp"] = now()
+        st.session_state["broker_snapshot_errors"] = errors
+
+        reset_operator_intent()
+
+        if errors:
+            st.warning(
+                "Broker snapshot completed with partial errors: "
+                + " | ".join(str(e) for e in errors)
+            )
+        else:
+            st.success(
+                "Broker snapshot pull completed successfully."
+            )
+
+        st.rerun()
+
+        # ---------------------------------------------
+        # EXECUTIONS / FILLS
+        # ---------------------------------------------
+
+        try:
+            raw_fills = []
+
+            if hasattr(gateway, "get_executions"):
+                raw_fills = _as_list(
+                    gateway.get_executions()
+                )
+
+            if (
+                not raw_fills
+                and hasattr(gateway, "fills_snapshot")
+            ):
+                raw_fills = _as_list(
+                    gateway.fills_snapshot()
+                )
+
+            if (
+                not raw_fills
+                and hasattr(gateway, "ib")
+                and gateway.ib is not None
+            ):
+                raw_fills = _as_list(
+                    gateway.ib.fills()
+                )
+
+            normalized_fills = []
+
+            for fill in raw_fills:
+                try:
+                    if isinstance(fill, dict):
+                        symbol = str(
+                            fill.get("symbol") or ""
+                        ).upper().strip()
+
+                        action = str(
+                            fill.get("action")
+                            or fill.get("side")
+                            or ""
+                        ).upper().strip()
+
+                        qty = float(
+                            fill.get("qty")
+                            or fill.get("quantity")
+                            or fill.get("filled_qty")
+                            or 0
+                        )
+
+                        price = float(
+                            fill.get("price")
+                            or fill.get("fill_price")
+                            or fill.get("execution_price")
+                            or 0
+                        )
+
+                        exec_id = str(
+                            fill.get("exec_id")
+                            or fill.get("execution_id")
+                            or ""
+                        )
+
+                        timestamp = str(
+                            fill.get("timestamp") or ""
+                        )
+
+                        source = str(
+                            fill.get("source")
+                            or "ibkr_gateway_execution_cache"
+                        )
+
+                    else:
+                        execution = getattr(fill, "execution", None)
+                        contract = getattr(fill, "contract", None)
+
+                        if execution is None:
+                            continue
+
+                        symbol = str(
+                            getattr(contract, "symbol", "") or ""
+                        ).upper().strip()
+
+                        action = str(
+                            getattr(execution, "side", "") or ""
+                        ).upper().strip()
+
+                        if action == "BOT":
+                            action = "BUY"
+                        elif action == "SLD":
+                            action = "SELL"
+
+                        qty = float(
+                            getattr(execution, "shares", 0) or 0
+                        )
+
+                        price = float(
+                            getattr(execution, "price", 0) or 0
+                        )
+
+                        exec_id = str(
+                            getattr(execution, "execId", "") or ""
+                        )
+
+                        timestamp = str(
+                            getattr(execution, "time", "") or ""
+                        )
+
+                        source = "ibkr_live_session_fills_snapshot"
+
+                    if not symbol:
+                        continue
+
+                    if abs(qty) <= 0.000001:
+                        continue
+
+                    normalized_fills.append(
+                        {
+                            "exec_id": exec_id,
+                            "execution_id": exec_id,
+                            "symbol": symbol,
+                            "action": action,
+                            "side": action,
+                            "qty": qty,
+                            "quantity": qty,
+                            "filled_qty": qty,
+                            "price": price,
+                            "fill_price": price,
+                            "execution_price": price,
+                            "timestamp": timestamp,
+                            "status": "FILLED",
+                            "execution_status": "FILLED",
+                            "source": source,
+                            "is_true_fill": True,
+                        }
+                    )
+
+                except Exception as fill_exc:
+                    errors.append(
+                        f"normalize_fill: {fill_exc}"
+                    )
+
+            broker_fills = normalized_fills
+
+        except Exception as exc:
+            errors.append(f"broker_fills: {exc}")
+
+        # ---------------------------------------------
+        # STORE SNAPSHOTS
+        # ---------------------------------------------
+
+        st.session_state["broker_snapshot_positions"] = broker_positions
+        st.session_state["broker_snapshot_open_orders"] = broker_open_orders
+        st.session_state["broker_snapshot_account_summary"] = broker_account_summary
+        st.session_state["broker_snapshot_fills"] = broker_fills
+        st.session_state["broker_snapshot_timestamp"] = now()
+        st.session_state["broker_snapshot_errors"] = errors
+
+        reset_operator_intent()
+
+        if errors:
+            st.warning(
+                "Broker snapshot completed with partial errors: "
+                + " | ".join(str(e) for e in errors)
+            )
+        else:
+            st.success(
+                "Broker snapshot pull completed successfully."
+            )
+
+        st.rerun()
+
+    # =====================================================
+    # SNAPSHOT STATUS
+    # =====================================================
+
+    broker_snapshot_positions = st.session_state.get(
+        "broker_snapshot_positions",
+        [],
+    )
+
+    broker_snapshot_open_orders = st.session_state.get(
+        "broker_snapshot_open_orders",
+        [],
+    )
+
+    broker_snapshot_account_summary = st.session_state.get(
+        "broker_snapshot_account_summary",
+        [],
+    )
+
+    broker_snapshot_fills = st.session_state.get(
+        "broker_snapshot_fills",
+        [],
+    )
+
+    broker_snapshot_timestamp = st.session_state.get(
+        "broker_snapshot_timestamp",
+        "",
+    )
+
+    broker_snapshot_errors = st.session_state.get(
+        "broker_snapshot_errors",
+        [],
+    )
+
+    snap1, snap2, snap3, snap4, snap5 = st.columns(5)
+
+    snap1.metric(
+        "Broker Positions",
+        _safe_len(broker_snapshot_positions),
+    )
+
+    snap2.metric(
+        "Broker Open Orders",
+        _safe_len(broker_snapshot_open_orders),
+    )
+
+    snap3.metric(
+        "Account Summary Rows",
+        _safe_len(broker_snapshot_account_summary),
+    )
+
+    snap4.metric(
+        "Broker Fills",
+        _safe_len(broker_snapshot_fills),
+    )
+
+    snap5.metric(
+        "Snapshot Cached",
+        "YES" if broker_snapshot_timestamp else "NO",
+    )
+
+    if broker_snapshot_timestamp:
+        st.caption(
+            f"Last broker snapshot: {broker_snapshot_timestamp}"
+        )
+
+    if broker_snapshot_errors:
+        st.warning(
+            "Last broker snapshot warnings: "
+            + " | ".join(str(e) for e in broker_snapshot_errors)
+        )
+
+    st.divider()
 
     # =====================================================
     # COMPONENT STATUS
