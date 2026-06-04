@@ -577,14 +577,15 @@ def refresh_positions(self) -> Dict[str, float]:
         return dict(self.positions_cache)
     # =====================================================
     # IBKR EVENT BINDING
+    # BROKER FILL PERSISTENCE + TRUE LIVE EXECUTION CHAIN
     # =====================================================
 
     def _bind_events(self) -> None:
         if self.ib is None:
             return
 
-        # Remove stale/dead callbacks before rebinding.
-        # This prevents shutdown errors from old weakrefs after Streamlit reloads.
+        self._load_persisted_executions()
+
         bindings = (
             ("orderStatusEvent", self._handle_order_status),
             ("execDetailsEvent", self._handle_exec_details),
@@ -605,6 +606,103 @@ def refresh_positions(self) -> Dict[str, float]:
                 event += handler
             except Exception as exc:
                 self.last_error = f"IB event bind failed for {event_name}: {exc}"
+
+    def _execution_cache_path(self) -> str:
+        try:
+            import os
+
+            root = os.path.join(
+                os.getcwd(),
+                "runtime_state",
+            )
+
+            os.makedirs(
+                root,
+                exist_ok=True,
+            )
+
+            return os.path.join(
+                root,
+                "broker_execution_cache.json",
+            )
+
+        except Exception:
+            return "broker_execution_cache.json"
+
+    def _load_persisted_executions(self) -> None:
+        try:
+            import json
+            import os
+
+            if not hasattr(self, "execution_cache"):
+                self.execution_cache = {}
+
+            path = self._execution_cache_path()
+
+            if not os.path.exists(path):
+                self.execution_detail_cache = list(
+                    self.execution_cache.values()
+                )
+                return
+
+            with open(path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+
+            rows = payload.get("executions", [])
+
+            if isinstance(rows, list):
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+
+                    exec_id = str(
+                        row.get("exec_id")
+                        or row.get("execution_id")
+                        or ""
+                    ).strip()
+
+                    if not exec_id:
+                        continue
+
+                    self.execution_cache[exec_id] = dict(row)
+
+            self.execution_detail_cache = list(
+                self.execution_cache.values()
+            )
+
+        except Exception as exc:
+            self.last_error = f"Load persisted executions failed: {exc}"
+
+    def _persist_executions(self) -> None:
+        try:
+            import json
+
+            if not hasattr(self, "execution_cache"):
+                self.execution_cache = {}
+
+            payload = {
+                "saved_at": self._now(),
+                "truth_source": TRUTH_SOURCE,
+                "count": len(self.execution_cache),
+                "executions": list(
+                    self.execution_cache.values()
+                ),
+            }
+
+            with open(
+                self._execution_cache_path(),
+                "w",
+                encoding="utf-8",
+            ) as handle:
+                json.dump(
+                    payload,
+                    handle,
+                    indent=2,
+                    default=str,
+                )
+
+        except Exception as exc:
+            self.last_error = f"Persist executions failed: {exc}"
 
     def _handle_order_status(self, trade) -> None:
         try:
@@ -712,7 +810,7 @@ def refresh_positions(self) -> Dict[str, float]:
         elif side == "SLD":
             side = "SELL"
 
-        shares = self._safe_int(
+        shares = self._safe_float(
             getattr(execution, "shares", 0)
         )
 
@@ -750,16 +848,17 @@ def refresh_positions(self) -> Dict[str, float]:
             "execution_status": "FILLED",
             "order_status": "FILLED",
             "timestamp": timestamp,
+            "cached_at": self._now(),
             "mode": LIVE,
             "source": "ibkr_live_gateway",
             "is_true_fill": True,
             "truth_source": TRUTH_SOURCE,
         }
 
-    def _cache_execution_event(self, event: Dict[str, Any]) -> None:
+    def _cache_execution_event(self, event: Dict[str, Any]) -> bool:
         try:
             if not isinstance(event, dict):
-                return
+                return False
 
             exec_id = str(
                 event.get("exec_id")
@@ -776,25 +875,39 @@ def refresh_positions(self) -> Dict[str, float]:
                     f"{event.get('timestamp')}"
                 )
 
+                event["exec_id"] = exec_id
+                event["execution_id"] = exec_id
+
             if not hasattr(self, "execution_cache"):
                 self.execution_cache = {}
 
-            self.execution_cache[exec_id] = dict(event)
+            already_seen = exec_id in self.execution_cache
 
-            if not hasattr(self, "execution_detail_cache"):
-                self.execution_detail_cache = []
+            event["dedupe_key"] = exec_id
+            event["persisted"] = True
+            event["cached_at"] = event.get("cached_at") or self._now()
+
+            self.execution_cache[exec_id] = dict(event)
 
             self.execution_detail_cache = list(
                 self.execution_cache.values()
             )
 
+            self._persist_executions()
+
+            return not already_seen
+
         except Exception as exc:
             self.last_error = f"Execution cache update failed: {exc}"
+            return False
 
     def get_executions(self) -> List[Dict[str, Any]]:
         try:
             if not hasattr(self, "execution_cache"):
                 self.execution_cache = {}
+
+            if not self.execution_cache:
+                self._load_persisted_executions()
 
             return list(self.execution_cache.values())
 
@@ -805,6 +918,27 @@ def refresh_positions(self) -> Dict[str, float]:
     def fills_snapshot(self) -> List[Dict[str, Any]]:
         return self.get_executions()
 
+    def execution_cache_status(self) -> Dict[str, Any]:
+        try:
+            executions = self.get_executions()
+
+            return {
+                "status": "READY",
+                "count": len(executions),
+                "path": self._execution_cache_path(),
+                "truth_source": TRUTH_SOURCE,
+                "checked_at": self._now(),
+            }
+
+        except Exception as exc:
+            return {
+                "status": "ERROR",
+                "count": 0,
+                "error": str(exc),
+                "truth_source": TRUTH_SOURCE,
+                "checked_at": self._now(),
+            }
+
     def _handle_exec_details(self, trade, fill) -> None:
         try:
             event = self._normalize_ib_fill_event(
@@ -812,10 +946,20 @@ def refresh_positions(self) -> Dict[str, float]:
                 fill,
             )
 
-            self._cache_execution_event(event)
+            is_new_execution = self._cache_execution_event(event)
+
+            if not is_new_execution:
+                self.last_error = (
+                    f"DUPLICATE EXECUTION IGNORED/CACHED: "
+                    f"{event.get('symbol')} "
+                    f"{event.get('side')} "
+                    f"{event.get('qty')} @ {event.get('price')} "
+                    f"exec_id={event.get('exec_id')}"
+                )
+                return
 
             self.last_error = (
-                f"EXEC CALLBACK FIRED: "
+                f"EXEC CALLBACK FIRED + PERSISTED: "
                 f"{event.get('symbol')} "
                 f"{event.get('side')} "
                 f"{event.get('qty')} @ {event.get('price')} "
@@ -876,6 +1020,7 @@ def refresh_positions(self) -> Dict[str, float]:
             except Exception as cb_exc:
                 self.last_error = f"Disconnect callback failed: {cb_exc}"
 
+                
     # =====================================================
     # HELPERS
     # =====================================================
