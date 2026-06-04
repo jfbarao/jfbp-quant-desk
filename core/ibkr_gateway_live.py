@@ -855,6 +855,95 @@ def refresh_positions(self) -> Dict[str, float]:
             "truth_source": TRUTH_SOURCE,
         }
 
+    def _normalize_recovered_execution(
+        self,
+        recovered_fill,
+    ) -> Dict[str, Any]:
+        execution = getattr(recovered_fill, "execution", None)
+        contract = getattr(recovered_fill, "contract", None)
+
+        if execution is None and isinstance(recovered_fill, dict):
+            return dict(recovered_fill)
+
+        broker_order_id = str(
+            getattr(execution, "orderId", "")
+            or ""
+        ).strip()
+
+        perm_id = str(
+            getattr(execution, "permId", "")
+            or ""
+        ).strip()
+
+        exec_id = str(
+            getattr(execution, "execId", "")
+            or ""
+        ).strip()
+
+        symbol = str(
+            getattr(contract, "symbol", "")
+            or ""
+        ).upper().strip()
+
+        side = str(
+            getattr(execution, "side", "")
+            or ""
+        ).upper().strip()
+
+        if side == "BOT":
+            side = "BUY"
+        elif side == "SLD":
+            side = "SELL"
+
+        shares = self._safe_float(
+            getattr(execution, "shares", 0)
+        )
+
+        price = self._safe_float(
+            getattr(execution, "price", 0)
+        )
+
+        timestamp = (
+            str(getattr(execution, "time", "") or "")
+            or self._now()
+        )
+
+        return {
+            "event": "EXECUTION_FILL_RECOVERED",
+            "execution_id": exec_id,
+            "exec_id": exec_id,
+            "broker_order_id": broker_order_id,
+            "broker_id": broker_order_id,
+            "perm_id": perm_id,
+            "permId": perm_id,
+            "order_id": self.broker_order_map.get(
+                broker_order_id,
+                broker_order_id,
+            ),
+            "symbol": symbol,
+            "action": side,
+            "side": side,
+            "qty": shares,
+            "quantity": shares,
+            "filled_qty": shares,
+            "fill_qty": shares,
+            "execution_qty": shares,
+            "price": price,
+            "fill_price": price,
+            "execution_price": price,
+            "avg_fill_price": price,
+            "status": "FILLED",
+            "execution_status": "FILLED",
+            "order_status": "FILLED",
+            "timestamp": timestamp,
+            "cached_at": self._now(),
+            "recovered_at": self._now(),
+            "mode": LIVE,
+            "source": "ibkr_reqExecutions_recovery",
+            "is_true_fill": True,
+            "truth_source": TRUTH_SOURCE,
+        }
+
     def _cache_execution_event(self, event: Dict[str, Any]) -> bool:
         try:
             if not isinstance(event, dict):
@@ -901,6 +990,89 @@ def refresh_positions(self) -> Dict[str, float]:
             self.last_error = f"Execution cache update failed: {exc}"
             return False
 
+    def recover_executions_from_broker(self) -> Dict[str, Any]:
+        report = {
+            "status": "STARTED",
+            "requested_at": self._now(),
+            "recovered": 0,
+            "new": 0,
+            "duplicates": 0,
+            "errors": [],
+            "truth_source": TRUTH_SOURCE,
+        }
+
+        try:
+            if self.ib is None:
+                report["status"] = "NO_IB"
+                report["errors"].append("IB object unavailable")
+                return report
+
+            if not hasattr(self.ib, "reqExecutions"):
+                report["status"] = "UNSUPPORTED"
+                report["errors"].append("ib.reqExecutions unavailable")
+                return report
+
+            raw_fills = []
+
+            try:
+                raw_fills = list(
+                    self.ib.reqExecutions() or []
+                )
+            except Exception as exc:
+                report["status"] = "ERROR"
+                report["errors"].append(f"reqExecutions: {exc}")
+                self.last_error = f"Execution recovery failed: {exc}"
+                return report
+
+            for fill in raw_fills:
+                try:
+                    event = self._normalize_recovered_execution(fill)
+
+                    if not isinstance(event, dict):
+                        continue
+
+                    if not event.get("exec_id") and not event.get("execution_id"):
+                        continue
+
+                    is_new = self._cache_execution_event(event)
+
+                    report["recovered"] += 1
+
+                    if is_new:
+                        report["new"] += 1
+                    else:
+                        report["duplicates"] += 1
+
+                except Exception as fill_exc:
+                    report["errors"].append(
+                        f"normalize_recovered_execution: {fill_exc}"
+                    )
+
+            report["status"] = "OK"
+            report["cache_count"] = len(
+                getattr(self, "execution_cache", {}) or {}
+            )
+            report["completed_at"] = self._now()
+
+            self.last_execution_recovery_report = dict(report)
+
+            self.last_error = (
+                f"Execution recovery OK: "
+                f"recovered={report['recovered']} "
+                f"new={report['new']} "
+                f"duplicates={report['duplicates']}"
+            )
+
+            return report
+
+        except Exception as exc:
+            report["status"] = "ERROR"
+            report["errors"].append(str(exc))
+            report["completed_at"] = self._now()
+            self.last_execution_recovery_report = dict(report)
+            self.last_error = f"Execution recovery failed: {exc}"
+            return report
+
     def get_executions(self) -> List[Dict[str, Any]]:
         try:
             if not hasattr(self, "execution_cache"):
@@ -926,6 +1098,11 @@ def refresh_positions(self) -> Dict[str, float]:
                 "status": "READY",
                 "count": len(executions),
                 "path": self._execution_cache_path(),
+                "last_recovery": getattr(
+                    self,
+                    "last_execution_recovery_report",
+                    {},
+                ),
                 "truth_source": TRUTH_SOURCE,
                 "checked_at": self._now(),
             }
@@ -1020,29 +1197,28 @@ def refresh_positions(self) -> Dict[str, float]:
             except Exception as cb_exc:
                 self.last_error = f"Disconnect callback failed: {cb_exc}"
 
-                
-    # =====================================================
-    # HELPERS
-    # =====================================================
+# =====================================================
+# HELPERS
+# =====================================================
 
-    def _safe_float(self, value: Any) -> float:
-        try:
-            if value is None:
-                return 0.0
-            return float(value)
-        except Exception:
+def _safe_float(self, value: Any) -> float:
+    try:
+        if value is None:
             return 0.0
+        return float(value)
+    except Exception:
+        return 0.0
 
-    def _safe_int(self, value: Any) -> int:
-        try:
-            if value is None:
-                return 0
-            return int(float(value))
-        except Exception:
+def _safe_int(self, value: Any) -> int:
+    try:
+        if value is None:
             return 0
+        return int(float(value))
+    except Exception:
+        return 0
 
-    def _now(self) -> str:
-        return datetime.now(timezone.utc).isoformat()
+def _now(self) -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 # Backward-compatible alias
