@@ -1013,6 +1013,337 @@ def run_page():
         and broker_drift_count == 0
     )
 
+    drift_state = (
+        "MATCH"
+        if broker_match
+        else "DRIFT"
+    )
+
+    # =====================================================
+    # BROKER EXECUTION RECONCILIATION
+    # =====================================================
+
+    runtime_fills = []
+    audit_fills = []
+    broker_fills = []
+
+    try:
+        runtime_fills = list(
+            getattr(portfolio_engine, "ledger", []) or []
+        )
+    except Exception:
+        runtime_fills = []
+
+    try:
+        audit_fills = audit_db.get_fills() or []
+    except Exception:
+        audit_fills = []
+
+    try:
+        broker_snapshot = (
+            st.session_state.get("broker_snapshot")
+            or {}
+        )
+
+        broker_fills = (
+            broker_snapshot.get("fills", [])
+            or []
+        )
+
+    except Exception:
+        broker_fills = []
+
+    runtime_fill_ids = set()
+    audit_fill_ids = set()
+    broker_exec_ids = set()
+
+    runtime_fill_map = {}
+    audit_fill_map = {}
+    broker_fill_map = {}
+
+    # =====================================================
+    # NORMALIZE RUNTIME FILLS
+    # =====================================================
+
+    for fill in runtime_fills:
+
+        fill_id = str(
+            fill.get("fill_id")
+            or fill.get("execution_id")
+            or fill.get("exec_id")
+            or fill.get("id")
+            or ""
+        ).strip()
+
+        if not fill_id:
+            continue
+
+        runtime_fill_ids.add(fill_id)
+
+        runtime_fill_map[fill_id] = {
+            "symbol": fill.get("symbol"),
+            "qty": float(
+                fill.get("filled_qty")
+                or fill.get("qty")
+                or 0
+            ),
+            "price": float(
+                fill.get("execution_price")
+                or fill.get("fill_price")
+                or fill.get("price")
+                or 0
+            ),
+            "source": "runtime",
+        }
+
+    # =====================================================
+    # NORMALIZE AUDIT FILLS
+    # =====================================================
+
+    for fill in audit_fills:
+
+        fill_id = str(
+            fill.get("fill_id")
+            or fill.get("execution_id")
+            or fill.get("exec_id")
+            or fill.get("id")
+            or ""
+        ).strip()
+
+        if not fill_id:
+            continue
+
+        audit_fill_ids.add(fill_id)
+
+        audit_fill_map[fill_id] = {
+            "symbol": fill.get("symbol"),
+            "qty": float(
+                fill.get("filled_qty")
+                or fill.get("qty")
+                or 0
+            ),
+            "price": float(
+                fill.get("execution_price")
+                or fill.get("fill_price")
+                or fill.get("price")
+                or 0
+            ),
+            "source": "audit",
+        }
+
+    # =====================================================
+    # NORMALIZE BROKER FILLS
+    # =====================================================
+
+    for fill in broker_fills:
+
+        exec_id = str(
+            fill.get("execId")
+            or fill.get("execution_id")
+            or fill.get("exec_id")
+            or fill.get("fill_id")
+            or ""
+        ).strip()
+
+        if not exec_id:
+            continue
+
+        broker_exec_ids.add(exec_id)
+
+        broker_fill_map[exec_id] = {
+            "symbol": (
+                fill.get("symbol")
+                or fill.get("contract", {}).get("symbol")
+            ),
+            "qty": float(
+                fill.get("shares")
+                or fill.get("qty")
+                or fill.get("filled_qty")
+                or 0
+            ),
+            "price": float(
+                fill.get("price")
+                or fill.get("avgPrice")
+                or fill.get("execution_price")
+                or 0
+            ),
+            "source": "broker",
+        }
+
+    # =====================================================
+    # EXECUTION DRIFT DETECTION
+    # =====================================================
+
+    execution_drift_rows = []
+
+    all_execution_ids = sorted(
+        runtime_fill_ids
+        | audit_fill_ids
+        | broker_exec_ids
+    )
+
+    for exec_id in all_execution_ids:
+
+        runtime_fill = runtime_fill_map.get(exec_id)
+        audit_fill = audit_fill_map.get(exec_id)
+        broker_fill = broker_fill_map.get(exec_id)
+
+        runtime_exists = runtime_fill is not None
+        audit_exists = audit_fill is not None
+        broker_exists = broker_fill is not None
+
+        # =================================================
+        # MISSING FILLS
+        # =================================================
+
+        if broker_exists and not runtime_exists:
+
+            execution_drift_rows.append(
+                {
+                    "type": "MISSING_RUNTIME_FILL",
+                    "exec_id": exec_id,
+                    "symbol": broker_fill.get("symbol"),
+                    "broker_qty": broker_fill.get("qty"),
+                    "runtime_qty": 0,
+                    "severity": "HIGH",
+                }
+            )
+
+        if broker_exists and not audit_exists:
+
+            execution_drift_rows.append(
+                {
+                    "type": "MISSING_AUDIT_FILL",
+                    "exec_id": exec_id,
+                    "symbol": broker_fill.get("symbol"),
+                    "broker_qty": broker_fill.get("qty"),
+                    "audit_qty": 0,
+                    "severity": "HIGH",
+                }
+            )
+
+        if runtime_exists and not broker_exists:
+
+            execution_drift_rows.append(
+                {
+                    "type": "ORPHAN_RUNTIME_FILL",
+                    "exec_id": exec_id,
+                    "symbol": runtime_fill.get("symbol"),
+                    "runtime_qty": runtime_fill.get("qty"),
+                    "severity": "MEDIUM",
+                }
+            )
+
+        # =================================================
+        # QUANTITY CHECK
+        # =================================================
+
+        if broker_exists and runtime_exists:
+
+            broker_qty = float(
+                broker_fill.get("qty", 0)
+            )
+
+            runtime_qty = float(
+                runtime_fill.get("qty", 0)
+            )
+
+            if abs(broker_qty - runtime_qty) > 0.0001:
+
+                execution_drift_rows.append(
+                    {
+                        "type": "QTY_MISMATCH",
+                        "exec_id": exec_id,
+                        "symbol": broker_fill.get("symbol"),
+                        "broker_qty": broker_qty,
+                        "runtime_qty": runtime_qty,
+                        "severity": "HIGH",
+                    }
+                )
+
+        # =================================================
+        # PRICE CHECK
+        # =================================================
+
+        if broker_exists and runtime_exists:
+
+            broker_price = float(
+                broker_fill.get("price", 0)
+            )
+
+            runtime_price = float(
+                runtime_fill.get("price", 0)
+            )
+
+            if abs(broker_price - runtime_price) > 0.01:
+
+                execution_drift_rows.append(
+                    {
+                        "type": "PRICE_MISMATCH",
+                        "exec_id": exec_id,
+                        "symbol": broker_fill.get("symbol"),
+                        "broker_price": broker_price,
+                        "runtime_price": runtime_price,
+                        "severity": "MEDIUM",
+                    }
+                )
+
+    execution_match = (
+        len(execution_drift_rows) == 0
+    )
+
+        # =====================================================
+    # EXECUTION RECONCILIATION STATUS
+    # =====================================================
+
+    st.subheader("Broker ↔ Execution Reconciliation")
+
+    e1, e2, e3, e4 = st.columns(4)
+
+    e1.metric("Broker Executions", len(broker_exec_ids))
+    e2.metric("Runtime Executions", len(runtime_fill_ids))
+    e3.metric("Audit Executions", len(audit_fill_ids))
+    e4.metric(
+        "Execution Match",
+        "MATCH" if execution_match else "DRIFT",
+        delta=None if execution_match else f"{len(execution_drift_rows)} drift",
+    )
+
+    execution_report = {
+        "match": execution_match,
+        "broker_exec_ids": len(broker_exec_ids),
+        "runtime_exec_ids": len(runtime_fill_ids),
+        "audit_exec_ids": len(audit_fill_ids),
+        "drift_count": len(execution_drift_rows),
+        "drift_rows": execution_drift_rows,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "truth_source": "broker_execution_reconciliation_warning_only",
+    }
+
+    st.session_state["broker_execution_reconciliation_report"] = execution_report
+
+    if execution_match:
+        st.success(
+            "✅ Broker execution reconciliation MATCH "
+            "(broker/runtime/audit executions aligned)"
+        )
+    else:
+        st.error(
+            "🚨 Broker execution drift detected. "
+            "No automatic repair was applied."
+        )
+
+        st.dataframe(
+            arrow_safe_df(execution_drift_rows),
+            width="stretch",
+            hide_index=True,
+        )
+
+    with st.expander("Broker Execution Reconciliation Report", expanded=False):
+        st.json(execution_report)
+
+    st.divider()
+
     # -----------------------------------------------------
     # SNAPSHOT FRESHNESS
     # -----------------------------------------------------
