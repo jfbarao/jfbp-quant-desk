@@ -937,6 +937,7 @@ def run_page():
 
     # =====================================================
     # BROKER ↔ RUNTIME RECONCILIATION
+    # AUTOMATIC DRIFT DETECTION — WARNING ONLY
     # =====================================================
 
     st.subheader("Broker ↔ Runtime Reconciliation")
@@ -1001,31 +1002,166 @@ def run_page():
         broker_snapshot_timestamp
     )
 
-    broker_match = (
-        broker_snapshot_available
-        and not missing_in_broker
-        and not unexpected_in_broker
-        and not qty_mismatches
-    )
-
     broker_drift_count = (
         len(missing_in_broker)
         + len(unexpected_in_broker)
         + len(qty_mismatches)
     )
 
-    st.session_state["broker_auto_drift_report"] = {
+    broker_match = (
+        broker_snapshot_available
+        and broker_drift_count == 0
+    )
+
+    # -----------------------------------------------------
+    # SNAPSHOT FRESHNESS
+    # -----------------------------------------------------
+
+    snapshot_age_seconds = None
+    snapshot_age_minutes = None
+    snapshot_is_stale = False
+
+    if broker_snapshot_timestamp:
+
+        try:
+
+            snapshot_dt = datetime.fromisoformat(
+                str(broker_snapshot_timestamp)
+                .replace("Z", "+00:00")
+            )
+
+            now_dt = datetime.now(timezone.utc)
+
+            snapshot_age_seconds = (
+                now_dt - snapshot_dt
+            ).total_seconds()
+
+            snapshot_age_minutes = round(
+                snapshot_age_seconds / 60,
+                2,
+            )
+
+            snapshot_is_stale = snapshot_age_seconds > 3600
+
+        except Exception:
+
+            snapshot_age_seconds = None
+            snapshot_age_minutes = None
+            snapshot_is_stale = True
+
+    # -----------------------------------------------------
+    # DRIFT ROWS
+    # -----------------------------------------------------
+
+    drift_rows = []
+
+    for symbol in missing_in_broker:
+
+        portfolio_qty = (
+            portfolio_positions_normalized
+            .get(symbol, {})
+            .get("signed_qty", 0)
+        )
+
+        drift_rows.append(
+            {
+                "Type": "MISSING_IN_BROKER",
+                "Symbol": symbol,
+                "Broker Qty": 0,
+                "Portfolio Qty": portfolio_qty,
+                "Delta": 0 - float(portfolio_qty or 0),
+                "Severity": "HIGH",
+            }
+        )
+
+    for symbol in unexpected_in_broker:
+
+        broker_qty = (
+            broker_positions_normalized
+            .get(symbol, {})
+            .get("signed_qty", 0)
+        )
+
+        drift_rows.append(
+            {
+                "Type": "UNEXPECTED_IN_BROKER",
+                "Symbol": symbol,
+                "Broker Qty": broker_qty,
+                "Portfolio Qty": 0,
+                "Delta": float(broker_qty or 0),
+                "Severity": "HIGH",
+            }
+        )
+
+    for row in qty_mismatches:
+
+        drift_rows.append(
+            {
+                "Type": "QTY_MISMATCH",
+                "Symbol": row["symbol"],
+                "Broker Qty": row["broker_qty"],
+                "Portfolio Qty": row["portfolio_qty"],
+                "Delta": row["delta"],
+                "Severity": "MEDIUM",
+            }
+        )
+
+    # -----------------------------------------------------
+    # AUTO DRIFT STATE
+    # -----------------------------------------------------
+
+    if not broker_snapshot_available:
+
+        broker_drift_state = "NO_SNAPSHOT"
+        broker_drift_severity = "INFO"
+
+    elif snapshot_is_stale:
+
+        broker_drift_state = "STALE_SNAPSHOT"
+        broker_drift_severity = "WARNING"
+
+    elif broker_match:
+
+        broker_drift_state = "MATCH"
+        broker_drift_severity = "OK"
+
+    else:
+
+        broker_drift_state = "DRIFT"
+        broker_drift_severity = "CRITICAL"
+
+    auto_drift_report = {
+        "state": broker_drift_state,
+        "severity": broker_drift_severity,
         "snapshot_available": broker_snapshot_available,
+        "snapshot_timestamp": broker_snapshot_timestamp,
+        "snapshot_age_seconds": snapshot_age_seconds,
+        "snapshot_age_minutes": snapshot_age_minutes,
+        "snapshot_is_stale": snapshot_is_stale,
         "broker_match": broker_match,
         "drift_count": broker_drift_count,
+        "missing_in_broker_count": len(missing_in_broker),
+        "unexpected_in_broker_count": len(unexpected_in_broker),
+        "qty_mismatch_count": len(qty_mismatches),
         "missing_in_broker": list(missing_in_broker),
         "unexpected_in_broker": list(unexpected_in_broker),
         "qty_mismatches": list(qty_mismatches),
+        "drift_rows": list(drift_rows),
         "checked_at": datetime.now(timezone.utc).isoformat(),
-        "truth_source": "database_auto_warning_only",
+        "truth_source": "database_auto_drift_detector_warning_only",
+        "repair_applied": False,
     }
 
-    b1, b2, b3, b4 = st.columns(4)
+    st.session_state["broker_auto_drift_report"] = auto_drift_report
+    st.session_state["broker_auto_drift_state"] = broker_drift_state
+    st.session_state["broker_auto_drift_severity"] = broker_drift_severity
+    st.session_state["broker_auto_drift_count"] = broker_drift_count
+
+    # -----------------------------------------------------
+    # METRICS
+    # -----------------------------------------------------
+
+    b1, b2, b3, b4, b5 = st.columns(5)
 
     b1.metric(
         "Broker Snapshot",
@@ -1052,25 +1188,41 @@ def run_page():
         ),
     )
 
-    if not broker_snapshot_available:
+    b5.metric(
+        "Drift State",
+        broker_drift_state,
+    )
+
+    # -----------------------------------------------------
+    # STATUS MESSAGES
+    # -----------------------------------------------------
+
+    if broker_drift_state == "NO_SNAPSHOT":
 
         st.info(
             "No cached broker snapshot available yet. "
             "Go to Live IBKR → Pull Broker Snapshot."
         )
 
-    elif broker_match:
+    elif broker_drift_state == "MATCH":
 
         st.success(
             "✅ Broker reconciliation: MATCH "
             "(cached broker positions align with portfolio runtime)"
         )
 
+    elif broker_drift_state == "STALE_SNAPSHOT":
+
+        st.warning(
+            "⚠️ Broker snapshot is stale. Pull a fresh broker snapshot "
+            "before applying repair operations."
+        )
+
     else:
 
         st.error(
-            "🚨 Automatic broker drift warning: broker snapshot does not match "
-            "portfolio runtime. No automatic repair was applied."
+            "🚨 Automatic broker drift detected: broker snapshot does not "
+            "match portfolio runtime. No automatic repair was applied."
         )
 
         st.caption(
@@ -1080,46 +1232,6 @@ def run_page():
             f"Quantity mismatches: {len(qty_mismatches)}"
         )
 
-        drift_rows = []
-
-        for symbol in missing_in_broker:
-
-            drift_rows.append(
-                {
-                    "Type": "MISSING_IN_BROKER",
-                    "Symbol": symbol,
-                    "Broker Qty": 0,
-                    "Portfolio Qty": portfolio_positions_normalized
-                    .get(symbol, {})
-                    .get("signed_qty", 0),
-                }
-            )
-
-        for symbol in unexpected_in_broker:
-
-            drift_rows.append(
-                {
-                    "Type": "UNEXPECTED_IN_BROKER",
-                    "Symbol": symbol,
-                    "Broker Qty": broker_positions_normalized
-                    .get(symbol, {})
-                    .get("signed_qty", 0),
-                    "Portfolio Qty": 0,
-                }
-            )
-
-        for row in qty_mismatches:
-
-            drift_rows.append(
-                {
-                    "Type": "QTY_MISMATCH",
-                    "Symbol": row["symbol"],
-                    "Broker Qty": row["broker_qty"],
-                    "Portfolio Qty": row["portfolio_qty"],
-                    "Delta": row["delta"],
-                }
-            )
-
         if drift_rows:
 
             st.dataframe(
@@ -1128,50 +1240,28 @@ def run_page():
                 hide_index=True,
             )
 
+    # -----------------------------------------------------
+    # SNAPSHOT DETAILS
+    # -----------------------------------------------------
+
     if broker_snapshot_timestamp:
-
-        snapshot_age_seconds = None
-
-        try:
-
-            snapshot_dt = datetime.fromisoformat(
-                str(broker_snapshot_timestamp)
-                .replace("Z", "+00:00")
-            )
-
-            now_dt = datetime.now(timezone.utc)
-
-            snapshot_age_seconds = (
-                now_dt - snapshot_dt
-            ).total_seconds()
-
-        except Exception:
-
-            snapshot_age_seconds = None
 
         st.caption(
             f"Broker snapshot timestamp: "
             f"{broker_snapshot_timestamp}"
         )
 
-        if snapshot_age_seconds is not None:
-
-            snapshot_age_minutes = round(
-                snapshot_age_seconds / 60,
-                2,
-            )
+        if snapshot_age_minutes is not None:
 
             st.session_state[
                 "broker_snapshot_age_minutes"
             ] = snapshot_age_minutes
 
-            if snapshot_age_seconds > 3600:
+            if snapshot_is_stale:
 
                 st.warning(
-                    "⚠️ Broker snapshot is stale "
-                    f"({snapshot_age_minutes} minutes old). "
-                    "Pull a fresh broker snapshot before "
-                    "applying repair operations."
+                    "⚠️ Broker snapshot freshness STALE "
+                    f"({snapshot_age_minutes} minutes old)"
                 )
 
             else:
@@ -1190,6 +1280,12 @@ def run_page():
                 for e in broker_snapshot_errors
             )
         )
+
+    with st.expander(
+        "Automatic Broker Drift Detector Report",
+        expanded=False,
+    ):
+        st.json(auto_drift_report)
 
     st.divider()
 
