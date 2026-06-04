@@ -1033,6 +1033,44 @@ def init_core():
     # LIVE CALLBACK WIRING
     # =====================================================
 
+    def _broker_fill_journal_callback(fill_event):
+        try:
+            if not isinstance(fill_event, dict):
+                return
+
+            journal_event = dict(fill_event)
+
+            journal_event["event"] = (
+                journal_event.get("event")
+                or "BROKER_EXECUTION_FILL"
+            )
+
+            journal_event["event_type"] = "BROKER_EXECUTION_FILL"
+            journal_event["source"] = (
+                journal_event.get("source")
+                or "ibkr_live_gateway"
+            )
+            journal_event["broker_fill_journaled"] = True
+            journal_event["journal_source"] = "live_gateway_callback"
+            journal_event["is_true_fill"] = True
+
+            if audit_store is not None and hasattr(audit_store, "record_event"):
+                audit_store.record_event(
+                    "BROKER_EXECUTION_FILL",
+                    journal_event,
+                )
+
+            if audit_store is not None and hasattr(audit_store, "record_fill"):
+                audit_store.record_fill(journal_event)
+
+            st.session_state["last_broker_fill_journal_event"] = journal_event
+            st.session_state["last_broker_fill_journal_status"] = "RECORDED"
+
+        except Exception as exc:
+            st.session_state["last_broker_fill_journal_status"] = (
+                f"FAILED: {exc}"
+            )
+
     if (
         mode == "LIVE"
         and hasattr(gateway, "on_fill")
@@ -1050,11 +1088,20 @@ def init_core():
             pass
 
         try:
+            gateway.on_fill(_broker_fill_journal_callback)
+        except Exception:
+            pass
+
+        try:
             gateway.on_order_update(oms.ingest_broker_order_status)
         except Exception:
             pass
 
         st.session_state["live_gateway_callbacks_bound"] = True
+        st.session_state["broker_fill_journal_callback_bound"] = True
+
+    else:
+        st.session_state["broker_fill_journal_callback_bound"] = False
 
     # =====================================================
     # PIPELINE
@@ -1113,7 +1160,6 @@ def init_core():
 
         if hasattr(pipeline, "mode"):
             pipeline.mode = mode
-
     # =====================================================
     # SCANNER
     # =====================================================
