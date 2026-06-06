@@ -1,13 +1,16 @@
 # =========================================================
-# 🧠 IBKR GATEWAY v3.4 — REAL IBKR CONNECTION + CALLBACKS
+# 🧠 IBKR GATEWAY v3.5 — REAL IBKR CONNECTION + SAFE CALLBACKS
 # LIVE MARKET DATA SUBSCRIPTION FIX
+# EXECUTION RECOVERY HARD DEDUPE
 # LIVE-READY SAFE
 # =========================================================
 
 from __future__ import annotations
 
+import threading
 import time
-from typing import Dict, Any, Optional, List, Callable
+from datetime import datetime, timezone
+from typing import Any, Callable, Dict, List, Optional
 
 import pandas as pd
 
@@ -20,6 +23,8 @@ SIM = "SIM"
 LIVE = "LIVE"
 BACKTEST = "BACKTEST"
 
+TRUTH_SOURCE = "ibkr_gateway_v3_5"
+
 
 # =========================================================
 # 🧠 IBKR GATEWAY
@@ -29,19 +34,20 @@ class IBKRGateway:
 
     def __init__(self, mode: str = SIM):
 
-        self.mode = str(mode).upper()
+        self.mode = str(mode or SIM).upper().strip()
 
         self.ui_connected = False
         self.broker_connected = False
 
         self.host: Optional[str] = None
         self.port: Optional[int] = None
-        self.client_id: int = 7
+        self.client_id: Optional[int] = 7
 
-        self.last_error: Optional[str] = None
+        self.last_error: str = ""
         self.ib_client = None
 
         self.market_data = None
+        self.market_data_type = 3
 
         self.positions: Dict[str, float] = {}
         self.last_quotes: Dict[str, Dict[str, Any]] = {}
@@ -49,6 +55,24 @@ class IBKRGateway:
 
         self.fill_callbacks: List[Callable[[Dict[str, Any]], None]] = []
         self.order_callbacks: List[Callable[[Dict[str, Any]], None]] = []
+        self.error_callbacks: List[Callable[[Dict[str, Any]], None]] = []
+
+        self.execution_cache: Dict[str, Dict[str, Any]] = {}
+        self.execution_detail_cache: List[Dict[str, Any]] = []
+        self._seen_exec_ids: set[str] = set()
+        self._execution_recovery_running = False
+        self.last_execution_recovery_report: Dict[str, Any] = {}
+
+        self.open_orders_cache: List[Dict[str, Any]] = []
+        self.account_summary_cache: List[Dict[str, Any]] = []
+
+        self.last_positions_refresh: Optional[str] = None
+        self.last_open_orders_refresh: Optional[str] = None
+        self.last_account_refresh: Optional[str] = None
+        self.last_execution_recovery_refresh: Optional[str] = None
+
+        self._lock = threading.RLock()
+        self._events_bound = False
 
         self.last_quotes_df = pd.DataFrame(
             columns=["symbol", "price", "time"]
@@ -80,26 +104,63 @@ class IBKRGateway:
         self.market_data = market_data
 
     def on_fill(self, callback):
-        if callable(callback):
+        if callable(callback) and callback not in self.fill_callbacks:
             self.fill_callbacks.append(callback)
 
     def on_order_update(self, callback):
-        if callable(callback):
+        if callable(callback) and callback not in self.order_callbacks:
             self.order_callbacks.append(callback)
 
-    def _emit_fill(self, fill: Dict[str, Any]) -> None:
+    def on_error(self, callback):
+        if callable(callback) and callback not in self.error_callbacks:
+            self.error_callbacks.append(callback)
+
+    def _emit_fill(self, fill: Dict[str, Any]) -> bool:
+        """
+        Emits a fill once per exec_id.
+
+        This is the hard gate that prevents recovered historical IBKR executions
+        from being replayed into OMS/runtime over and over.
+        """
+
+        exec_id = self._execution_id(fill)
+
+        if exec_id:
+            with self._lock:
+                if exec_id in self._seen_exec_ids:
+                    self.last_error = f"Duplicate execution ignored: {exec_id}"
+                    return False
+
+                self._seen_exec_ids.add(exec_id)
+                self.execution_cache[exec_id] = dict(fill)
+
+                if not any(
+                    self._execution_id(row) == exec_id
+                    for row in self.execution_detail_cache
+                ):
+                    self.execution_detail_cache.append(dict(fill))
+
         for callback in list(self.fill_callbacks):
             try:
-                callback(fill)
+                callback(dict(fill))
             except Exception as exc:
                 self.last_error = f"Fill callback failed: {exc}"
+
+        return True
 
     def _emit_order_update(self, event: Dict[str, Any]) -> None:
         for callback in list(self.order_callbacks):
             try:
-                callback(event)
+                callback(dict(event))
             except Exception as exc:
                 self.last_error = f"Order callback failed: {exc}"
+
+    def _emit_error(self, event: Dict[str, Any]) -> None:
+        for callback in list(self.error_callbacks):
+            try:
+                callback(dict(event))
+            except Exception as exc:
+                self.last_error = f"Error callback failed: {exc}"
 
     # =====================================================
     # RUNTIME SAFETY
@@ -121,6 +182,39 @@ class IBKRGateway:
 
         if not hasattr(self, "order_callbacks") or self.order_callbacks is None:
             self.order_callbacks = []
+
+        if not hasattr(self, "error_callbacks") or self.error_callbacks is None:
+            self.error_callbacks = []
+
+        if not hasattr(self, "execution_cache") or self.execution_cache is None:
+            self.execution_cache = {}
+
+        if not hasattr(self, "execution_detail_cache") or self.execution_detail_cache is None:
+            self.execution_detail_cache = []
+
+        if not hasattr(self, "_seen_exec_ids") or self._seen_exec_ids is None:
+            self._seen_exec_ids = set()
+
+        for row in list(self.execution_detail_cache):
+            exec_id = self._execution_id(row)
+            if exec_id:
+                self._seen_exec_ids.add(exec_id)
+                self.execution_cache.setdefault(exec_id, dict(row))
+
+        if not hasattr(self, "open_orders_cache") or self.open_orders_cache is None:
+            self.open_orders_cache = []
+
+        if not hasattr(self, "account_summary_cache") or self.account_summary_cache is None:
+            self.account_summary_cache = []
+
+        if not hasattr(self, "_lock") or self._lock is None:
+            self._lock = threading.RLock()
+
+        if not hasattr(self, "_execution_recovery_running"):
+            self._execution_recovery_running = False
+
+        if not hasattr(self, "_events_bound"):
+            self._events_bound = False
 
         if self.last_quotes_df is None:
             self.last_quotes_df = pd.DataFrame(
@@ -145,7 +239,34 @@ class IBKRGateway:
                 columns=["symbol", "pnl"]
             )
 
-        # =====================================================
+    def _now(self) -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    def _safe_float(self, value: Any, default: float = 0.0) -> float:
+        try:
+            return float(value if value is not None else default)
+        except Exception:
+            return default
+
+    def _safe_str(self, value: Any) -> str:
+        try:
+            return str(value or "").strip()
+        except Exception:
+            return ""
+
+    def _execution_id(self, row: Any) -> str:
+        if not isinstance(row, dict):
+            return ""
+
+        return self._safe_str(
+            row.get("exec_id")
+            or row.get("execution_id")
+            or row.get("execution_key")
+            or row.get("dedupe_key")
+            or ""
+        )
+
+    # =====================================================
     # CONNECTION
     # =====================================================
 
@@ -154,10 +275,13 @@ class IBKRGateway:
         host: str = "127.0.0.1",
         port: int = 7497,
         client_id: int = 7,
+        timeout: float = 10.0,
     ) -> bool:
 
         try:
             from ib_insync import IB
+
+            self.ensure_runtime_fields()
 
             self.host = host
             self.port = int(port)
@@ -166,16 +290,16 @@ class IBKRGateway:
             if self.ib_client is None:
                 self.ib_client = IB()
 
+            self._bind_ib_events()
+
             if not self.ib_client.isConnected():
                 self.ib_client.connect(
                     host=self.host,
                     port=self.port,
                     clientId=self.client_id,
-                    timeout=10,
+                    timeout=timeout,
                 )
 
-            # Prefer delayed market data, but do not request quotes here.
-            # Connect must stay fast and socket-only.
             try:
                 self.ib_client.reqMarketDataType(3)
                 self.market_data_type = 3
@@ -189,9 +313,10 @@ class IBKRGateway:
 
             # IMPORTANT:
             # Do NOT call refresh_all() during connect.
-            # refresh_all() may request market/account/position data and can make
-            # Live IBKR / Portfolio pages hang while IBKR resolves tickers.
-            self.last_error = ""
+            # Connect must stay socket-only and fast.
+
+            if self.broker_connected:
+                self.last_error = ""
 
             return self.broker_connected
 
@@ -206,7 +331,7 @@ class IBKRGateway:
         try:
             if self.ib_client is not None and self.ib_client.isConnected():
 
-                for symbol, ticker in list(self.market_subscriptions.items()):
+                for _, ticker in list(self.market_subscriptions.items()):
                     try:
                         self.ib_client.cancelMktData(ticker.contract)
                     except Exception:
@@ -215,23 +340,27 @@ class IBKRGateway:
                 self.market_subscriptions = {}
                 self.ib_client.disconnect()
 
-        except Exception:
-            pass
+        except Exception as exc:
+            self.last_error = f"Disconnect warning: {exc}"
 
         self.ui_connected = False
         self.broker_connected = False
         self.host = None
         self.port = None
         self.client_id = None
-        self.last_error = ""
         return True
 
     def verify_connection(self) -> bool:
+
         try:
             if self.ib_client is None:
                 return False
 
-            is_connected = getattr(self.ib_client, "isConnected", None)
+            is_connected = getattr(
+                self.ib_client,
+                "isConnected",
+                None,
+            )
 
             if callable(is_connected):
                 return bool(is_connected())
@@ -241,32 +370,215 @@ class IBKRGateway:
         except Exception:
             return False
 
+    def is_connected(self) -> bool:
+        return self.verify_connection()
+
+    @property
+    def connected(self) -> bool:
+        return self.verify_connection()
+
+    # =====================================================
+    # IBKR EVENT BINDING
+    # =====================================================
+
     def _bind_ib_events(self) -> None:
 
         if self.ib_client is None:
             return
 
-        try:
-            self.ib_client.execDetailsEvent -= self._on_exec_details
-        except Exception:
-            pass
+        if getattr(self, "_events_bound", False):
+            return
+
+        bindings = (
+            ("execDetailsEvent", self._on_exec_details),
+            ("orderStatusEvent", self._on_order_status),
+            ("positionEvent", self._on_position),
+            ("errorEvent", self._on_error),
+            ("disconnectedEvent", self._on_disconnect),
+        )
+
+        for event_name, handler in bindings:
+            try:
+                event_obj = getattr(self.ib_client, event_name, None)
+
+                if event_obj is None:
+                    continue
+
+                try:
+                    event_obj -= handler
+                except Exception:
+                    pass
+
+                event_obj += handler
+
+            except Exception as exc:
+                self.last_error = f"IBKR event bind failed {event_name}: {exc}"
+
+        self._events_bound = True
+
+    # =====================================================
+    # EXECUTION RECOVERY
+    # =====================================================
+
+    def recover_broker_executions(
+        self,
+        timeout_seconds: float = 5.0,
+    ) -> List[Dict[str, Any]]:
+        """
+        Safe broker execution recovery.
+
+        - Calls IBKR reqExecutions().
+        - Normalizes returned executions.
+        - Emits only executions whose exec_id has not already been seen.
+        - Never replays historical duplicate fills into runtime.
+        - Runs in a daemon worker so Streamlit does not freeze forever.
+        """
+
+        self.ensure_runtime_fields()
+
+        if getattr(
+            self,
+            "_execution_recovery_running",
+            False,
+        ):
+            self.last_error = "Execution recovery already running."
+            return []
+
+        if not self.verify_connection():
+            self.last_error = "IBKR broker connection unavailable."
+            return []
+
+        if self.ib_client is None:
+            self.last_error = "IBKR client missing."
+            return []
+
+        self._execution_recovery_running = True
+        self.last_error = ""
+
+        recovered_events: List[Dict[str, Any]] = []
+        errors: List[str] = []
+        counts = {
+            "recovered": 0,
+            "new": 0,
+            "duplicates": 0,
+        }
+
+        lock = threading.RLock()
+
+        def worker() -> None:
+            try:
+                executions = self.ib_client.reqExecutions()
+
+                if executions is None:
+                    executions = []
+
+                for fill in list(executions):
+                    row = self._normalize_ib_fill(
+                        trade=None,
+                        fill=fill,
+                        source="ibkr_execution_recovery",
+                    )
+
+                    exec_id = self._execution_id(row)
+
+                    if not exec_id:
+                        errors.append("Recovered execution ignored: missing exec_id")
+                        continue
+
+                    with lock:
+                        counts["recovered"] += 1
+
+                    # Hard dedupe BEFORE emit/persist/replay.
+                    emitted = self._emit_fill(row)
+
+                    with lock:
+                        if emitted:
+                            counts["new"] += 1
+                            recovered_events.append(row)
+                        else:
+                            counts["duplicates"] += 1
+
+            except Exception as exc:
+                errors.append(str(exc))
+
+        thread = threading.Thread(
+            target=worker,
+            daemon=True,
+        )
 
         try:
-            self.ib_client.orderStatusEvent -= self._on_order_status
-        except Exception:
-            pass
+            thread.start()
+            thread.join(timeout_seconds)
 
-        try:
-            self.ib_client.positionEvent -= self._on_position
-        except Exception:
-            pass
+            if thread.is_alive():
+                errors.append("Execution recovery timed out.")
 
-        try:
-            self.ib_client.execDetailsEvent += self._on_exec_details
-            self.ib_client.orderStatusEvent += self._on_order_status
-            self.ib_client.positionEvent += self._on_position
+            report = {
+                "status": "OK" if not errors else "ERROR",
+                "timestamp": self._now(),
+                "recovered": counts["recovered"],
+                "new": counts["new"],
+                "duplicates": counts["duplicates"],
+                "errors": list(errors),
+                "cache_count": len(self.execution_cache),
+                "truth_source": TRUTH_SOURCE,
+            }
+
+            self.last_execution_recovery_report = dict(report)
+            self.last_execution_recovery_refresh = self._now()
+
+            if errors:
+                self.last_error = "Execution recovery failed: " + "; ".join(errors)
+            else:
+                self.last_error = (
+                    "Execution recovery OK: "
+                    f"recovered={counts['recovered']} "
+                    f"new={counts['new']} "
+                    f"duplicates={counts['duplicates']}"
+                )
+
+            return list(recovered_events)
+
         except Exception as exc:
-            self.last_error = f"IB event bind failed: {exc}"
+            self.last_error = f"Execution recovery failed: {exc}"
+            self.last_execution_recovery_report = {
+                "status": "ERROR",
+                "timestamp": self._now(),
+                "recovered": counts["recovered"],
+                "new": counts["new"],
+                "duplicates": counts["duplicates"],
+                "errors": [str(exc)],
+                "truth_source": TRUTH_SOURCE,
+            }
+            return []
+
+        finally:
+            self._execution_recovery_running = False
+
+    def recover_executions_from_broker(
+        self,
+        timeout_seconds: float = 5.0,
+    ) -> Dict[str, Any]:
+
+        before = len(self.execution_cache)
+
+        events = self.recover_broker_executions(
+            timeout_seconds=timeout_seconds,
+        )
+
+        report = dict(self.last_execution_recovery_report or {})
+        report.setdefault("events", events)
+        report.setdefault("before_cache_count", before)
+        report.setdefault("after_cache_count", len(self.execution_cache))
+
+        return report
+
+    def get_execution_cache(self) -> List[Dict[str, Any]]:
+        self.ensure_runtime_fields()
+        return list(self.execution_detail_cache)
+
+    def execution_snapshot(self) -> List[Dict[str, Any]]:
+        return self.get_execution_cache()
 
     # =====================================================
     # IBKR EVENT HANDLERS — EXECUTION INGESTION SAFE
@@ -283,114 +595,156 @@ class IBKRGateway:
 
         return action
 
-    def _safe_float(self, value: Any, default: float = 0.0) -> float:
-        try:
-            return float(value or default)
-        except Exception:
-            return default
+    def _normalize_ib_fill(
+        self,
+        trade: Any,
+        fill: Any,
+        source: str = "ibkr_execDetailsEvent",
+    ) -> Dict[str, Any]:
 
-    def _safe_str(self, value: Any) -> str:
-        try:
-            return str(value or "").strip()
-        except Exception:
-            return ""
+        contract = getattr(fill, "contract", None)
+        execution = getattr(fill, "execution", None)
 
-    def _on_exec_details(self, trade, fill):
-
-        try:
-            contract = getattr(fill, "contract", None)
-            execution = getattr(fill, "execution", None)
-
-            if execution is None:
-                self.last_error = "execDetails ignored: missing execution object"
-                return
-
-            symbol = self._safe_str(getattr(contract, "symbol", "")).upper()
-            action = self._normalize_ib_action(getattr(execution, "side", ""))
-
-            qty = self._safe_float(
-                getattr(execution, "shares", None)
-                or getattr(execution, "cumQty", None)
-                or 0
-            )
-
-            price = self._safe_float(
-                getattr(execution, "price", None)
-                or getattr(execution, "avgPrice", None)
-                or 0
-            )
-
-            exec_id = self._safe_str(getattr(execution, "execId", ""))
-            order_id = self._safe_str(getattr(execution, "orderId", ""))
-            perm_id = self._safe_str(getattr(execution, "permId", ""))
-            account = self._safe_str(getattr(execution, "acctNumber", ""))
-
-            exchange = self._safe_str(getattr(execution, "exchange", ""))
-            currency = self._safe_str(getattr(contract, "currency", ""))
-            sec_type = self._safe_str(getattr(contract, "secType", ""))
-
-            fill_time = getattr(execution, "time", None)
-
-            row = {
-                "symbol": symbol,
-                "action": action,
-                "side": action,
-                "qty": qty,
-                "filled_qty": qty,
-                "fill_qty": qty,
-                "price": price,
-                "fill_price": price,
-                "execution_price": price,
-                "avg_fill_price": price,
-                "execution_id": exec_id,
-                "exec_id": exec_id,
-                "order_id": order_id,
-                "broker_order_id": order_id,
-                "perm_id": perm_id,
-                "account": account,
-                "exchange": exchange,
-                "currency": currency,
-                "sec_type": sec_type,
-                "status": "FILLED",
-                "execution_status": "FILLED",
-                "ib_time": str(fill_time or ""),
-                "source": "ibkr_execDetailsEvent",
+        if execution is None:
+            return {
+                "status": "REJECTED",
+                "reason": "Missing execution object",
+                "source": source,
                 "mode": self.mode,
-                "timestamp": time.time(),
+                "timestamp": self._now(),
+                "truth_source": TRUTH_SOURCE,
             }
 
-            if not row["symbol"]:
-                self.last_error = f"execDetails ignored: missing symbol | exec_id={exec_id}"
+        symbol = self._safe_str(getattr(contract, "symbol", "")).upper()
+        action = self._normalize_ib_action(getattr(execution, "side", ""))
+
+        qty = self._safe_float(
+            getattr(execution, "shares", None)
+            or getattr(execution, "cumQty", None)
+            or 0
+        )
+
+        price = self._safe_float(
+            getattr(execution, "price", None)
+            or getattr(execution, "avgPrice", None)
+            or 0
+        )
+
+        exec_id = self._safe_str(getattr(execution, "execId", ""))
+        order_id = self._safe_str(getattr(execution, "orderId", ""))
+        perm_id = self._safe_str(getattr(execution, "permId", ""))
+        account = self._safe_str(getattr(execution, "acctNumber", ""))
+
+        exchange = self._safe_str(getattr(execution, "exchange", ""))
+        currency = self._safe_str(getattr(contract, "currency", ""))
+        sec_type = self._safe_str(getattr(contract, "secType", ""))
+
+        fill_time = getattr(execution, "time", None)
+
+        row = {
+            "event": "EXECUTION_FILL",
+            "symbol": symbol,
+            "action": action,
+            "side": action,
+            "qty": qty,
+            "quantity": qty,
+            "filled_qty": qty,
+            "fill_qty": qty,
+            "execution_qty": qty,
+            "price": price,
+            "fill_price": price,
+            "execution_price": price,
+            "avg_fill_price": price,
+            "execution_id": exec_id,
+            "exec_id": exec_id,
+            "broker_order_id": order_id,
+            "broker_id": order_id,
+            "order_id": order_id,
+            "perm_id": perm_id,
+            "permId": perm_id,
+            "account": account,
+            "exchange": exchange,
+            "currency": currency,
+            "sec_type": sec_type,
+            "status": "FILLED",
+            "execution_status": "FILLED",
+            "order_status": "FILLED",
+            "ib_time": str(fill_time or ""),
+            "source": source,
+            "mode": self.mode,
+            "is_true_fill": True,
+            "truth_source": TRUTH_SOURCE,
+            "dedupe_key": exec_id,
+            "timestamp": str(fill_time or self._now()),
+            "cached_at": self._now(),
+        }
+
+        if not row["symbol"]:
+            row["status"] = "REJECTED"
+            row["reason"] = f"Missing symbol | exec_id={exec_id}"
+
+        elif row["side"] not in ("BUY", "SELL"):
+            row["status"] = "REJECTED"
+            row["reason"] = f"Invalid side {row['side']} | exec_id={exec_id}"
+
+        elif row["qty"] <= 0:
+            row["status"] = "REJECTED"
+            row["reason"] = f"Invalid qty {row['qty']} | exec_id={exec_id}"
+
+        elif row["price"] <= 0:
+            row["status"] = "REJECTED"
+            row["reason"] = f"Invalid price {row['price']} | exec_id={exec_id}"
+
+        return row
+
+    def _on_exec_details(self, *args):
+
+        try:
+            trade = None
+            fill = None
+
+            for arg in args:
+                if hasattr(arg, "execution") and hasattr(arg, "contract"):
+                    fill = arg
+                elif hasattr(arg, "order") and hasattr(arg, "contract"):
+                    trade = arg
+
+            if fill is None and len(args) >= 2:
+                trade = args[0]
+                fill = args[1]
+
+            if fill is None:
+                self.last_error = "execDetails ignored: missing fill object"
                 return
 
-            if row["side"] not in ("BUY", "SELL"):
-                self.last_error = f"execDetails ignored: invalid side {row['side']} | exec_id={exec_id}"
+            row = self._normalize_ib_fill(
+                trade=trade,
+                fill=fill,
+                source="ibkr_execDetailsEvent",
+            )
+
+            if row.get("status") == "REJECTED":
+                self.last_error = row.get("reason", "execDetails rejected")
                 return
 
-            if row["qty"] <= 0:
-                self.last_error = f"execDetails ignored: invalid qty {row['qty']} | exec_id={exec_id}"
-                return
+            self.update_quote(row["symbol"], row["price"])
 
-            if row["price"] <= 0:
-                self.last_error = f"execDetails ignored: invalid price {row['price']} | exec_id={exec_id}"
-                return
-
-            self.update_quote(symbol, price)
+            # Hard dedupe happens inside _emit_fill().
             self._emit_fill(row)
 
-            try:
-                self.refresh_positions()
-                self.subscribe_market_data(list(self.positions.keys()))
-                self.refresh_market_data()
-            except Exception as exc:
-                self.last_error = f"fill emitted but refresh_positions failed: {exc}"
+            # IMPORTANT:
+            # Do NOT refresh positions, subscribe market data, or request account
+            # data inside the execution callback. That can hang Streamlit and can
+            # mutate runtime repeatedly during recovery.
 
         except Exception as exc:
             self.last_error = f"execDetails handler failed: {exc}"
 
-    def _on_order_status(self, trade):
+    def _on_order_status(self, *args):
 
         try:
+            trade = args[0] if args else None
+
             order = getattr(trade, "order", None)
             status = getattr(trade, "orderStatus", None)
             contract = getattr(trade, "contract", None)
@@ -399,14 +753,17 @@ class IBKRGateway:
                 "symbol": self._safe_str(getattr(contract, "symbol", "")).upper(),
                 "order_id": self._safe_str(getattr(order, "orderId", "")),
                 "broker_order_id": self._safe_str(getattr(order, "orderId", "")),
+                "broker_id": self._safe_str(getattr(order, "orderId", "")),
                 "perm_id": self._safe_str(getattr(order, "permId", "")),
+                "permId": self._safe_str(getattr(order, "permId", "")),
                 "status": self._safe_str(getattr(status, "status", "")).upper(),
                 "filled_qty": self._safe_float(getattr(status, "filled", 0)),
                 "remaining_qty": self._safe_float(getattr(status, "remaining", 0)),
                 "avg_fill_price": self._safe_float(getattr(status, "avgFillPrice", 0)),
                 "source": "ibkr_orderStatusEvent",
                 "mode": self.mode,
-                "timestamp": time.time(),
+                "timestamp": self._now(),
+                "truth_source": TRUTH_SOURCE,
             }
 
             self._emit_order_update(event)
@@ -414,26 +771,64 @@ class IBKRGateway:
         except Exception as exc:
             self.last_error = f"orderStatus handler failed: {exc}"
 
-    def _on_position(self, position):
+    def _on_position(self, *args):
 
         try:
+            position = args[-1] if args else None
             contract = getattr(position, "contract", None)
 
             symbol = self._safe_str(getattr(contract, "symbol", "")).upper()
             qty = self._safe_float(getattr(position, "position", 0))
-            avg_cost = self._safe_float(getattr(position, "avgCost", 0))
 
             if symbol:
-                self.positions[symbol] = qty
+                if abs(qty) > 0:
+                    self.positions[symbol] = qty
+                elif symbol in self.positions:
+                    self.positions.pop(symbol, None)
 
             self._sync_positions()
 
-            if symbol and abs(qty) > 0:
-                self.subscribe_market_data([symbol])
-                self.refresh_market_data()
+            # Do NOT request market data here. Position callbacks should remain
+            # cache-only.
 
         except Exception as exc:
             self.last_error = f"position handler failed: {exc}"
+
+    def _on_error(self, *args):
+
+        try:
+            event = {
+                "event": "IBKR_ERROR",
+                "args": [str(arg) for arg in args],
+                "timestamp": self._now(),
+                "truth_source": TRUTH_SOURCE,
+            }
+
+            if len(args) >= 3:
+                event["req_id"] = args[0]
+                event["error_code"] = args[1]
+                event["error"] = str(args[2])
+                self.last_error = str(args[2])
+            else:
+                self.last_error = "IBKR error event: " + " | ".join(event["args"])
+
+            self._emit_error(event)
+
+        except Exception as exc:
+            self.last_error = f"error handler failed: {exc}"
+
+    def _on_disconnect(self, *args, **kwargs):
+
+        self.ui_connected = False
+        self.broker_connected = False
+
+        event = {
+            "event": "DISCONNECTED",
+            "timestamp": self._now(),
+            "truth_source": TRUTH_SOURCE,
+        }
+
+        self._emit_error(event)
 
     # =====================================================
     # MARKET DATA / QUOTES
@@ -597,11 +992,32 @@ class IBKRGateway:
         side: str,
     ) -> dict:
 
-        symbol = symbol.upper()
-        side = side.upper()
+        return self.submit_order(
+            symbol=symbol,
+            qty=qty,
+            side=side,
+            order_type="MKT",
+        )
 
-        if not self.ui_connected:
-            raise RuntimeError("Gateway not connected")
+    def submit_order(
+        self,
+        symbol: str,
+        qty: int,
+        side: str,
+        order_type: str = "MKT",
+        limit_price: Optional[float] = None,
+        order_id: Optional[str] = None,
+        exchange: str = "SMART",
+        currency: str = "USD",
+    ) -> Dict[str, Any]:
+
+        symbol = str(symbol or "").upper().strip()
+        side = str(side or "").upper().strip()
+        order_type = str(order_type or "MKT").upper().strip()
+        qty = int(qty)
+
+        if not symbol:
+            raise ValueError("Missing symbol")
 
         if side not in ["BUY", "SELL"]:
             raise ValueError("Invalid side")
@@ -611,14 +1027,17 @@ class IBKRGateway:
 
         if self.mode == SIM:
 
-            current = self.positions.get(symbol, 0)
+            current = self.positions.get(symbol, 0.0)
 
             if side == "BUY":
                 current += qty
             else:
                 current -= qty
 
-            self.positions[symbol] = current
+            if abs(current) > 0:
+                self.positions[symbol] = current
+            else:
+                self.positions.pop(symbol, None)
 
             self._sync_positions()
             self._sync_pnl()
@@ -627,10 +1046,14 @@ class IBKRGateway:
                 "status": "SIM_FILLED",
                 "symbol": symbol,
                 "qty": qty,
+                "quantity": qty,
                 "side": side,
+                "action": side,
                 "price": self.get_quote(symbol),
                 "time": time.time(),
+                "timestamp": self._now(),
                 "mode": self.mode,
+                "truth_source": TRUTH_SOURCE,
             }
 
         if self.mode == LIVE:
@@ -641,32 +1064,68 @@ class IBKRGateway:
             if not self.verify_connection():
                 raise RuntimeError("IBKR client not connected")
 
-            from ib_insync import Stock, MarketOrder
+            from ib_insync import LimitOrder, MarketOrder, Stock
 
-            contract = Stock(symbol, "SMART", "USD")
+            contract = Stock(symbol, exchange, currency)
 
-            action = "BUY" if side == "BUY" else "SELL"
+            if order_type == "MKT":
+                ib_order = MarketOrder(
+                    action=side,
+                    totalQuantity=int(qty),
+                )
 
-            order = MarketOrder(
-                action=action,
-                totalQuantity=int(qty),
+            elif order_type == "LMT":
+                if limit_price is None or float(limit_price) <= 0:
+                    raise ValueError("Limit order requires positive limit_price")
+
+                ib_order = LimitOrder(
+                    action=side,
+                    totalQuantity=int(qty),
+                    lmtPrice=float(limit_price),
+                )
+
+            else:
+                raise ValueError(f"Unsupported order_type: {order_type}")
+
+            trade = self.ib_client.placeOrder(contract, ib_order)
+
+            try:
+                self.ib_client.sleep(0.25)
+            except Exception:
+                pass
+
+            broker_order_id = self._safe_str(
+                getattr(getattr(trade, "order", None), "orderId", "")
             )
 
-            trade = self.ib_client.placeOrder(contract, order)
+            perm_id = self._safe_str(
+                getattr(getattr(trade, "order", None), "permId", "")
+            )
 
-            self.subscribe_market_data([symbol])
-            self.refresh_market_data()
-
-            self.last_error = None
+            self.last_error = ""
 
             return {
                 "status": "LIVE_SENT",
+                "order_status": self._safe_str(
+                    getattr(getattr(trade, "orderStatus", None), "status", "")
+                ).upper() or "SUBMITTED",
+                "order_id": order_id or broker_order_id,
+                "broker_order_id": broker_order_id,
+                "broker_id": broker_order_id,
+                "perm_id": perm_id,
+                "permId": perm_id,
                 "symbol": symbol,
                 "qty": qty,
+                "quantity": qty,
                 "side": side,
+                "action": side,
+                "order_type": order_type,
+                "limit_price": limit_price,
                 "trade": str(trade),
                 "time": time.time(),
+                "timestamp": self._now(),
                 "mode": self.mode,
+                "truth_source": TRUTH_SOURCE,
             }
 
         if self.mode == BACKTEST:
@@ -675,13 +1134,76 @@ class IBKRGateway:
                 "status": "BACKTEST_RECORDED",
                 "symbol": symbol,
                 "qty": qty,
+                "quantity": qty,
                 "side": side,
+                "action": side,
                 "price": self.get_quote(symbol),
                 "time": time.time(),
+                "timestamp": self._now(),
                 "mode": self.mode,
+                "truth_source": TRUTH_SOURCE,
             }
 
         raise RuntimeError(f"Unsupported mode: {self.mode}")
+
+    def cancel_order(self, broker_order_id: str) -> bool:
+
+        if not self.verify_connection():
+            raise RuntimeError("IBKR broker is not connected")
+
+        broker_order_id = self._safe_str(broker_order_id)
+
+        if not broker_order_id:
+            return False
+
+        try:
+            candidates = []
+
+            try:
+                candidates.extend(list(self.ib_client.openTrades()))
+            except Exception:
+                pass
+
+            try:
+                candidates.extend(list(self.ib_client.trades()))
+            except Exception:
+                pass
+
+            seen = set()
+
+            for trade in candidates:
+                order = getattr(trade, "order", None)
+
+                if order is None:
+                    continue
+
+                oid = self._safe_str(getattr(order, "orderId", ""))
+                perm_id = self._safe_str(getattr(order, "permId", ""))
+
+                key = (oid, perm_id)
+
+                if key in seen:
+                    continue
+
+                seen.add(key)
+
+                if broker_order_id in {oid, perm_id}:
+                    self.ib_client.cancelOrder(order)
+
+                    try:
+                        self.ib_client.sleep(0.25)
+                    except Exception:
+                        pass
+
+                    self.refresh_open_orders()
+                    return True
+
+            self.refresh_open_orders()
+            return False
+
+        except Exception as exc:
+            self.last_error = str(exc)
+            return False
 
     # =====================================================
     # POSITION / ACCOUNT READS
@@ -721,14 +1243,20 @@ class IBKRGateway:
                         "exchange": getattr(contract, "exchange", ""),
                         "currency": getattr(contract, "currency", ""),
                         "position": qty,
+                        "qty": qty,
+                        "quantity": qty,
                         "avg_cost": avg_cost,
+                        "avg_price": avg_cost,
+                        "con_id": getattr(contract, "conId", ""),
+                        "timestamp": self._now(),
+                        "truth_source": TRUTH_SOURCE,
                     })
 
                 self.last_positions_df = pd.DataFrame(rows)
+                self.last_positions_refresh = self._now()
 
                 # Broker snapshot sync must remain position-only.
                 # Do NOT subscribe to market data or refresh quotes here.
-                # Market data refresh belongs to a separate manual action.
 
                 return rows
 
@@ -739,8 +1267,130 @@ class IBKRGateway:
             self.last_error = f"refresh_positions failed: {exc}"
             return []
 
+    def positions_snapshot(self) -> List[Dict[str, Any]]:
+        return self.last_positions_df.to_dict("records")
+
     def get_positions(self):
         return self.refresh_positions()
+
+    def refresh_open_orders(self) -> List[Dict[str, Any]]:
+
+        rows: List[Dict[str, Any]] = []
+
+        try:
+            if self.ib_client is not None and self.verify_connection():
+                try:
+                    trades = list(self.ib_client.openTrades())
+                except Exception:
+                    trades = []
+
+                for trade in trades:
+                    order = getattr(trade, "order", None)
+                    status = getattr(trade, "orderStatus", None)
+                    contract = getattr(trade, "contract", None)
+
+                    action = self._safe_str(getattr(order, "action", "")).upper()
+
+                    qty = self._safe_float(
+                        getattr(order, "totalQuantity", 0)
+                    )
+
+                    filled = self._safe_float(
+                        getattr(status, "filled", 0)
+                    )
+
+                    remaining = self._safe_float(
+                        getattr(status, "remaining", 0)
+                    )
+
+                    rows.append({
+                        "broker_order_id": self._safe_str(getattr(order, "orderId", "")),
+                        "broker_id": self._safe_str(getattr(order, "orderId", "")),
+                        "perm_id": self._safe_str(getattr(order, "permId", "")),
+                        "permId": self._safe_str(getattr(order, "permId", "")),
+                        "symbol": self._safe_str(getattr(contract, "symbol", "")).upper(),
+                        "action": action,
+                        "side": action,
+                        "qty": qty,
+                        "quantity": qty,
+                        "filled_qty": filled,
+                        "remaining_qty": remaining,
+                        "order_type": self._safe_str(getattr(order, "orderType", "")),
+                        "limit_price": self._safe_float(getattr(order, "lmtPrice", 0)),
+                        "avg_fill_price": self._safe_float(getattr(status, "avgFillPrice", 0)),
+                        "status": self._safe_str(getattr(status, "status", "")).upper(),
+                        "timestamp": self._now(),
+                        "truth_source": TRUTH_SOURCE,
+                    })
+
+            self.open_orders_cache = list(rows)
+            self.last_open_orders_refresh = self._now()
+            return list(self.open_orders_cache)
+
+        except Exception as exc:
+            self.last_error = f"refresh_open_orders failed: {exc}"
+            return list(self.open_orders_cache)
+
+    def open_orders(self) -> List[Dict[str, Any]]:
+        return list(self.open_orders_cache)
+
+    def get_open_orders(self) -> List[Dict[str, Any]]:
+        return self.refresh_open_orders()
+
+    def refresh_account_summary(self) -> List[Dict[str, Any]]:
+
+        rows: List[Dict[str, Any]] = []
+
+        try:
+            if self.ib_client is not None and self.verify_connection():
+                try:
+                    values = list(self.ib_client.accountValues())
+                except Exception:
+                    values = []
+
+                for item in values:
+                    rows.append({
+                        "account": getattr(item, "account", ""),
+                        "tag": getattr(item, "tag", ""),
+                        "value": getattr(item, "value", ""),
+                        "currency": getattr(item, "currency", ""),
+                        "model_code": getattr(item, "modelCode", ""),
+                        "timestamp": self._now(),
+                        "truth_source": TRUTH_SOURCE,
+                    })
+
+            self.account_summary_cache = list(rows)
+            self.last_account_refresh = self._now()
+            return list(self.account_summary_cache)
+
+        except Exception as exc:
+            self.last_error = f"refresh_account_summary failed: {exc}"
+            return list(self.account_summary_cache)
+
+    def account_summary(self) -> List[Dict[str, Any]]:
+        return list(self.account_summary_cache)
+
+    def get_account_summary(self) -> List[Dict[str, Any]]:
+        return self.refresh_account_summary()
+
+    def pull_broker_snapshot(self) -> Dict[str, Any]:
+
+        positions = self.refresh_positions()
+        open_orders = self.refresh_open_orders()
+        account_summary = self.refresh_account_summary()
+        fills = self.get_execution_cache()
+
+        return {
+            "positions": positions,
+            "open_orders": open_orders,
+            "account_summary": account_summary,
+            "fills": fills,
+            "timestamp": self._now(),
+            "truth_source": TRUTH_SOURCE,
+        }
+
+    def broker_snapshot(self) -> Dict[str, Any]:
+        return self.pull_broker_snapshot()
 
     def refresh_all(self):
 
@@ -784,7 +1434,10 @@ class IBKRGateway:
             {
                 "symbol": s,
                 "position": p,
+                "qty": p,
+                "quantity": p,
                 "avg_cost": 0.0,
+                "avg_price": 0.0,
             }
             for s, p in self.positions.items()
             if abs(float(p or 0)) > 0
@@ -806,13 +1459,31 @@ class IBKRGateway:
 
     def connection_status(self) -> dict:
 
+        broker_connected = self.verify_connection()
+        self.broker_connected = broker_connected
+
         return {
-            "connected": self.ui_connected or self.broker_connected,
+            "connected": self.ui_connected or broker_connected,
             "ui_connected": self.ui_connected,
-            "broker_connected": self.broker_connected,
+            "broker_connected": broker_connected,
+            "status": "CONNECTED" if broker_connected else "DISCONNECTED",
             "mode": self.mode,
             "host": self.host,
             "port": self.port,
             "client_id": self.client_id,
             "error": self.last_error,
+            "positions_count": len(self.positions),
+            "open_orders_count": len(self.open_orders_cache),
+            "account_summary_rows": len(self.account_summary_cache),
+            "execution_cache_count": len(self.execution_cache),
+            "last_positions_refresh": self.last_positions_refresh,
+            "last_open_orders_refresh": self.last_open_orders_refresh,
+            "last_account_refresh": self.last_account_refresh,
+            "last_execution_recovery_refresh": self.last_execution_recovery_refresh,
+            "truth_source": TRUTH_SOURCE,
         }
+
+
+# Backward-compatible aliases
+IBKRGatewayLive = IBKRGateway
+IBKRLiveGateway = IBKRGateway

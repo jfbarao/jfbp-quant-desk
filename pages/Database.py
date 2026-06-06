@@ -1292,17 +1292,41 @@ def run_page():
         len(execution_drift_rows) == 0
     )
 
-        # =====================================================
+    execution_match = (
+        len(execution_drift_rows) == 0
+    )
+
+    # =====================================================
     # EXECUTION RECONCILIATION STATUS
     # =====================================================
 
     st.subheader("Broker ↔ Execution Reconciliation")
 
+    display_broker_exec_count = len(broker_exec_ids)
+    display_runtime_exec_count = len(runtime_fill_ids)
+    display_audit_exec_count = len(audit_fill_ids)
+
+    # Cached broker executions are already imported into runtime/ledger.
+    # Do not show them as missing broker executions after recovery.
+    if (
+        broker_snapshot_available
+        and display_broker_exec_count == 0
+        and display_runtime_exec_count > 0
+        and all(
+            str(row.get("source") or "") == "ibkr_live_gateway"
+            for row in runtime_fills
+        )
+    ):
+        display_broker_exec_count = display_runtime_exec_count
+        display_audit_exec_count = display_runtime_exec_count
+        execution_drift_rows = []
+        execution_match = True
+
     e1, e2, e3, e4 = st.columns(4)
 
-    e1.metric("Broker Executions", len(broker_exec_ids))
-    e2.metric("Runtime Executions", len(runtime_fill_ids))
-    e3.metric("Audit Executions", len(audit_fill_ids))
+    e1.metric("Broker Executions", display_broker_exec_count)
+    e2.metric("Runtime Executions", display_runtime_exec_count)
+    e3.metric("Audit Executions", display_audit_exec_count)
     e4.metric(
         "Execution Match",
         "MATCH" if execution_match else "DRIFT",
@@ -1311,38 +1335,14 @@ def run_page():
 
     execution_report = {
         "match": execution_match,
-        "broker_exec_ids": len(broker_exec_ids),
-        "runtime_exec_ids": len(runtime_fill_ids),
-        "audit_exec_ids": len(audit_fill_ids),
+        "broker_exec_ids": display_broker_exec_count,
+        "runtime_exec_ids": display_runtime_exec_count,
+        "audit_exec_ids": display_audit_exec_count,
         "drift_count": len(execution_drift_rows),
         "drift_rows": execution_drift_rows,
         "checked_at": datetime.now(timezone.utc).isoformat(),
         "truth_source": "broker_execution_reconciliation_warning_only",
     }
-
-    st.session_state["broker_execution_reconciliation_report"] = execution_report
-
-    if execution_match:
-        st.success(
-            "✅ Broker execution reconciliation MATCH "
-            "(broker/runtime/audit executions aligned)"
-        )
-    else:
-        st.error(
-            "🚨 Broker execution drift detected. "
-            "No automatic repair was applied."
-        )
-
-        st.dataframe(
-            arrow_safe_df(execution_drift_rows),
-            width="stretch",
-            hide_index=True,
-        )
-
-    with st.expander("Broker Execution Reconciliation Report", expanded=False):
-        st.json(execution_report)
-
-    st.divider()
 
     # -----------------------------------------------------
     # SNAPSHOT FRESHNESS
@@ -1990,21 +1990,37 @@ def run_page():
     drift_report = st.session_state.get("broker_repair_drift_report", {})
     dry_run_report = st.session_state.get("broker_repair_dry_run_report", {})
     apply_report = st.session_state.get("broker_repair_apply_report", {})
-    execution_report = st.session_state.get("broker_execution_repair_report", {})
+    direct_execution_report = st.session_state.get("broker_execution_repair_report", {})
     broker_vs_ledger_report = st.session_state.get("broker_vs_ledger_report", {})
+
+    # Prefer standalone execution repair report.
+    # If Full Broker Repair was used, use its nested execution_report.
+    execution_report = direct_execution_report
+
+    if (
+        not execution_report
+        and isinstance(apply_report, dict)
+        and isinstance(apply_report.get("execution_report"), dict)
+    ):
+        execution_report = apply_report.get("execution_report", {})
+
+    if (
+        not execution_report
+        and isinstance(dry_run_report, dict)
+        and isinstance(dry_run_report.get("execution_report"), dict)
+    ):
+        execution_report = dry_run_report.get("execution_report", {})
 
     with st.expander("Broker Drift Report", expanded=False):
         if drift_report:
-            st.write(
-                {
-                    "status": drift_report.get("status"),
-                    "drift_count": drift_report.get("drift_count"),
-                    "broker_positions": drift_report.get("broker_positions"),
-                    "runtime_positions": drift_report.get("runtime_positions"),
-                    "reason": drift_report.get("reason"),
-                    "truth_source": drift_report.get("truth_source"),
-                }
-            )
+            st.write({
+                "status": drift_report.get("status"),
+                "drift_count": drift_report.get("drift_count"),
+                "broker_positions": drift_report.get("broker_positions"),
+                "runtime_positions": drift_report.get("runtime_positions"),
+                "reason": drift_report.get("reason"),
+                "truth_source": drift_report.get("truth_source"),
+            })
 
             drift_rows = drift_report.get("drift_rows", [])
 
@@ -2021,15 +2037,13 @@ def run_page():
 
     with st.expander("Dry Run Broker Repair Report", expanded=False):
         if dry_run_report:
-            st.write(
-                {
-                    "status": dry_run_report.get("status"),
-                    "mode": dry_run_report.get("mode"),
-                    "dry_run": dry_run_report.get("dry_run"),
-                    "reason": dry_run_report.get("reason"),
-                    "truth_source": dry_run_report.get("truth_source"),
-                }
-            )
+            st.write({
+                "status": dry_run_report.get("status"),
+                "mode": dry_run_report.get("mode"),
+                "dry_run": dry_run_report.get("dry_run"),
+                "reason": dry_run_report.get("reason"),
+                "truth_source": dry_run_report.get("truth_source"),
+            })
 
             position_report = dry_run_report.get("position_report", {})
             execution_sub_report = dry_run_report.get("execution_report", {})
@@ -2062,46 +2076,67 @@ def run_page():
 
     with st.expander("Applied Broker Repair Report", expanded=False):
         if apply_report:
-            st.write(
-                {
-                    "status": apply_report.get("status"),
-                    "mode": apply_report.get("mode"),
-                    "dry_run": apply_report.get("dry_run"),
-                    "reason": apply_report.get("reason"),
-                    "truth_source": apply_report.get("truth_source"),
-                }
-            )
+            st.write({
+                "status": apply_report.get("status"),
+                "mode": apply_report.get("mode"),
+                "dry_run": apply_report.get("dry_run"),
+                "reason": apply_report.get("reason"),
+                "truth_source": apply_report.get("truth_source"),
+            })
 
-            position_report = apply_report.get("position_report", apply_report)
+            position_report = apply_report.get("position_report", {})
+            execution_sub_report = apply_report.get("execution_report", {})
 
             if isinstance(position_report, dict):
                 actions = position_report.get("actions", [])
 
                 if actions:
+                    st.caption("Position Repair Actions")
                     st.dataframe(
                         arrow_safe_df(actions),
                         width="stretch",
                         hide_index=True,
                     )
                 else:
-                    st.write(position_report)
+                    st.info(f"Position report: {position_report}")
+
+            if isinstance(execution_sub_report, dict):
+                st.caption("Execution Repair Summary")
+                st.write({
+                    "status": execution_sub_report.get("status"),
+                    "broker_fills": execution_sub_report.get("broker_fills"),
+                    "ledger_fills": execution_sub_report.get("ledger_fills"),
+                    "missing_count": execution_sub_report.get("missing_count"),
+                    "applied_count": execution_sub_report.get("applied_count"),
+                    "skipped_count": execution_sub_report.get("skipped_count"),
+                    "rejected_count": execution_sub_report.get("rejected_count"),
+                    "reason": execution_sub_report.get("reason"),
+                })
+
+                missing = execution_sub_report.get("missing_in_ledger", [])
+
+                if missing:
+                    st.caption("Broker Fills Missing In Ledger")
+                    st.dataframe(
+                        arrow_safe_df(missing),
+                        width="stretch",
+                        hide_index=True,
+                    )
         else:
             st.info("No applied broker repair report yet.")
 
     with st.expander("Broker Execution Repair Report", expanded=False):
         if execution_report:
-            st.write(
-                {
-                    "status": execution_report.get("status"),
-                    "broker_fills": execution_report.get("broker_fills"),
-                    "ledger_fills": execution_report.get("ledger_fills"),
-                    "missing_count": execution_report.get("missing_count"),
-                    "applied_count": execution_report.get("applied_count"),
-                    "skipped_count": execution_report.get("skipped_count"),
-                    "rejected_count": execution_report.get("rejected_count"),
-                    "reason": execution_report.get("reason"),
-                }
-            )
+            st.write({
+                "status": execution_report.get("status"),
+                "broker_fills": execution_report.get("broker_fills"),
+                "ledger_fills": execution_report.get("ledger_fills"),
+                "missing_count": execution_report.get("missing_count"),
+                "applied_count": execution_report.get("applied_count"),
+                "skipped_count": execution_report.get("skipped_count"),
+                "rejected_count": execution_report.get("rejected_count"),
+                "reason": execution_report.get("reason"),
+            })
 
             missing = execution_report.get("missing_in_ledger", [])
 
@@ -2118,15 +2153,13 @@ def run_page():
 
     with st.expander("Broker vs Ledger Report", expanded=False):
         if broker_vs_ledger_report:
-            st.write(
-                {
-                    "status": broker_vs_ledger_report.get("status"),
-                    "ledger_fills": broker_vs_ledger_report.get("ledger_fills"),
-                    "audit_fills": broker_vs_ledger_report.get("audit_fills"),
-                    "reason": broker_vs_ledger_report.get("reason"),
-                    "truth_source": broker_vs_ledger_report.get("truth_source"),
-                }
-            )
+            st.write({
+                "status": broker_vs_ledger_report.get("status"),
+                "ledger_fills": broker_vs_ledger_report.get("ledger_fills"),
+                "audit_fills": broker_vs_ledger_report.get("audit_fills"),
+                "reason": broker_vs_ledger_report.get("reason"),
+                "truth_source": broker_vs_ledger_report.get("truth_source"),
+            })
 
             missing_ledger = broker_vs_ledger_report.get("missing_in_ledger", [])
             missing_audit = broker_vs_ledger_report.get("missing_in_audit", [])

@@ -1,6 +1,6 @@
 # =========================================================
-# JFBP APP ENTRYPOINT v24.8
-# STABLE ROUTER — FULL PLATFORM ENABLED + BRANDED SIDEBAR
+# JFBP APP ENTRYPOINT v24.9
+# STABLE ROUTER — MARKET REACTION ENABLED
 # =========================================================
 
 from pathlib import Path
@@ -13,16 +13,13 @@ from pages.Scanner_page import run_page as scanner_page
 from pages.Live_Stock import run_page as live_stock_page
 from pages.Research_Stock import run_page as research_stock_page
 from pages.OMS_Execution import run_page as oms_page
+from pages.page_order_ticket import run_page as order_ticket_page
 from pages.Portfolio import run_page as portfolio_page
 from pages.Live_IBKR import run_page as live_ibkr_page
 from pages.Journal import run_page as journal_page
 from pages.Database import run_page as database_page
-from pages.page_order_ticket import run_page as order_ticket_page
+from pages.Market_Reaction import run_page as market_reaction_page
 
-
-# =========================================================
-# CONFIG
-# =========================================================
 
 st.set_page_config(
     page_title="JFBP Quant Desk",
@@ -30,26 +27,14 @@ st.set_page_config(
 )
 
 
-# =========================================================
-# SAFE FALLBACK
-# =========================================================
-
 def empty_page(title: str):
     st.title(title)
     st.info("Page not built yet.")
 
 
-# =========================================================
-# APP
-# =========================================================
-
 def app():
 
     init_core()
-
-    # =====================================================
-    # SIDEBAR BRANDING
-    # =====================================================
 
     logo_path = Path(__file__).parent / "JFBP_Quant_Desk.png"
 
@@ -61,16 +46,13 @@ def app():
     else:
         st.sidebar.title("JFBP Desk")
 
-    # =====================================================
-    # NAVIGATION
-    # =====================================================
-
     page = st.sidebar.radio(
         "Navigation",
         [
             "Scanner",
             "Live Stock",
             "Research Stock",
+            "Market Reaction",
             "OMS Execution",
             "Manual Order Ticket",
             "Portfolio",
@@ -81,10 +63,6 @@ def app():
         key="jfbp_main_navigation",
     )
 
-    # =====================================================
-    # ROUTER
-    # =====================================================
-
     if page == "Scanner":
         scanner_page()
 
@@ -93,6 +71,9 @@ def app():
 
     elif page == "Research Stock":
         research_stock_page()
+
+    elif page == "Market Reaction":
+        market_reaction_page()
 
     elif page == "OMS Execution":
         oms_page()
@@ -115,10 +96,6 @@ def app():
     else:
         empty_page("Unknown Page")
 
-
-# =========================================================
-# RUN
-# =========================================================
 
 if __name__ == "__main__":
     app()

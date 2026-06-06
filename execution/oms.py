@@ -1,12 +1,13 @@
 # =========================================================
-# ⚡ JFBP OMS ENGINE v21.2
-# INSTITUTIONAL EXECUTION SAFETY HARDENED
+# ⚡ JFBP OMS ENGINE v22.0
+# LIVE BROKER ROUTING FIX
 #
-# v21.2 upgrades:
-#   - REMOVED fake 100.00 fallback price
-#   - no synthetic execution price in SIM / REPLAY / BACKTEST
-#   - missing price now rejects execution safely
-#   - prevents audit DB contamination
+# v22.0 upgrades:
+#   - LIVE mode no longer fabricates fills
+#   - LIVE orders are routed to broker gateway only
+#   - SIM / BACKTEST / REPLAY may create synthetic fills
+#   - Broker fills must enter through ingest_broker_fill()
+#   - Prevents audit / portfolio contamination from fake LIVE fills
 # =========================================================
 
 from __future__ import annotations
@@ -130,6 +131,250 @@ class OMS:
         )
 
         mode = self._normalize_mode(signal.get("mode", self.mode))
+        order_type = str(signal.get("order_type", "MKT") or "MKT").upper().strip()
+
+        if order_type not in {"MKT", "LMT", "MARKET", "LIMIT"}:
+            self.last_error = f"Unsupported order_type: {order_type}"
+            self.last_rejection = self._rejection(
+                stage="validation",
+                reason=self.last_error,
+                signal=signal,
+                symbol=symbol,
+                action=action,
+                mode=mode,
+            )
+            return None
+
+        if order_type == "MARKET":
+            order_type = "MKT"
+
+        if order_type == "LIMIT":
+            order_type = "LMT"
+
+        signal["symbol"] = symbol
+        signal["action"] = action
+        signal["side"] = action
+        signal["qty"] = qty
+        signal["quantity"] = qty
+        signal["mode"] = mode
+        signal["order_type"] = order_type
+
+        if mode == "LIVE":
+            return self._route_live_order(signal)
+
+        return self._execute_simulated_fill(signal)
+
+    # =====================================================
+    # LIVE BROKER ROUTING
+    # =====================================================
+
+    def _route_live_order(self, signal: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+
+        if self.gateway is None:
+            self.last_error = "LIVE order blocked: no broker gateway attached"
+            self.last_rejection = self._rejection(
+                stage="broker_route",
+                reason=self.last_error,
+                signal=signal,
+                symbol=signal.get("symbol", ""),
+                action=signal.get("action", ""),
+                mode="LIVE",
+            )
+            return None
+
+        symbol = self._normalize_symbol(signal.get("symbol"))
+        action = self._normalize_action(signal.get("action") or signal.get("side"))
+        qty = self._safe_int(signal.get("qty") or signal.get("quantity"))
+        order_type = str(signal.get("order_type", "MKT") or "MKT").upper().strip()
+        limit_price = self._safe_float(signal.get("limit_price"))
+
+        if order_type == "LMT" and limit_price <= 0:
+            self.last_error = "LIVE limit order blocked: missing valid limit_price"
+            self.last_rejection = self._rejection(
+                stage="broker_route",
+                reason=self.last_error,
+                signal=signal,
+                symbol=symbol,
+                action=action,
+                mode="LIVE",
+            )
+            return None
+
+        order_id = signal.get("order_id") or self._new_id("OMS_ORDER")
+
+        broker_payload = {
+            "order_id": order_id,
+            "symbol": symbol,
+            "action": action,
+            "side": action,
+            "qty": qty,
+            "quantity": qty,
+            "order_type": order_type,
+            "limit_price": limit_price if order_type == "LMT" else None,
+            "mode": "LIVE",
+            "source": signal.get("source", "oms_live_order"),
+            "timestamp": self._now(),
+        }
+
+        try:
+            result = self._send_to_gateway(broker_payload)
+
+            if result is None:
+                self.last_error = (
+                    getattr(self.gateway, "last_error", "")
+                    or "Broker gateway returned no result"
+                )
+                self.last_rejection = self._rejection(
+                    stage="broker_route",
+                    reason=self.last_error,
+                    signal=broker_payload,
+                    symbol=symbol,
+                    action=action,
+                    mode="LIVE",
+                )
+                return None
+
+            if not isinstance(result, dict):
+                result = {"raw_result": str(result)}
+
+            status = str(
+                result.get("status")
+                or result.get("order_status")
+                or "ROUTED"
+            ).upper()
+
+            broker_order_id = (
+                result.get("broker_order_id")
+                or result.get("orderId")
+                or result.get("order_id")
+                or result.get("ib_order_id")
+            )
+
+            order_record = {
+                "id": order_id,
+                "order_id": order_id,
+                "broker_order_id": broker_order_id,
+                "symbol": symbol,
+                "action": action,
+                "side": action,
+                "qty": qty,
+                "quantity": qty,
+                "order_type": order_type,
+                "limit_price": limit_price if order_type == "LMT" else None,
+                "status": status,
+                "mode": "LIVE",
+                "source": signal.get("source", "oms_live_order"),
+                "timestamp": self._now(),
+                "broker_result": result,
+                "fill_policy": "BROKER_CALLBACK_ONLY",
+            }
+
+            self.orders[order_id] = order_record
+            self.last_order = order_record
+
+            if broker_order_id:
+                self.broker_order_registry[str(broker_order_id)] = order_id
+
+            if status in {
+                "WORKING",
+                "SUBMITTED",
+                "ROUTED",
+                "ACKNOWLEDGED",
+                "PRESUBMITTED",
+                "PENDING_SUBMIT",
+                "PENDING",
+            }:
+                self.working_orders[order_id] = order_record
+            elif status in {"REJECTED", "CANCELLED", "INACTIVE"}:
+                self.rejected_orders[order_id] = order_record
+            else:
+                self.working_orders[order_id] = order_record
+
+            self.last_error = ""
+            self.last_rejection = None
+
+            return order_record
+
+        except Exception as exc:
+            self.last_error = f"LIVE broker route failed: {exc}"
+            self.last_rejection = self._rejection(
+                stage="broker_route",
+                reason=self.last_error,
+                signal=broker_payload,
+                symbol=symbol,
+                action=action,
+                mode="LIVE",
+            )
+            return None
+
+    def _send_to_gateway(self, order: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+
+        if self.gateway is None:
+            return None
+
+        method_names = (
+            "submit_order",
+            "place_order",
+            "route_order",
+            "send_order",
+            "execute_order",
+            "submit",
+            "place_trade",
+        )
+
+        for method_name in method_names:
+
+            if not hasattr(self.gateway, method_name):
+                continue
+
+            method = getattr(self.gateway, method_name)
+
+            try:
+                try:
+                    result = method(order)
+                except TypeError:
+                    result = method(
+                        symbol=order["symbol"],
+                        action=order["action"],
+                        qty=order["qty"],
+                        order_type=order["order_type"],
+                        limit_price=order.get("limit_price"),
+                    )
+
+                if result is None:
+                    continue
+
+                if isinstance(result, dict):
+                    return result
+
+                return {
+                    "status": "ROUTED",
+                    "raw_result": str(result),
+                    "broker_object": result,
+                }
+
+            except TypeError:
+                continue
+
+        raise RuntimeError(
+            "No compatible live broker order method found on gateway. "
+            "Expected one of: submit_order, place_order, route_order, "
+            "send_order, execute_order, submit, place_trade."
+        )
+
+    # =====================================================
+    # SIM / BACKTEST / REPLAY EXECUTION
+    # =====================================================
+
+    def _execute_simulated_fill(
+        self,
+        signal: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+
+        symbol = self._normalize_symbol(signal.get("symbol"))
+        action = self._normalize_action(signal.get("action") or signal.get("side"))
+        qty = self._safe_int(signal.get("qty") or signal.get("quantity") or 1)
+        mode = self._normalize_mode(signal.get("mode", self.mode))
 
         try:
             price = self._resolve_execution_price(signal, symbol)
@@ -138,16 +383,25 @@ class OMS:
                 "id": str(uuid.uuid4())[:8],
                 "fill_id": None,
                 "order_id": signal.get("order_id"),
+                "broker_order_id": None,
+                "execution_id": "",
                 "symbol": symbol,
                 "action": action,
                 "side": action,
                 "qty": qty,
+                "filled_qty": qty,
+                "fill_qty": qty,
+                "quantity": qty,
                 "fill_price": price,
                 "price": price,
+                "execution_price": price,
+                "avg_fill_price": price,
                 "timestamp": self._now(),
-                "source": signal.get("source", "oms"),
+                "source": signal.get("source", "oms_simulated_fill"),
                 "mode": mode,
                 "status": "FILLED",
+                "is_true_fill": False,
+                "truth_source": "OMS_SIMULATION",
             }
 
             fill["fill_id"] = fill["id"]
@@ -361,6 +615,7 @@ class OMS:
             "qty": qty,
             "filled_qty": qty,
             "fill_qty": qty,
+            "quantity": qty,
             "fill_price": price,
             "price": price,
             "execution_price": price,
@@ -370,6 +625,7 @@ class OMS:
             "mode": self.mode,
             "status": "FILLED",
             "is_true_fill": True,
+            "truth_source": "BROKER",
         }
 
         if execution_id:
@@ -395,7 +651,33 @@ class OMS:
         if not isinstance(broker_status, dict):
             return None
 
-        return dict(broker_status)
+        broker_status = dict(broker_status)
+
+        broker_order_id = str(
+            broker_status.get("broker_order_id")
+            or broker_status.get("orderId")
+            or broker_status.get("order_id")
+            or ""
+        ).strip()
+
+        status = str(
+            broker_status.get("status")
+            or broker_status.get("order_status")
+            or ""
+        ).upper()
+
+        if broker_order_id and broker_order_id in self.broker_order_registry:
+            order_id = self.broker_order_registry[broker_order_id]
+            order = self.orders.get(order_id, {})
+            order.update(broker_status)
+            order["status"] = status or order.get("status", "")
+            self.orders[order_id] = order
+
+            if status in {"FILLED", "CANCELLED", "REJECTED", "INACTIVE"}:
+                self.working_orders.pop(order_id, None)
+                self.completed_orders[order_id] = order
+
+        return broker_status
 
     # =====================================================
     # BATCH
@@ -415,10 +697,10 @@ class OMS:
                 self.last_error = "Kill switch active during OMS batch"
                 break
 
-            fill = self.execute_signal(signal)
+            result = self.execute_signal(signal)
 
-            if fill:
-                results.append(fill)
+            if result:
+                results.append(result)
 
         return results
 
@@ -602,7 +884,14 @@ class OMS:
         return {
             "fills": len(self.fills),
             "audit_events": audit_count,
+            "orders": len(self.orders),
+            "working_orders": len(self.working_orders),
+            "completed_orders": len(self.completed_orders),
+            "rejected_orders": len(self.rejected_orders),
+            "execution_registry": len(self.execution_registry),
+            "broker_order_registry": len(self.broker_order_registry),
             "last_fill": self.last_fill,
+            "last_order": self.last_order,
             "last_error": self.last_error,
             "last_audit_error": self.last_audit_error,
             "last_rejection": self.last_rejection,
@@ -611,6 +900,12 @@ class OMS:
 
     def fills_snapshot(self) -> List[Dict[str, Any]]:
         return list(self.fills)
+
+    def orders_snapshot(self) -> List[Dict[str, Any]]:
+        return list(self.orders.values())
+
+    def working_orders_snapshot(self) -> List[Dict[str, Any]]:
+        return list(self.working_orders.values())
 
     # =====================================================
     # AUDIT HELPERS
@@ -647,6 +942,14 @@ class OMS:
         self.last_error = ""
         self.last_audit_error = ""
         self.last_rejection = None
+        self.orders = {}
+        self.working_orders = {}
+        self.completed_orders = {}
+        self.rejected_orders = {}
+        self.execution_registry = {}
+        self.fill_identity_registry = {}
+        self.broker_order_registry = {}
+        self.last_order = None
 
     reset = clear
 

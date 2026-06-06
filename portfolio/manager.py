@@ -1,6 +1,6 @@
 # =========================================================
-# 📁 JFBP PORTFOLIO MANAGER v35.9
-# PORTFOLIO LEDGER TRUTH + RECONCILIATION COMPATIBILITY
+# 📁 JFBP PORTFOLIO MANAGER v35.10
+# PORTFOLIO LEDGER TRUTH + LONG-ONLY ENFORCEMENT
 # =========================================================
 
 from __future__ import annotations
@@ -117,7 +117,55 @@ class PortfolioManager:
 
             is_close = self._is_close_or_flatten(f)
 
-            if is_close:
+            # =================================================
+            # LONG-ONLY ENFORCEMENT
+            # =================================================
+            # Portfolio Manager is the final position-truth guard.
+            # SELL may only reduce or close an existing long.
+            # It must never create a short position or flip long to short.
+            if action == "SELL":
+                if old_qty <= 0:
+                    event = {
+                        "timestamp": f.get("timestamp") or self._now(),
+                        "status": "REJECTED",
+                        "event_type": "PORTFOLIO_REJECTED",
+                        "reason": "REJECTED_LONG_ONLY_NO_POSITION",
+                        "symbol": symbol,
+                        "action": action,
+                        "side": action,
+                        "qty": qty,
+                        "fill_price": price,
+                        "price": price,
+                        "old_qty": old_qty,
+                        "new_qty": old_qty,
+                        "expected_qty": old_qty,
+                        "old_side": old_side,
+                        "new_side": old_side,
+                        "lifecycle_stage": "BLOCKED_OPEN_SHORT",
+                        "signed_qty_delta": 0.0,
+                        "realized_delta": 0.0,
+                        "realized_pnl": round(pos.realized_pnl, 4),
+                        "unrealized_pnl": round(self.get_unrealized_pnl(symbol), 4),
+                        "total_pnl": round(
+                            pos.realized_pnl + self.get_unrealized_pnl(symbol),
+                            4,
+                        ),
+                        "order_id": f.get("order_id"),
+                        "fill_id": f.get("fill_id") or f.get("id"),
+                        "broker_order_id": f.get("broker_order_id"),
+                        "source": source,
+                        "mode": f.get("mode"),
+                        "dedupe_key": dedupe_key,
+                    }
+
+                    self.last_event = event
+                    self.last_error = event["reason"]
+                    self._append_ledger_event(event)
+                    return event
+
+                signed_fill_qty = -min(abs(qty), abs(old_qty))
+
+            elif is_close:
                 signed_fill_qty = self._lock_close_signed_qty(
                     fill=f,
                     old_qty=old_qty,
@@ -312,6 +360,7 @@ class PortfolioManager:
         Close / flatten must reduce existing exposure only.
 
         Portfolio truth wins over stale OMS context.
+        Long-only rule: SELL cannot create or increase a short.
         """
 
         if abs(old_qty) <= 1e-9:
@@ -320,7 +369,7 @@ class PortfolioManager:
 
         if action == "SELL":
             if old_qty <= 0:
-                return -abs(qty)
+                return 0.0
             return -min(abs(qty), abs(old_qty))
 
         if action == "BUY":
@@ -644,6 +693,8 @@ class PortfolioManager:
             "last_event": self.last_event,
             "last_error": self.last_error,
             "processed_fills": len(self.processed_fill_ids),
+            "manager_version": "35.10",
+            "long_only_enforced": True,
         }
     
         # =====================================================
@@ -801,7 +852,7 @@ class PortfolioManager:
             return "OPEN_LONG"
 
         if abs(old_qty) <= 1e-9 and new_qty < 0:
-            return "OPEN_SHORT"
+            return "BLOCKED_OPEN_SHORT"
 
         if old_qty > 0 and signed_fill_qty > 0:
             return "ADD_LONG"

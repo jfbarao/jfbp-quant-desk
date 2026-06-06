@@ -1,6 +1,6 @@
 # =========================================================
-# 🛡️ JFBP RISK ENGINE v34.7.1
-# INSTITUTIONAL RISK TRUTH LAYER — FULL FIXED FILE
+# 🛡️ JFBP RISK ENGINE v34.7.4
+# LONG ONLY + MARKET REACTION STATE AWARENESS
 # =========================================================
 
 from __future__ import annotations
@@ -13,6 +13,8 @@ class RiskEngine:
 
     VALID_MODES = {"SIM", "LIVE", "BACKTEST", "REPLAY"}
     EPSILON = 1e-9
+    ENGINE_VERSION = "34.7.4"
+    LONG_ONLY = True
 
     def __init__(
         self,
@@ -41,6 +43,11 @@ class RiskEngine:
 
         self.risk_state = "NORMAL"
         self.risk_state_reason = "OK"
+
+        # Market Reaction overlay state
+        self.market_reaction_regime = "NEUTRAL"
+        self.market_reaction_score = 0.0
+        self.market_reaction_confidence = 0.0
 
         self.last_error = ""
         self.last_check: Dict[str, Any] = {}
@@ -268,6 +275,9 @@ class RiskEngine:
             "short_exposure": self.short_exposure(),
             "risk_state": self.risk_state,
             "risk_state_reason": self.risk_state_reason,
+            "market_reaction_regime": self.market_reaction_regime,
+            "market_reaction_score": self.market_reaction_score,
+            "market_reaction_confidence": self.market_reaction_confidence,
             "missing_prices": missing_prices,
             "rejected": rejected,
             "positions": dict(self.positions),
@@ -307,6 +317,23 @@ class RiskEngine:
     # RISK STATE INTELLIGENCE
     # =====================================================
 
+    def update_market_reaction(
+        self,
+        regime: str = "NEUTRAL",
+        score: float = 0.0,
+        confidence: float = 0.0,
+    ):
+        self.market_reaction_regime = str(
+            regime or "NEUTRAL"
+        ).upper().strip()
+
+        self.market_reaction_score = self._float(score)
+        self.market_reaction_confidence = self._float(confidence)
+
+        self._update_risk_state()
+
+        return True
+
     def _update_risk_state(self):
         if self.risk_state == "LOCKDOWN":
             return self.risk_state
@@ -342,6 +369,29 @@ class RiskEngine:
             self.risk_state_reason = (
                 "OPEN_POSITION_LIMIT_EXCEEDED "
                 f"(open_positions={open_positions}, limit={self.max_open_positions})"
+            )
+
+        elif (
+            self.market_reaction_regime == "RISK_OFF"
+            and self.market_reaction_score >= 80
+            and self.market_reaction_confidence >= 70
+        ):
+            self.risk_state = "DEFENSIVE"
+            self.risk_state_reason = (
+                "MARKET_REACTION_RISK_OFF "
+                f"(score={self.market_reaction_score:.0f}, "
+                f"confidence={self.market_reaction_confidence:.0f})"
+            )
+
+        elif (
+            self.market_reaction_regime == "RISK_ON"
+            and self.market_reaction_score >= 60
+        ):
+            self.risk_state = "AGGRESSIVE"
+            self.risk_state_reason = (
+                "MARKET_REACTION_RISK_ON "
+                f"(score={self.market_reaction_score:.0f}, "
+                f"confidence={self.market_reaction_confidence:.0f})"
             )
 
         else:
@@ -404,6 +454,9 @@ class RiskEngine:
             "position_action": self.classify_position_action(signal),
             "risk_state": self.risk_state,
             "risk_state_reason": self.risk_state_reason,
+            "market_reaction_regime": self.market_reaction_regime,
+            "market_reaction_score": self.market_reaction_score,
+            "market_reaction_confidence": self.market_reaction_confidence,
             "book_positions": dict(self.positions),
             "book_prices": dict(self.last_prices),
             "rotation_context": self._is_rotation_or_flatten_context(signal),
@@ -427,8 +480,24 @@ class RiskEngine:
 
         position_action = self.classify_position_action(signal)
 
+        if self._is_long_only_violation(position_action):
+            return False, "REJECTED_LONG_ONLY_NO_POSITION"
+
         if self._is_risk_reducing(position_action):
             return self._check_exit_safety(signal)
+
+        # ================================================
+        # MARKET REACTION DEFENSIVE MODE
+        # ================================================
+
+        if (
+            self.risk_state == "DEFENSIVE"
+            and signal.get("action") == "BUY"
+        ):
+            return False, (
+                "REJECTED_MARKET_REACTION_RISK_OFF "
+                f"reason={self.risk_state_reason}"
+            )
 
         if self.risk_state == "OVER_LIMIT":
             gross_after = self.projected_gross_exposure(signal)
@@ -516,12 +585,30 @@ class RiskEngine:
             qty = self._float(signal.get("qty"))
             price = self._float(signal.get("price"))
 
+            # ================================================
+            # MARKET REACTION DEFENSIVE MODE
+            # ================================================
+
+            if (
+                self.risk_state == "DEFENSIVE"
+                and action == "BUY"
+            ):
+                continue
+
             if price > 0:
                 projected_prices[symbol] = price
 
             signed = qty if action == "BUY" else -qty
             old_qty = projected_positions.get(symbol, 0.0)
             new_qty = old_qty + signed
+
+            # Long-only rule: batch projections must not create or increase short exposure.
+            if self.LONG_ONLY and (
+                (abs(old_qty) <= self.EPSILON and new_qty < -self.EPSILON)
+                or (old_qty > self.EPSILON and new_qty < -self.EPSILON)
+                or (old_qty < -self.EPSILON and signed < 0)
+            ):
+                continue
 
             if abs(new_qty) <= self.EPSILON:
                 projected_positions.pop(symbol, None)
@@ -540,11 +627,13 @@ class RiskEngine:
 
         if self.risk_state == "OVER_LIMIT":
             batch_ok = batch_reduces_gross or batch_reduces_positions
+
             batch_reason = (
                 "OK_BATCH_REDUCES_OVER_LIMIT_RISK"
                 if batch_ok
                 else "REJECTED_BATCH_INCREASES_OVER_LIMIT"
             )
+
         else:
             batch_ok = (
                 gross_after <= self.max_gross_exposure + self.EPSILON
@@ -564,6 +653,106 @@ class RiskEngine:
         if self.daily_trades + len(normalized) > self.max_daily_trades:
             batch_ok = False
             batch_reason = "REJECTED_RISK_DAILY_TRADE_LIMIT"
+
+        rows = []
+
+        for signal in normalized:
+            base_ok, base_reason = self._basic_signal_validation(signal)
+
+            if not base_ok:
+                malformed.append({
+                    **signal,
+                    "approved": False,
+                    "risk_approved": False,
+                    "reason": base_reason,
+                    "risk_reason": base_reason,
+                    "risk_reducing": False,
+                    "position_action": "INVALID",
+                    "position_before": self.get_position(signal.get("symbol")),
+                    "position_after": self.get_position(signal.get("symbol")),
+                    "gross_before": gross_before,
+                    "gross_after": gross_before,
+                    "open_positions_before": open_before,
+                    "open_positions_after": open_before,
+                })
+                continue
+
+            position_action = self.classify_position_action(signal)
+
+            if self._is_long_only_violation(position_action):
+
+                approved = False
+                reason = "REJECTED_LONG_ONLY_NO_POSITION"
+
+            elif (
+                self.risk_state == "DEFENSIVE"
+                and signal.get("action") == "BUY"
+            ):
+
+                approved = False
+                reason = (
+                    "REJECTED_MARKET_REACTION_RISK_OFF "
+                    f"reason={self.risk_state_reason}"
+                )
+
+            else:
+
+                approved = bool(batch_ok)
+                reason = "OK" if approved else batch_reason
+
+            rows.append({
+                **signal,
+                "approved": approved,
+                "risk_approved": approved,
+                "reason": reason,
+                "risk_reason": reason,
+                "risk_reducing": self._is_risk_reducing(position_action),
+                "position_action": position_action,
+                "position_before": self.get_position(signal.get("symbol")),
+                "position_after": self.projected_position(signal),
+                "gross_before": gross_before,
+                "gross_after": gross_after,
+                "open_positions_before": open_before,
+                "open_positions_after": open_after,
+                "batch_approved": bool(batch_ok),
+                "batch_reason": batch_reason,
+            })
+
+        rows.extend(malformed)
+
+        self.last_batch_check = {
+            "timestamp": self._now(),
+            "approved": bool(batch_ok),
+            "reason": batch_reason,
+            "signals_received": (
+                len(signals)
+                if isinstance(signals, list)
+                else 0
+            ),
+            "signals_normalized": len(normalized),
+            "rows_returned": len(rows),
+            "gross_before": gross_before,
+            "gross_after": gross_after,
+            "open_positions_before": open_before,
+            "open_positions_after": open_after,
+            "batch_reduces_gross": batch_reduces_gross,
+            "batch_reduces_positions": batch_reduces_positions,
+            "risk_state": self.risk_state,
+            "risk_state_reason": self.risk_state_reason,
+            "market_reaction_regime": self.market_reaction_regime,
+            "market_reaction_score": self.market_reaction_score,
+            "market_reaction_confidence": (
+                self.market_reaction_confidence
+            ),
+        }
+
+        self.last_check = dict(self.last_batch_check)
+        self.last_error = "" if batch_ok else batch_reason
+
+        self.history.append(self.last_batch_check)
+        self.history = self.history[-500:]
+
+        return rows
 
     # =====================================================
     # POSITION CLASSIFICATION
@@ -591,7 +780,7 @@ class RiskEngine:
             if new_qty > 0:
                 return "OPEN_LONG"
             if new_qty < 0:
-                return "OPEN_SHORT"
+                return "BLOCKED_OPEN_SHORT"
             return "NO_CHANGE"
 
         if old_qty > 0:
@@ -601,11 +790,11 @@ class RiskEngine:
                 return "REDUCE_LONG"
             if abs(new_qty) <= self.EPSILON:
                 return "CLOSE_LONG"
-            return "FLIP_LONG_TO_SHORT"
+            return "BLOCKED_FLIP_LONG_TO_SHORT"
 
         if old_qty < 0:
             if signed < 0:
-                return "ADD_SHORT"
+                return "BLOCKED_ADD_SHORT"
             if new_qty < 0:
                 return "REDUCE_SHORT"
             if abs(new_qty) <= self.EPSILON:
@@ -747,6 +936,9 @@ class RiskEngine:
         self.last_prices = {}
         self.risk_state = "NORMAL"
         self.risk_state_reason = "OK"
+        self.market_reaction_regime = "NEUTRAL"
+        self.market_reaction_score = 0.0
+        self.market_reaction_confidence = 0.0
         self.last_error = ""
         self.last_check = {}
         self.last_sync = {}
@@ -780,9 +972,14 @@ class RiskEngine:
         self._update_risk_state()
 
         return {
+            "engine_version": self.ENGINE_VERSION,
+            "long_only": self.LONG_ONLY,
             "mode": self.mode,
             "risk_state": self.risk_state,
             "risk_state_reason": self.risk_state_reason,
+            "market_reaction_regime": self.market_reaction_regime,
+            "market_reaction_score": self.market_reaction_score,
+            "market_reaction_confidence": self.market_reaction_confidence,
             "daily_trades": self.daily_trades,
             "max_daily_trades": self.max_daily_trades,
             "daily_pnl": round(self.daily_pnl, 4),
@@ -832,6 +1029,19 @@ class RiskEngine:
 
     def _check_exit_safety(self, signal):
         return True, "OK_EXIT_REDUCES_RISK"
+
+    def _is_long_only_violation(self, action):
+        if not self.LONG_ONLY:
+            return False
+
+        return action in {
+            "OPEN_SHORT",
+            "ADD_SHORT",
+            "FLIP_LONG_TO_SHORT",
+            "BLOCKED_OPEN_SHORT",
+            "BLOCKED_ADD_SHORT",
+            "BLOCKED_FLIP_LONG_TO_SHORT",
+        }
 
     def _is_risk_reducing(self, action):
         return action in {

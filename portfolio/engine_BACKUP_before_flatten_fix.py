@@ -869,7 +869,6 @@ class PortfolioEngine:
             for symbol, row in sorted(broker.items()):
                 qty = self._float(row.get("signed_qty"))
                 avg_price = self._float(row.get("avg_price"))
-
                 realized = (
                     realized_by_symbol.get(symbol, 0.0)
                     if preserve_realized_pnl
@@ -920,6 +919,7 @@ class PortfolioEngine:
         self.last_broker_repair_report = report
         return report
 
+
     def flatten_runtime_orphans(
         self,
         broker_positions: Any = None,
@@ -929,6 +929,14 @@ class PortfolioEngine:
         tolerance: float = 1e-6,
         **kwargs,
     ) -> Dict[str, Any]:
+
+        """
+        Flatten local runtime positions that are not present in the cached
+        broker snapshot.
+
+        This method never sends broker orders. It only mutates the local
+        PortfolioEngine runtime when dry_run=False.
+        """
 
         broker = self.normalize_broker_positions(broker_positions)
         before = self.snapshot()
@@ -981,7 +989,6 @@ class PortfolioEngine:
 
             for symbol in orphan_symbols:
                 pos = self.positions.get(symbol)
-
                 realized = (
                     self._float(pos.realized_pnl)
                     if pos and preserve_realized_pnl
@@ -1024,85 +1031,6 @@ class PortfolioEngine:
         self.last_broker_repair_report = report
         return report
 
-    def _append_broker_fill_to_ledger_only(
-        self,
-        row: Dict[str, Any],
-    ) -> Dict[str, Any]:
-
-        replay = dict(row)
-
-        replay["mode"] = "LIVE"
-        replay["broker_repair"] = True
-        replay["ledger_repair"] = True
-        replay["runtime_rebuild"] = False
-        replay["audit_rebuild"] = True
-        replay["replay_mode"] = False
-        replay["force_apply"] = True
-        replay["source"] = replay.get("source") or "broker_execution_repair"
-
-        replay.setdefault("timestamp", self._now())
-        replay.setdefault("status", replay.get("execution_status") or "FILLED")
-        replay.setdefault("execution_status", replay.get("status") or "FILLED")
-
-        symbol = self._symbol(replay.get("symbol"))
-        action = str(replay.get("action") or replay.get("side") or "").upper().strip()
-
-        qty = self._float(
-            replay.get("qty")
-            if replay.get("qty") is not None
-            else replay.get("quantity")
-            if replay.get("quantity") is not None
-            else replay.get("filled_qty")
-            if replay.get("filled_qty") is not None
-            else 0.0
-        )
-
-        price = self._float(
-            replay.get("price")
-            if replay.get("price") is not None
-            else replay.get("fill_price")
-            if replay.get("fill_price") is not None
-            else replay.get("execution_price")
-            if replay.get("execution_price") is not None
-            else 0.0
-        )
-
-        replay["symbol"] = symbol
-        replay["action"] = action
-        replay["side"] = action
-        replay["qty"] = qty
-        replay["quantity"] = qty
-        replay["filled_qty"] = qty
-        replay["price"] = price
-        replay["fill_price"] = price
-        replay["execution_price"] = price
-
-        identity_key = str(
-            replay.get("identity_key")
-            or replay.get("execution_key")
-            or replay.get("fill_key")
-            or replay.get("exec_id")
-            or replay.get("execution_id")
-            or ""
-        ).strip()
-
-        if not identity_key:
-            identity_key = f"{symbol}:{action}:{qty}:{price}:{replay.get('timestamp')}"
-
-        replay["identity_key"] = identity_key
-
-        self.ledger.append(replay)
-
-        return {
-            "status": "COMPLETE",
-            "repair_type": "LEDGER_ONLY",
-            "identity_key": identity_key,
-            "symbol": symbol,
-            "action": action,
-            "qty": qty,
-            "price": price,
-            "reason": "Broker fill restored to portfolio ledger without mutating positions.",
-        }
 
     def broker_execution_repair(
         self,
@@ -1134,7 +1062,6 @@ class PortfolioEngine:
         rejected = []
 
         for key, row in sorted(broker_map.items()):
-
             if key in ledger_map:
                 skipped.append({
                     "identity_key": key,
@@ -1148,23 +1075,23 @@ class PortfolioEngine:
             if dry_run:
                 continue
 
-            try:
-                result = self._append_broker_fill_to_ledger_only(row)
+            replay = dict(row)
+            replay["mode"] = "LIVE"
+            replay["broker_repair"] = True
+            replay["runtime_rebuild"] = True
+            replay["audit_rebuild"] = True
+            replay["replay_mode"] = False
+            replay["force_apply"] = True
+            replay["source"] = replay.get("source") or "broker_execution_repair"
 
-                if result.get("status") in ("COMPLETE", "PARTIAL"):
-                    applied.append(result)
-                elif result.get("status") == "SKIPPED":
-                    skipped.append(result)
-                else:
-                    rejected.append(result)
+            result = self.apply_fill(replay)
 
-            except Exception as exc:
-                rejected.append({
-                    "identity_key": key,
-                    "symbol": row.get("symbol"),
-                    "status": "ERROR",
-                    "reason": str(exc),
-                })
+            if result.get("status") in ("COMPLETE", "PARTIAL"):
+                applied.append(result)
+            elif result.get("status") == "SKIPPED":
+                skipped.append(result)
+            else:
+                rejected.append(result)
 
         report = {
             "timestamp": self._now(),
@@ -1186,7 +1113,6 @@ class PortfolioEngine:
             "rejected": rejected,
             "rejected_count": len(rejected),
             "dry_run": dry_run,
-            "repair_mode": "LEDGER_ONLY",
             "truth_source": self.TRUTH_SOURCE,
         }
 
