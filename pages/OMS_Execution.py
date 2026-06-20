@@ -1,8 +1,9 @@
 # =========================================================
-# ⚡ OMS EXECUTION PAGE v34.6
+# ⚡ OMS EXECUTION PAGE v34.8
 # INSTITUTIONAL EXECUTION SAFETY
 # + IDEMPOTENT REPLAY
 # + DUPLICATE EXECUTION LOCK
+# + PREPARED HANDOFF CARD RENDER FIX
 # =========================================================
 
 from __future__ import annotations
@@ -18,8 +19,22 @@ import streamlit as st
 
 from core.bootstrap import init_core
 
+try:
+    from core.responsive import inject_responsive_css
+    from core.ui_cards import inject_card_css, card_grid, hero_card
+except Exception:  # pragma: no cover
+    inject_responsive_css = None
+    inject_card_css = None
+    card_grid = None
+    hero_card = None
+
 
 def run_page():
+
+    if inject_responsive_css is not None:
+        inject_responsive_css(max_width=1600)
+    if inject_card_css is not None:
+        inject_card_css()
 
     gateway, market, oms, portfolio_engine = init_core()
 
@@ -44,6 +59,227 @@ def run_page():
     st.session_state.setdefault("oms_last_execution_ts", 0.0)
     st.session_state.setdefault("oms_last_execution_report", {})
     st.session_state.setdefault("oms_execution_history", [])
+
+    # Telegram alert state
+    st.session_state.setdefault("oms_telegram_connected", True)
+    st.session_state.setdefault("oms_telegram_alerts_enabled", True)
+    st.session_state.setdefault("oms_notify_execution", True)
+    st.session_state.setdefault("oms_notify_emergency_flatten", True)
+    st.session_state.setdefault("oms_notify_kill_switch", True)
+    st.session_state.setdefault("oms_notify_live_armed", True)
+
+
+    # =====================================================
+    # RESPONSIVE UI LAYER
+    # Market Pulse visual standard + OMS safety cards
+    # =====================================================
+
+    st.markdown(
+        """
+        <style>
+            .block-container {
+                padding-top: 1.4rem !important;
+                padding-bottom: 2.5rem !important;
+                max-width: 1600px !important;
+                padding-left: 3rem !important;
+                padding-right: 3rem !important;
+                margin-left: auto !important;
+                margin-right: auto !important;
+            }
+
+            h1 {
+                font-size: clamp(1.85rem, 3.5vw, 2.45rem) !important;
+                font-weight: 850 !important;
+                color: #1f2937 !important;
+                line-height: 1.12 !important;
+            }
+
+            h2, h3 {
+                font-size: clamp(1.10rem, 2.2vw, 1.45rem) !important;
+                font-weight: 850 !important;
+                color: #1f2937 !important;
+                line-height: 1.18 !important;
+            }
+
+            div[data-testid="stHorizontalBlock"] {
+                gap: 0.85rem !important;
+                align-items: stretch;
+            }
+
+            div[data-testid="stHorizontalBlock"] > div {
+                min-width: 0 !important;
+            }
+
+            div[data-testid="stMetric"] {
+                background: #f7fbff;
+                border: 1px solid #d9e8ff;
+                border-radius: 14px;
+                padding: 14px;
+                box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+            }
+
+            div[data-testid="stMetricLabel"] {
+                font-size: 0.82rem !important;
+                font-weight: 800 !important;
+                color: #48617a !important;
+                text-transform: uppercase;
+                letter-spacing: 0.03em;
+                white-space: normal !important;
+                overflow-wrap: anywhere !important;
+            }
+
+            div[data-testid="stMetricValue"] {
+                font-size: 1.22rem !important;
+                font-weight: 850 !important;
+                color: #1f2937 !important;
+                white-space: normal !important;
+                overflow-wrap: anywhere !important;
+            }
+
+            div[data-testid="stDataFrame"] {
+                font-size: 0.90rem !important;
+                border-radius: 12px !important;
+                overflow-x: auto !important;
+                max-width: 100% !important;
+            }
+
+            div[data-testid="stDataFrame"] * {
+                white-space: normal !important;
+                overflow-wrap: anywhere !important;
+            }
+
+            div[data-testid="stAlert"] {
+                overflow-wrap: anywhere !important;
+                word-break: normal !important;
+            }
+
+            .stButton > button {
+                border-radius: 10px !important;
+                font-weight: 750 !important;
+                min-height: 38px !important;
+                border: 1px solid #d7e3f5 !important;
+            }
+
+            @media (max-width: 1500px) {
+                .block-container {
+                    max-width: 1450px !important;
+                    padding-left: 2.25rem !important;
+                    padding-right: 2.25rem !important;
+                }
+
+                div[data-testid="stHorizontalBlock"] {
+                    flex-wrap: wrap !important;
+                }
+
+                div[data-testid="stHorizontalBlock"] > div {
+                    min-width: min(100%, 360px) !important;
+                }
+            }
+
+            @media (max-width: 1180px) {
+                .block-container {
+                    max-width: 100% !important;
+                    padding-left: 1.5rem !important;
+                    padding-right: 1.5rem !important;
+                }
+
+                div[data-testid="stHorizontalBlock"] > div {
+                    min-width: 100% !important;
+                    flex: 1 1 100% !important;
+                }
+
+                div[data-testid="stMetric"] {
+                    padding: 10px 11px !important;
+                }
+
+                div[data-testid="stMetricValue"] {
+                    font-size: 1.05rem !important;
+                }
+
+                div[data-testid="stMetricLabel"] {
+                    font-size: 0.74rem !important;
+                }
+            }
+
+            @media (max-width: 760px) {
+                .block-container {
+                    padding-left: 0.9rem !important;
+                    padding-right: 0.9rem !important;
+                }
+
+                div[data-testid="stDataFrame"] {
+                    font-size: 0.80rem !important;
+                }
+            }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    def oms_tip(text: str) -> None:
+        st.caption(f"💡 {text}")
+
+    def _oms_tone_palette(tone: str):
+        palette = {
+            "neutral": ("#f8fafc", "#dbe3ef", "#111827"),
+            "good": ("#ecfdf5", "#bbf7d0", "#166534"),
+            "warning": ("#fffbeb", "#fde68a", "#92400e"),
+            "risk": ("#fef2f2", "#fecaca", "#991b1b"),
+            "info": ("#eff6ff", "#bfdbfe", "#1d4ed8"),
+        }
+        return palette.get(str(tone), palette["neutral"])
+
+    def render_oms_card_grid(cards):
+        """Render compact OMS command cards safely."""
+        pieces = ['<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:0.85rem;margin:0.45rem 0 1rem 0;">']
+        for card in cards:
+            bg, border, color = _oms_tone_palette(card.get("tone", "neutral"))
+            title = str(card.get("title", ""))
+            value = str(card.get("value", ""))
+            detail = str(card.get("detail", ""))
+            pieces.append(
+                '<div style="'
+                f'background:{bg};border:1px solid {border};border-radius:16px;padding:0.9rem 1rem;min-height:105px;overflow:hidden;'
+                '">'
+                f'<div style="color:#64748b;font-size:0.72rem;font-weight:900;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:0.32rem;">{title}</div>'
+                f'<div style="color:{color};font-size:1.35rem;font-weight:950;line-height:1.1;margin-bottom:0.35rem;overflow-wrap:anywhere;">{value}</div>'
+                f'<div style="color:#475569;font-size:0.82rem;line-height:1.35;overflow-wrap:anywhere;">{detail}</div>'
+                '</div>'
+            )
+        pieces.append('</div>')
+        st.markdown(''.join(pieces), unsafe_allow_html=True)
+
+    def action_priority_label(report):
+        if not isinstance(report, dict) or not report:
+            return "No execution report yet"
+        failed = int(report.get("failed", 0) or 0)
+        blocked = int(report.get("blocked", 0) or 0)
+        executed = int(report.get("executed", 0) or 0)
+        if failed:
+            return "Review failures before next route"
+        if blocked:
+            return "Review blocked signals"
+        if executed:
+            return "Manage positions in Position Command"
+        return str(report.get("reason") or report.get("status") or "Awaiting execution")
+
+    def publish_symbol_handoff(symbol: str, destination: str) -> None:
+        symbol = str(symbol or "").upper().strip()
+        if symbol:
+            st.session_state["selected_symbol"] = symbol
+            st.session_state["research_symbol"] = symbol
+            st.session_state["research_ticker"] = symbol
+            st.session_state["trade_command_symbol"] = symbol
+            st.session_state["position_command_symbol"] = symbol
+            st.session_state["oms_order_symbol"] = symbol
+        st.session_state["jfbp_main_navigation"] = destination
+        st.rerun()
+
+    def open_position_command_center_button(label="Open Position Command Center", key="oms_open_position_command_v35"):
+        if st.button(label, width="stretch", key=key):
+            st.session_state["position_center_refresh"] = True
+            st.session_state["jfbp_main_navigation"] = "Position Command Center"
+            st.rerun()
 
     # =====================================================
     # HELPERS
@@ -248,6 +484,102 @@ def run_page():
                 audit_store.record_pipeline_result(payload)
         except Exception:
             pass
+
+    def oms_telegram_ready() -> bool:
+        return bool(
+            st.session_state.get("oms_telegram_connected", False)
+            and st.session_state.get("oms_telegram_alerts_enabled", False)
+        )
+
+    def oms_telegram_notifier():
+        for key in (
+            "telegram_notifier",
+            "telegram_alerts",
+            "telegram_client",
+            "notifier",
+        ):
+            obj = st.session_state.get(key)
+            if obj is not None:
+                return obj
+        return None
+
+    def send_oms_telegram(title: str, message: str) -> bool:
+        if not oms_telegram_ready():
+            return False
+
+        text = f"{title}\n\n{message}"
+        notifier = oms_telegram_notifier()
+
+        if notifier is None:
+            st.session_state["oms_last_telegram_alert"] = {
+                "timestamp": now(),
+                "title": title,
+                "message": message,
+                "status": "SIMULATED_NO_NOTIFIER",
+            }
+            return True
+
+        for method_name in ("send", "send_message", "notify", "alert"):
+            if hasattr(notifier, method_name):
+                try:
+                    getattr(notifier, method_name)(text)
+                    st.session_state["oms_last_telegram_alert"] = {
+                        "timestamp": now(),
+                        "title": title,
+                        "message": message,
+                        "status": "SENT",
+                    }
+                    return True
+                except Exception as exc:
+                    st.session_state["oms_last_telegram_alert"] = {
+                        "timestamp": now(),
+                        "title": title,
+                        "message": message,
+                        "status": f"ERROR: {exc}",
+                    }
+                    return False
+
+        st.session_state["oms_last_telegram_alert"] = {
+            "timestamp": now(),
+            "title": title,
+            "message": message,
+            "status": "NO_SUPPORTED_METHOD",
+        }
+        return False
+
+    def oms_telegram_panel() -> None:
+        with st.expander("📲 Telegram Alerts", expanded=False):
+            st.caption(
+                "Telegram alerts provide immediate operator visibility for OMS execution, "
+                "emergency flatten, kill switch, and LIVE armed events."
+            )
+
+            t1, t2, t3 = st.columns(3)
+            with t1:
+                st.toggle("Telegram Connected", key="oms_telegram_connected")
+                st.toggle("Telegram Alerts Enabled", key="oms_telegram_alerts_enabled")
+            with t2:
+                st.toggle("Notify Execution", key="oms_notify_execution")
+                st.toggle("Notify Emergency Flatten", key="oms_notify_emergency_flatten")
+            with t3:
+                st.toggle("Notify Kill Switch", key="oms_notify_kill_switch")
+                st.toggle("Notify LIVE Armed", key="oms_notify_live_armed")
+
+            st.metric("Telegram Status", "ACTIVE" if oms_telegram_ready() else "OFFLINE")
+
+            if st.button("Send OMS Telegram Test", width="stretch"):
+                ok = send_oms_telegram(
+                    "⚡ JFBP OMS Test",
+                    "Telegram alerts are connected to OMS Execution.",
+                )
+                if ok:
+                    st.success("OMS Telegram test alert recorded/sent.")
+                else:
+                    st.warning("OMS Telegram test alert was not sent.")
+
+            last_alert = st.session_state.get("oms_last_telegram_alert", {})
+            if last_alert:
+                st.json(last_alert)
 
     # =====================================================
     # RUNTIME CONTROL
@@ -900,8 +1232,204 @@ def run_page():
     # EXECUTION PANEL
     # =====================================================
 
-    st.subheader("⚡ OMS Execution")
-    st.caption("🛡️ Execution Safety Panel v34.8 — LIVE Infrastructure Lock")
+    st.title("⚡ OMS Execution")
+    st.caption(
+        "Institutional execution safety center for SIM/LIVE mode control, "
+        "reconciliation, emergency flatten, approved scanner execution, "
+        "blotter review, fills, audit trail, and risk state."
+    )
+
+    st.info(
+        "🚀 Workflow: Market Pulse → Scanner → Research Stock → "
+        "OMS Execution → Live IBKR → Pull Snapshot → "
+        "Verify Account → Trade → Portfolio → Journal"
+    )
+
+    with st.expander(
+        "🚀 OMS LIVE Trading Workflow",
+        expanded=True,
+    ):
+        st.markdown(
+            """
+            ### Purpose
+
+            OMS Execution is the trading control center for JFBP Quant Desk.
+
+            Use this page to configure SIM or LIVE mode, arm live trading, verify risk controls, execute approved Scanner signals, monitor fills, and review the audit trail.
+
+            ---
+
+            ### Step 1 — Prepare OMS
+
+            Select:
+
+            **Mode = LIVE**
+
+            This tells JFBP that the execution system should prepare for the live broker workflow instead of simulator-only testing.
+
+            ---
+
+            ### Step 2 — Acknowledge LIVE Risk
+
+            Check:
+
+            **I understand OMS LIVE can route REAL broker orders**
+
+            This confirms that the user understands LIVE mode is not a simulation.
+
+            ---
+
+            ### Step 3 — Unlock LIVE Infrastructure
+
+            Type:
+
+            **ARM OMS LIVE**
+
+            Then press **Enter**.
+
+            Verify that the page shows:
+
+            **🚨 OMS LIVE INFRASTRUCTURE MODE ENABLED**
+
+            ---
+
+            ### Step 4 — Arm Live Trading
+
+            Check:
+
+            **LIVE Trading Armed**
+
+            Verify that the page shows:
+
+            **🚨 LIVE TRADING ARMED**
+
+            Leave this unchecked unless you intentionally want JFBP allowed to route real broker orders.
+
+            ---
+
+            ### Step 5 — Connect Interactive Brokers
+
+            Open:
+
+            **📡 Live IBKR**
+
+            Then complete the broker connection steps:
+
+            1. Check **Confirm IBKR connect**
+            2. Click **Connect Gateway**
+            3. Verify **Gateway = CONNECTED**
+
+            ---
+
+            ### Step 6 — Pull Broker Snapshot
+
+            In **Live IBKR**:
+
+            1. Check **Confirm broker snapshot pull**
+            2. Click **Pull Broker Snapshot**
+            3. Verify:
+               - Buying Power
+               - Available Funds
+               - Positions
+               - Account Values
+
+            ---
+
+            ### Step 7 — Execute Trades
+
+            Return to **OMS Execution**.
+
+            Before executing approved Scanner signals, verify:
+
+            - **Kill Switch = OFF**
+            - **Gateway = CONNECTED**
+            - **LIVE Trading Armed = YES**
+            - **Broker Snapshot has been pulled**
+            - **Balances and positions match IBKR**
+
+            Then use **Execute Approved Signals Only** when the Scanner plan is ready and confirmed.
+
+            ---
+
+            ### Why the Safety Steps Exist
+
+            The multiple confirmations are intentional. They help prevent accidental live trading, accidental broker routing, and accidental execution while testing.
+
+            **SIM Mode** is recommended for testing.
+
+            **LIVE Mode** can route real broker orders once armed.
+            """
+        )
+
+    with st.expander("ℹ️ How to use this page", expanded=False):
+        st.write(
+            "Start in SIM mode. Review reconciliation first, confirm the risk and "
+            "portfolio state, then execute only approved Scanner signals. LIVE mode "
+            "requires explicit unlock language and should remain locked unless you "
+            "intend to route real broker orders."
+        )
+
+    oms_telegram_panel()
+
+    # =====================================================
+    # UPSTREAM PREPARED TICKET HANDOFF
+    # =====================================================
+
+    prepared_ticket = (
+        st.session_state.get("oms_prepared_ticket")
+        or st.session_state.get("tcc_prepared_oms_ticket")
+        or st.session_state.get("pcc_prepared_exit_ticket")
+        or st.session_state.get("oms_exit_ticket")
+        or {}
+    )
+
+    if isinstance(prepared_ticket, dict) and prepared_ticket:
+        ticket_symbol = str(prepared_ticket.get("symbol") or prepared_ticket.get("Symbol") or "").upper().strip()
+        ticket_action = str(prepared_ticket.get("action") or prepared_ticket.get("Action") or "REVIEW").upper().strip()
+        ticket_qty = prepared_ticket.get("qty", prepared_ticket.get("Qty", "N/A"))
+        ticket_source = prepared_ticket.get("source", "Upstream page")
+
+        with st.container(border=True):
+            st.markdown("### 🔁 Prepared OMS Handoff")
+            st.caption("Trade Command or Position Command prepared this advisory ticket. OMS still requires normal confirmation and safety checks before any execution.")
+
+            # Use the local OMS card renderer instead of the shared card_grid.
+            # The shared card_grid API expects a different schema on some builds,
+            # which caused raw HTML to display on the page.
+            render_oms_card_grid([
+                {"title": "Symbol", "value": ticket_symbol or "N/A", "detail": "Prepared upstream", "tone": "info"},
+                {"title": "Action", "value": ticket_action, "detail": "Advisory action", "tone": "warning"},
+                {"title": "Qty", "value": ticket_qty, "detail": "Proposed quantity", "tone": "neutral"},
+                {"title": "Source", "value": ticket_source, "detail": "No live order sent yet", "tone": "info"},
+            ])
+
+            with st.expander("Prepared ticket payload", expanded=False):
+                st.json(prepared_ticket)
+
+            ph1, ph2, ph3, ph4 = st.columns(4)
+            with ph1:
+                if st.button("Load Symbol", width="stretch", key="oms_load_prepared_symbol_v36"):
+                    if ticket_symbol:
+                        st.session_state["oms_order_symbol"] = ticket_symbol
+                        st.session_state["trade_command_symbol"] = ticket_symbol
+                        st.session_state["position_command_symbol"] = ticket_symbol
+                    st.success(f"Loaded {ticket_symbol or 'symbol'} into OMS session state.")
+            with ph2:
+                if st.button("Review in Trade Command", width="stretch", key="oms_review_trade_prepared_v36"):
+                    publish_symbol_handoff(ticket_symbol, "Trade Command Center")
+            with ph3:
+                if st.button("Manage Position", width="stretch", key="oms_review_position_prepared_v36"):
+                    publish_symbol_handoff(ticket_symbol, "Position Command Center")
+            with ph4:
+                if st.button("Send to Journal", width="stretch", key="oms_review_journal_prepared_v36"):
+                    st.session_state["journal_prefill_note"] = {
+                        "timestamp": now(),
+                        "source": "OMS_Execution_prepared_handoff",
+                        "symbol": ticket_symbol,
+                        "tag": "OMS_HANDOFF_REVIEW",
+                        "notes": f"Prepared OMS ticket review: {ticket_action} {ticket_qty} {ticket_symbol}",
+                    }
+                    publish_symbol_handoff(ticket_symbol, "Journal")
 
     st.session_state.setdefault("mode", "SIM")
     st.session_state.setdefault("live_trading_armed", False)
@@ -1011,7 +1539,15 @@ def run_page():
         st.session_state["live_trading_armed"] = False
         st.info("SIM mode active. LIVE trading is locked.")
 
+    previous_live_notified = bool(st.session_state.get("oms_last_notified_live_armed", False))
     st.session_state["live_trading_armed"] = live_armed
+
+    if live_armed and not previous_live_notified and st.session_state.get("oms_notify_live_armed", True):
+        send_oms_telegram(
+            "🚨 JFBP OMS LIVE Armed",
+            "OMS LIVE trading is armed. Real broker orders may route if execution controls are triggered.",
+        )
+    st.session_state["oms_last_notified_live_armed"] = bool(live_armed)
 
     kill_switch = st.checkbox(
         "Kill Switch",
@@ -1019,13 +1555,21 @@ def run_page():
         key="oms_kill_switch_v34_8",
     )
 
+    previous_kill_state = bool(st.session_state.get("oms_last_notified_kill_switch", False))
     st.session_state["risk_kill_switch"] = kill_switch
+
+    if kill_switch and not previous_kill_state and st.session_state.get("oms_notify_kill_switch", True):
+        send_oms_telegram(
+            "🛑 JFBP OMS Kill Switch",
+            "OMS kill switch is ON. Execution is blocked.",
+        )
+    st.session_state["oms_last_notified_kill_switch"] = bool(kill_switch)
 
     if risk_engine and hasattr(risk_engine, "kill_switch"):
         risk_engine.kill_switch = kill_switch
 
     # =====================================================
-    # RECONCILIATION CENTER
+    # RECONCILIATION CENTER + OMS INTELLIGENCE BRIEF
     # =====================================================
 
     runtime_fills = get_fills()
@@ -1061,16 +1605,6 @@ def run_page():
     else:
         risk_positions_count = 0
 
-    st.markdown("### 🏛 Institutional Reconciliation Center")
-
-    c1, c2, c3, c4, c5 = st.columns(5)
-
-    c1.metric("Runtime Fills", len(runtime_fills))
-    c2.metric("Portfolio Ledger", len(portfolio_ledger))
-    c3.metric("Audit Fills", len(audit_fills))
-    c4.metric("Portfolio Positions", positions_count)
-    c5.metric("Risk Positions", risk_positions_count)
-
     ledger_match = (
         len(portfolio_ledger) == len(audit_fills)
     )
@@ -1090,62 +1624,212 @@ def run_page():
         and len(runtime_fills) == len(audit_fills)
     )
 
-    if ledger_match and position_match:
+    reconciliation_ok = bool(
+        ledger_match
+        and position_match
+    )
 
-        if runtime_empty_after_restart:
-            st.success(
-                "Institutional reconciliation: MATCH "
-                "(runtime cache empty after restart)"
-            )
-
-        elif full_runtime_match:
-            st.success("Institutional reconciliation: MATCH")
-
-        else:
-            st.success(
-                "Institutional reconciliation: MATCH "
-                "(audit/portfolio/risk aligned; runtime cache is non-authoritative)"
-            )
-
+    if kill_switch:
+        readiness_label = "🔴 EXECUTION LOCKED"
+        readiness_text = (
+            "Kill switch is active. New execution should remain disabled "
+            "until risk controls are restored."
+        )
+    elif mode == "LIVE" and live_armed:
+        readiness_label = "🚨 LIVE ARMED"
+        readiness_text = (
+            "OMS is in LIVE mode and trading is armed. Orders may route to "
+            "the broker if execution controls are triggered."
+        )
+    elif mode == "LIVE":
+        readiness_label = "🟠 LIVE NOT ARMED"
+        readiness_text = (
+            "OMS is in LIVE infrastructure mode, but trading is not armed."
+        )
+    elif reconciliation_ok:
+        readiness_label = "🟢 SIM READY"
+        readiness_text = (
+            "SIM mode is active and reconciliation is aligned. Approved "
+            "scanner signals can be tested safely."
+        )
     else:
-        st.error(
-            "Institutional reconciliation drift: "
-            "FILL_LEDGER_AUDIT_MISMATCH"
+        readiness_label = "🟡 REVIEW REQUIRED"
+        readiness_text = (
+            "Reconciliation is not fully aligned. Review the center below "
+            "before executing approved signals."
         )
 
-        if portfolio_engine and hasattr(
-            portfolio_engine,
-            "reconcile_runtime_vs_portfolio",
-        ):
-            try:
-                drift_report = portfolio_engine.reconcile_runtime_vs_portfolio(
-                    runtime_fills=runtime_fills,
-                    audit_fills=audit_fills,
+    st.divider()
+    st.subheader("🧠 OMS Execution Brief")
+
+    st.info(
+        "🏛 OMS Control Center\n\n"
+        "Recommended workflow:\n"
+        "1. Verify Reconciliation = MATCH.\n"
+        "2. Confirm Kill Switch is OFF.\n"
+        "3. Review approved Scanner signals.\n"
+        "4. Execute approved signals.\n"
+        "5. Monitor fills, portfolio updates, and audit records.\n\n"
+        "Use Emergency Flatten only during abnormal market conditions "
+        "or when you need to immediately exit all positions."
+    )
+
+    with st.container(border=True):
+        oms_tip(
+            "This is the execution-readiness layer. It summarizes mode, "
+            "live status, kill switch, reconciliation, and current position truth."
+        )
+
+        brief_cols = st.columns(5)
+
+        with brief_cols[0]:
+            st.metric("Mode", mode)
+
+        with brief_cols[1]:
+            st.metric(
+                "Readiness",
+                readiness_label,
+            )
+
+        with brief_cols[2]:
+            st.metric(
+                "Kill Switch",
+                "ON" if kill_switch else "OFF",
+            )
+
+        with brief_cols[3]:
+            st.metric(
+                "Reconciliation",
+                "MATCH" if reconciliation_ok else "REVIEW",
+            )
+
+        with brief_cols[4]:
+            st.metric(
+                "Positions",
+                positions_count,
+            )
+
+        if reconciliation_ok and not kill_switch:
+            st.success(readiness_text)
+        elif kill_switch or (mode == "LIVE" and live_armed):
+            st.error(readiness_text)
+        else:
+            st.warning(readiness_text)
+
+    # =====================================================
+    # OMS ↔ POSITION COMMAND CENTER INTEGRATION v35.0
+    # =====================================================
+
+    last_exec_report = st.session_state.get("oms_last_execution_report", {})
+    approved_count = int(last_exec_report.get("approved_signals", 0) or 0) if isinstance(last_exec_report, dict) else 0
+    executed_count = int(last_exec_report.get("executed", 0) or 0) if isinstance(last_exec_report, dict) else 0
+    blocked_count = int(last_exec_report.get("blocked", 0) or 0) if isinstance(last_exec_report, dict) else 0
+    failed_count = int(last_exec_report.get("failed", 0) or 0) if isinstance(last_exec_report, dict) else 0
+
+    st.markdown("### 🎯 OMS → Position Command Handoff")
+    oms_tip(
+        "This turns OMS from an execution page into a workflow bridge. "
+        "After an execution, move directly into Position Command Center to manage open trades."
+    )
+
+    render_oms_card_grid([
+        {"title": "Approved Signals", "value": approved_count, "detail": "Last OMS execution plan", "tone": "info" if approved_count else "neutral"},
+        {"title": "Executed", "value": executed_count, "detail": "Orders accepted/executed by pipeline", "tone": "good" if executed_count else "neutral"},
+        {"title": "Blocked", "value": blocked_count, "detail": "Risk / OMS / duplicate blocks", "tone": "warning" if blocked_count else "good"},
+        {"title": "Failed", "value": failed_count, "detail": "Execution failures needing review", "tone": "risk" if failed_count else "good"},
+        {"title": "Runtime Fills", "value": len(runtime_fills), "detail": "Current OMS runtime fill cache", "tone": "info" if runtime_fills else "neutral"},
+        {"title": "Portfolio Positions", "value": positions_count, "detail": action_priority_label(last_exec_report), "tone": "info" if positions_count else "neutral"},
+    ])
+
+    nav_a, nav_b, nav_c = st.columns(3)
+    with nav_a:
+        open_position_command_center_button("Open Position Command Center", key="oms_open_position_command_top_v35")
+    with nav_b:
+        if st.button("Open Trade Command Center", width="stretch", key="oms_open_trade_command_v35"):
+            st.session_state["jfbp_main_navigation"] = "Trade Command Center"
+            st.rerun()
+    with nav_c:
+        if st.button("Open Journal", width="stretch", key="oms_open_journal_v35"):
+            st.session_state["jfbp_main_navigation"] = "Journal"
+            st.rerun()
+
+    st.markdown("### 🏛 Institutional Reconciliation Center")
+    oms_tip(
+        "This checks whether runtime fills, portfolio ledger, audit fills, "
+        "portfolio positions, and risk positions agree."
+    )
+
+    with st.container(border=True):
+        c1, c2, c3, c4, c5 = st.columns(5)
+
+        c1.metric("Runtime Fills", len(runtime_fills))
+        c2.metric("Portfolio Ledger", len(portfolio_ledger))
+        c3.metric("Audit Fills", len(audit_fills))
+        c4.metric("Portfolio Positions", positions_count)
+        c5.metric("Risk Positions", risk_positions_count)
+
+        if ledger_match and position_match:
+
+            if runtime_empty_after_restart:
+                st.success(
+                    "Institutional reconciliation: MATCH "
+                    "(runtime cache empty after restart)"
                 )
 
-                st.session_state["last_portfolio_reconcile_report"] = drift_report
+            elif full_runtime_match:
+                st.success("Institutional reconciliation: MATCH")
 
-                if isinstance(drift_report, dict) and drift_report.get("status") == "OK":
-                    st.success("Portfolio ledger repaired from runtime/audit truth.")
-                    st.rerun()
+            else:
+                st.success(
+                    "Institutional reconciliation: MATCH "
+                    "(audit/portfolio/risk aligned; runtime cache is non-authoritative)"
+                )
 
-                else:
-                    st.warning(
-                        "Portfolio repair attempted. Review reconcile report below."
+        else:
+            st.error(
+                "Institutional reconciliation drift: "
+                "FILL_LEDGER_AUDIT_MISMATCH"
+            )
+
+            if portfolio_engine and hasattr(
+                portfolio_engine,
+                "reconcile_runtime_vs_portfolio",
+            ):
+                try:
+                    drift_report = portfolio_engine.reconcile_runtime_vs_portfolio(
+                        runtime_fills=runtime_fills,
+                        audit_fills=audit_fills,
                     )
 
-            except Exception as exc:
-                st.warning(f"Portfolio repair failed: {exc}")
+                    st.session_state["last_portfolio_reconcile_report"] = drift_report
 
-        if st.session_state.get("last_portfolio_reconcile_report"):
-            with st.expander("Last Portfolio Reconcile Report"):
-                st.json(st.session_state["last_portfolio_reconcile_report"])
+                    if isinstance(drift_report, dict) and drift_report.get("status") == "OK":
+                        st.success("Portfolio ledger repaired from runtime/audit truth.")
+                        st.rerun()
+
+                    else:
+                        st.warning(
+                            "Portfolio repair attempted. Review reconcile report below."
+                        )
+
+                except Exception as exc:
+                    st.warning(f"Portfolio repair failed: {exc}")
+
+            if st.session_state.get("last_portfolio_reconcile_report"):
+                with st.expander("Last Portfolio Reconcile Report"):
+                    st.json(st.session_state["last_portfolio_reconcile_report"])
 
     # =====================================================
     # OPERATIONAL CONTROLS
     # =====================================================
 
     st.markdown("### Operational Controls")
+
+    oms_tip(
+        "Administrative tools used to rebuild OMS state, "
+        "reset risk counters, and validate system integrity. "
+        "Normally used during testing, recovery, or troubleshooting."
+    )
 
     oc1, oc2, oc3 = st.columns(3)
 
@@ -1194,6 +1878,11 @@ def run_page():
 
     st.markdown("### Runtime Clear Zone")
 
+    oms_tip(
+        "Clears temporary OMS runtime data. "
+        "Does not remove audit history or permanent records."
+    )
+
     confirm_clear = st.checkbox("Confirm runtime clear")
 
     if st.button("Clear Runtime OMS"):
@@ -1210,6 +1899,12 @@ def run_page():
     # =====================================================
 
     st.markdown("### 🚨 Emergency Flatten")
+
+    oms_tip(
+        "Immediately attempts to close every active position. "
+        "Use only during market emergencies, platform issues, "
+        "or when you want the portfolio completely flat."
+    )
 
     emergency_positions = normalize_position_rows()
     emergency_mode = st.session_state.get("mode", "SIM")
@@ -1262,6 +1957,17 @@ def run_page():
     if flatten_btn:
         report = emergency_flatten_all()
         status = str(report.get("status", "UNKNOWN"))
+
+        if st.session_state.get("oms_notify_emergency_flatten", True):
+            send_oms_telegram(
+                "🚨 JFBP OMS Emergency Flatten",
+                "\n".join([
+                    f"Status: {status}",
+                    f"Mode: {st.session_state.get('mode', 'SIM')}",
+                    f"Orders Attempted: {report.get('orders_attempted', 0)}",
+                    f"Residual Positions: {report.get('residual_positions', 0)}",
+                ]),
+            )
 
         if status == "COMPLETE":
             st.success("Emergency flatten completed. Book is flat.")
@@ -1475,6 +2181,30 @@ def run_page():
             [report] + st.session_state.get("oms_execution_history", [])
         )[:50]
 
+        # Prepare downstream review/handoff objects for Position Command Center and Journal.
+        prepared_reviews = []
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            prepared_reviews.append({
+                "timestamp": now(),
+                "source": "OMS_Execution_v35_0",
+                "symbol": result.get("symbol"),
+                "action": result.get("action") or result.get("side") or result.get("execution_action"),
+                "qty": result.get("qty"),
+                "status": result.get("status"),
+                "reason": result.get("reason", ""),
+                "mode": st.session_state.get("mode", "SIM"),
+            })
+
+        if prepared_reviews:
+            st.session_state["pending_trade_review"] = prepared_reviews
+            st.session_state["position_center_refresh"] = True
+            existing_notes = st.session_state.get("pcc_journal_reviews", [])
+            if not isinstance(existing_notes, list):
+                existing_notes = []
+            st.session_state["pcc_journal_reviews"] = prepared_reviews + existing_notes[:50]
+
         audit_event("EXECUTION_PLAN_EXECUTED", report)
 
         full_truth_sync()
@@ -1486,6 +2216,11 @@ def run_page():
     # =====================================================
 
     st.markdown("### 🎯 Execution")
+
+    oms_tip(
+        "Executes only Scanner signals that have passed "
+        "Risk Engine approval and OMS validation."
+    )
 
     confirm_execute = st.checkbox("Confirm execution of approved signals")
 
@@ -1501,6 +2236,19 @@ def run_page():
             report = execute_scanner_plan()
 
             status = str(report.get("status", "UNKNOWN"))
+
+            if st.session_state.get("oms_notify_execution", True):
+                send_oms_telegram(
+                    "⚡ JFBP OMS Execution",
+                    "\n".join([
+                        f"Status: {status}",
+                        f"Mode: {st.session_state.get('mode', 'SIM')}",
+                        f"Approved Signals: {report.get('approved_signals', 0)}",
+                        f"Executed: {report.get('executed', 0)}",
+                        f"Blocked: {report.get('blocked', 0)}",
+                        f"Failed: {report.get('failed', 0)}",
+                    ]),
+                )
 
             if status.startswith("EXECUTED_"):
                 executed = report.get("executed", 0)
@@ -1535,6 +2283,11 @@ def run_page():
     # =====================================================
 
     st.markdown("### 📊 OMS Diagnostics")
+
+    oms_tip(
+        "Displays the most recent OMS execution report, "
+        "including executed, blocked, and failed orders."
+    )
 
     last_exec = st.session_state.get("oms_last_execution_report", {})
 
@@ -1640,10 +2393,60 @@ def run_page():
         st.info("No OMS blotter entries yet.")
 
     # =====================================================
-    # PORTFOLIO
+    # OMS POSITIONS CREATED / MANAGED TODAY
     # =====================================================
 
     positions = get_positions()
+
+    st.markdown("### 🎯 Today's OMS Positions")
+    oms_tip(
+        "Fast bridge into Position Command Center. Review open positions created or updated by OMS, then manage hold/trim/exit decisions."
+    )
+
+    if positions and isinstance(positions, dict):
+        today_rows = []
+        for symbol, row in positions.items():
+            if not isinstance(row, dict):
+                continue
+            qty = row.get("qty", row.get("signed_qty", 0))
+            try:
+                signed_qty = float(row.get("signed_qty", qty) or 0)
+            except Exception:
+                signed_qty = 0.0
+            side = row.get("side", "LONG" if signed_qty >= 0 else "SHORT")
+            entry = row.get("avg_price", row.get("average_cost", row.get("avgCost", row.get("fill_price", 0))))
+            last = row.get("last_price", row.get("price", entry))
+            unrealized = row.get("unrealized_pnl", row.get("pnl", 0))
+            try:
+                pnl_float = float(unrealized or 0)
+            except Exception:
+                pnl_float = 0.0
+            if pnl_float > 0:
+                action_hint = "🟡 Review / Trim if target hit"
+            elif pnl_float < 0:
+                action_hint = "🔴 Review stop / exit risk"
+            else:
+                action_hint = "🟢 Monitor"
+            today_rows.append({
+                "Symbol": str(symbol).upper(),
+                "Side": side,
+                "Qty": qty,
+                "Entry": entry,
+                "Last": last,
+                "Unrealized P&L": unrealized,
+                "Next Step": action_hint,
+            })
+        if today_rows:
+            st.dataframe(pd.DataFrame(today_rows), width="stretch", hide_index=True, height=220)
+            open_position_command_center_button("Manage in Position Command Center", key="oms_open_position_command_bottom_v35")
+        else:
+            st.info("No normalized OMS position rows available yet.")
+    else:
+        st.info("No OMS-managed positions detected yet.")
+
+    # =====================================================
+    # PORTFOLIO
+    # =====================================================
 
     st.markdown("### 📦 Portfolio Snapshot")
 

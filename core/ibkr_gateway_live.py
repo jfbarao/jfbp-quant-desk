@@ -1,5 +1,5 @@
 # =========================================================
-# 📡 IBKR LIVE GATEWAY — INSTITUTIONAL TRUTH ADAPTER v1.7
+# 📡 IBKR LIVE GATEWAY — INSTITUTIONAL TRUTH ADAPTER v1.8
 # LIVE CONNECTIVITY + ACCOUNT / POSITIONS / ORDER TRUTH
 # BROKER EXECUTION RECOVERY + EXECUTION CACHE
 # =========================================================
@@ -39,7 +39,26 @@ SIM = "SIM"
 LIVE = "LIVE"
 BACKTEST = "BACKTEST"
 
-TRUTH_SOURCE = "ibkr_live_gateway.v1_7"
+TRUTH_SOURCE = "ibkr_live_gateway.v1_8"
+
+ACCOUNT_SUMMARY_TAGS = ",".join([
+    "AccountType",
+    "NetLiquidation",
+    "TotalCashValue",
+    "SettledCash",
+    "AccruedCash",
+    "BuyingPower",
+    "AvailableFunds",
+    "ExcessLiquidity",
+    "GrossPositionValue",
+    "CashBalance",
+    "FullAvailableFunds",
+    "FullExcessLiquidity",
+    "FullInitMarginReq",
+    "FullMaintMarginReq",
+    "InitMarginReq",
+    "MaintMarginReq",
+])
 
 
 class IBKRLiveGateway:
@@ -888,7 +907,57 @@ class IBKRLiveGateway:
         except Exception:
             return dict(self.positions_cache)
 
+    def _account_row_from_ib_value(self, item: Any) -> Dict[str, Any]:
+        return {
+            "account": getattr(item, "account", ""),
+            "tag": getattr(item, "tag", ""),
+            "value": getattr(item, "value", ""),
+            "currency": getattr(item, "currency", ""),
+            "model_code": getattr(item, "modelCode", ""),
+            "timestamp": self._now(),
+            "truth_source": TRUTH_SOURCE,
+        }
+
+    def _dedupe_account_rows(
+        self,
+        rows: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+
+        deduped: Dict[tuple, Dict[str, Any]] = {}
+
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+
+            tag = str(row.get("tag", "") or "").strip()
+            currency = str(row.get("currency", "") or "").strip()
+            account = str(row.get("account", "") or "").strip()
+
+            if not tag:
+                continue
+
+            key = (
+                account,
+                tag,
+                currency,
+                str(row.get("model_code", "") or "").strip(),
+            )
+
+            deduped[key] = dict(row)
+
+        return list(deduped.values())
+
     def refresh_account_summary(self) -> List[Dict[str, Any]]:
+        """
+        Refresh real IBKR account balance rows.
+
+        Important:
+        - accountValues() only reflects the Account Updates subscription and
+          may contain a small subset such as AccountType and AccruedCash.
+        - accountSummary() / reqAccountSummary() is the source that normally
+          provides NetLiquidation, TotalCashValue, AvailableFunds, BuyingPower,
+          ExcessLiquidity, and GrossPositionValue.
+        """
 
         if not self.verify_connection():
             return list(self.account_summary_cache)
@@ -898,32 +967,108 @@ class IBKRLiveGateway:
         rows: List[Dict[str, Any]] = []
 
         try:
+            # ---------------------------------------------
+            # 1) PRIMARY: blocking ib_insync accountSummary()
+            # ---------------------------------------------
+            try:
+                summary_values = list(
+                    self.ib.accountSummary(
+                        account="All",
+                        tags=ACCOUNT_SUMMARY_TAGS,
+                    )
+                    or []
+                )
+
+                for item in summary_values:
+                    rows.append(
+                        self._account_row_from_ib_value(item)
+                    )
+
+            except TypeError:
+                # Older ib_insync versions may not accept keyword args.
+                try:
+                    summary_values = list(
+                        self.ib.accountSummary(
+                            "All",
+                            ACCOUNT_SUMMARY_TAGS,
+                        )
+                        or []
+                    )
+
+                    for item in summary_values:
+                        rows.append(
+                            self._account_row_from_ib_value(item)
+                        )
+
+                except Exception as exc:
+                    self.last_error = (
+                        f"IB accountSummary read failed: {exc}"
+                    )
+
+            except Exception as exc:
+                self.last_error = (
+                    f"IB accountSummary read failed: {exc}"
+                )
+
+            # ---------------------------------------------
+            # 2) FALLBACK: low-level reqAccountSummary
+            # ---------------------------------------------
+
+            if not rows:
+                try:
+                    req_id = self.ib.client.getReqId()
+
+                    self.ib.client.reqAccountSummary(
+                        req_id,
+                        "All",
+                        ACCOUNT_SUMMARY_TAGS,
+                    )
+
+                    try:
+                        self.ib.sleep(2.0)
+                    except Exception:
+                        pass
+
+                    summary_values = list(
+                        self.ib.accountSummary() or []
+                    )
+
+                    for item in summary_values:
+                        rows.append(
+                            self._account_row_from_ib_value(item)
+                        )
+
+                except Exception as exc:
+                    self.last_error = (
+                        f"IB reqAccountSummary fallback failed: {exc}"
+                    )
+
+            # ---------------------------------------------
+            # 3) MERGE: accountValues subscription cache
+            # ---------------------------------------------
+
             try:
                 account_values = list(self.ib.accountValues() or [])
+
+                for item in account_values:
+                    rows.append(
+                        self._account_row_from_ib_value(item)
+                    )
+
             except Exception:
-                account_values = []
+                pass
 
-            if not account_values:
-                try:
-                    self.ib.reqAccountSummary()
-                    self.ib.sleep(2.0)
-                    account_values = list(self.ib.accountValues() or [])
-                except Exception:
-                    account_values = []
-
-            for item in account_values:
-                rows.append({
-                    "account": getattr(item, "account", ""),
-                    "tag": getattr(item, "tag", ""),
-                    "value": getattr(item, "value", ""),
-                    "currency": getattr(item, "currency", ""),
-                    "model_code": getattr(item, "modelCode", ""),
-                    "timestamp": self._now(),
-                    "truth_source": TRUTH_SOURCE,
-                })
+            rows = self._dedupe_account_rows(rows)
 
             self.account_summary_cache = list(rows)
             self.last_account_refresh = self._now()
+
+            if not rows:
+                self.last_error = (
+                    "Account summary refresh returned zero rows. "
+                    "Confirm TWS/IB Gateway is connected, API access is "
+                    "enabled, and the account is available to this client ID."
+                )
 
             return list(self.account_summary_cache)
 
@@ -932,9 +1077,6 @@ class IBKRLiveGateway:
             return list(self.account_summary_cache)
 
     def account_summary(self) -> List[Dict[str, Any]]:
-        return list(self.account_summary_cache)
-
-    def get_account_summary(self) -> List[Dict[str, Any]]:
         try:
             if not self.account_summary_cache:
                 self.refresh_account_summary()
@@ -943,6 +1085,50 @@ class IBKRLiveGateway:
 
         except Exception:
             return list(self.account_summary_cache)
+
+    def get_account_summary(self) -> List[Dict[str, Any]]:
+        return self.account_summary()
+
+    def account_values(self) -> Dict[str, Any]:
+
+        values: Dict[str, Any] = {}
+
+        try:
+            rows = list(self.account_summary())
+
+            for row in rows:
+
+                if not isinstance(row, dict):
+                    continue
+
+                tag = str(row.get("tag", "") or "").strip()
+                currency = str(row.get("currency", "") or "").strip()
+
+                if not tag:
+                    continue
+
+                raw_value = row.get("value")
+
+                try:
+                    value = float(raw_value)
+                except Exception:
+                    value = raw_value
+
+                # Base/default key. Prefer BASE or blank currency for this.
+                if (
+                    tag not in values
+                    or currency.upper() in ("", "BASE")
+                ):
+                    values[tag] = value
+
+                if currency:
+                    values[f"{tag}_{currency}"] = value
+
+            return values
+
+        except Exception as exc:
+            self.last_error = f"account_values failed: {exc}"
+            return values
 
     # =====================================================
     # EXECUTION CACHE / PERSISTENCE

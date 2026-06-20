@@ -1,0 +1,47 @@
+{
+  "alert_keys": [],
+  "last_signal_by_symbol": {
+    "AAPL": "WATCH",
+    "AMD": "WATCH",
+    "AMZN": "WATCH",
+    "ARM": "WATCH",
+    "AVGO": "WATCH",
+    "DIA": "WATCH",
+    "GOOGL": "WATCH",
+    "IWM": "WATCH",
+    "JPM": "WATCH",
+    "META": "WATCH",
+    "MSFT": "WATCH",
+    "NVDA": "WATCH",
+    "QQQ": "WATCH",
+    "SPY": "WATCH"
+  },
+  "stats": {
+    "last_scan_alerts_sent": 0,
+    "last_scan_buy_symbols": [],
+    "last_scan_duplicates_blocked": 0,
+    "last_scan_errors": 0,
+    "last_scan_finished": "2026-06-20T02:35:22+00:00",
+    "last_scan_id": "2026-06-20T023520_0000",
+    "last_scan_interval_minutes": 5,
+    "last_scan_recommendation_counts": {
+      "WATCH": 14
+    },
+    "last_scan_rows": 14,
+    "last_scan_sector_counts": {
+      "Communication Services": 2,
+      "Consumer Discretionary": 1,
+      "ETF": 4,
+      "Financials": 1,
+      "Semiconductors": 3,
+      "Technology": 3
+    },
+    "last_scan_signal_counts": {
+      "NO TRADE": 14
+    },
+    "last_scan_started": "2026-06-20T02:35:20+00:00",
+    "last_scan_status": "OK",
+    "last_scan_symbol_count": 14,
+    "watcher_version": "v3.0-analytics"
+  }
+}

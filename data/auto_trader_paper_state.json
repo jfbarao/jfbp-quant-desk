@@ -1,0 +1,28 @@
+{
+  "daily_trade_counts": {
+    "2026-06-14": 1
+  },
+  "processed_alert_keys": [
+    "2026-06-14|JPM|STRONG BUY"
+  ],
+  "stats": {
+    "last_action": "BUY",
+    "last_alerts_processed": 0,
+    "last_blocked": 0,
+    "last_event": "PAPER_FILL",
+    "last_fills": 0,
+    "last_message": "No Signal Watcher alerts found yet",
+    "last_notional": 9942.32,
+    "last_price": 320.72,
+    "last_qty": 31,
+    "last_scan_finished": "2026-06-20T02:38:13+00:00",
+    "last_status": "WAITING_FOR_ALERTS",
+    "last_symbol": "JPM",
+    "last_trade_time": "2026-06-15T03:12:44+00:00",
+    "open_positions": 1,
+    "orders_today": 0,
+    "paper_account_value": 100000.0,
+    "version": "v1.0-paper"
+  },
+  "version": "v1.0-paper"
+}

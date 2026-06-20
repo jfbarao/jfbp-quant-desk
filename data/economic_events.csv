@@ -1,0 +1,6 @@
+date,event,importance,category,country
+2026-06-10,CPI,HIGH,Inflation,United States
+2026-06-12,PPI,HIGH,Inflation,United States
+2026-06-18,FOMC Interest Rate Decision,HIGH,Central Bank,United States
+2026-07-03,Non-Farm Payrolls,HIGH,Employment,United States
+2026-07-10,Initial Jobless Claims,MEDIUM,Employment,United States

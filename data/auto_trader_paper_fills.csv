@@ -1,0 +1,2 @@
+timestamp,alert_key,symbol,action,trade_recommendation,price,source_alert_timestamp,source_scan_id,opportunity_score_pct,model_score,sector,mode,source,order_id,fill_id,qty,fill_price,notional,status,execution_status,is_paper,is_true_fill
+2026-06-15T03:12:44+00:00,2026-06-14|JPM|STRONG BUY,JPM,BUY,STRONG BUY,320.72,2026-06-14T23:26:43+00:00,,100.0,5,Financials,PAPER,jfbp_auto_trader_v1_paper,PAPER-ORD-1781493164-JPM,PAPER-FILL-1781493164-JPM,31,320.72,9942.32,FILLED,FILLED,True,False

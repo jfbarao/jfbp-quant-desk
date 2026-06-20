@@ -1,0 +1,13 @@
+{
+  "JPM": {
+    "avg_price": 320.72,
+    "last_price": 320.72,
+    "last_update": "2026-06-15T03:12:44+00:00",
+    "market_value": 9942.32,
+    "qty": 31.0,
+    "side": "LONG",
+    "source": "jfbp_auto_trader_v1_paper",
+    "symbol": "JPM",
+    "unrealized_pnl": 0.0
+  }
+}

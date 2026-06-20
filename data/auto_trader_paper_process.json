@@ -1,0 +1,13 @@
+{
+  "cwd": "/Users/josepereira/rs_clean",
+  "mode": "PAPER_ONLY",
+  "pid": 5076,
+  "python": "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+  "script": "/Users/josepereira/rs_clean/core/Auto_Trader_v1_Paper.py",
+  "started_at": "2026-06-14 20:12:43",
+  "status": "STARTED",
+  "stderr_log": "/Users/josepereira/rs_clean/data/auto_trader_paper_process_stderr.log",
+  "stdout_log": "/Users/josepereira/rs_clean/data/auto_trader_paper_process_stdout.log",
+  "telegram_chat_visible_to_streamlit": true,
+  "telegram_token_visible_to_streamlit": false
+}

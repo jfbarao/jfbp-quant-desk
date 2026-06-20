@@ -1,0 +1,8 @@
+======================================================================
+JFBP Auto Trader v1.0-paper
+Mode: PAPER ONLY
+Enabled: True
+Poll interval: 10s
+No live orders. No IBKR routing. No OMS LIVE.
+======================================================================
+[2026-06-14 20:12:44] Auto Trader processed=1 fills=1 blocked=0

@@ -1,5 +1,5 @@
 # =========================================================
-# 🧠 IBKR GATEWAY v3.5 — REAL IBKR CONNECTION + SAFE CALLBACKS
+# 🧠 IBKR GATEWAY v3.8 — HARD RECONNECT + SAFE CALLBACKS
 # LIVE MARKET DATA SUBSCRIPTION FIX
 # EXECUTION RECOVERY HARD DEDUPE
 # LIVE-READY SAFE
@@ -23,7 +23,7 @@ SIM = "SIM"
 LIVE = "LIVE"
 BACKTEST = "BACKTEST"
 
-TRUTH_SOURCE = "ibkr_gateway_v3_5"
+TRUTH_SOURCE = "ibkr_gateway_v3_8"
 
 
 # =========================================================
@@ -277,22 +277,60 @@ class IBKRGateway:
         client_id: int = 7,
         timeout: float = 10.0,
     ) -> bool:
+        """Connect to IBKR with a hard reconnect fallback.
 
-        try:
-            from ib_insync import IB
+        Why this exists:
+        - After a manual disconnect, ib_insync / TWS can keep the old client
+          socket/clientId in a stale state for a short period.
+        - Reusing the same IB() object may return False even though TWS/Gateway
+          is healthy.
+        - Restarting Streamlit works because it creates a fresh IB() object.
 
-            self.ensure_runtime_fields()
+        This method recreates the IB() client for every manual connect attempt
+        and retries once with alternate client IDs if the requested client ID is
+        still being held by TWS/Gateway.
+        """
 
-            self.host = host
-            self.port = int(port)
-            self.client_id = int(client_id)
+        from ib_insync import IB
 
-            if self.ib_client is None:
+        self.ensure_runtime_fields()
+
+        requested_host = str(host or "127.0.0.1")
+        requested_port = int(port or 7497)
+        requested_client_id = int(client_id or 7)
+
+        self.host = requested_host
+        self.port = requested_port
+        self.client_id = requested_client_id
+
+        self.ui_connected = False
+        self.broker_connected = False
+        self.last_error = ""
+
+        # Always start manual connect from a clean IB() object. This is the
+        # important reconnect fix.
+        self._hard_reset_ib_client()
+
+        candidate_client_ids = []
+        for cid in (
+            requested_client_id,
+            requested_client_id + 1,
+            requested_client_id + 2,
+            requested_client_id + 10,
+            7 if requested_client_id != 7 else 11,
+        ):
+            if cid not in candidate_client_ids:
+                candidate_client_ids.append(cid)
+
+        errors: List[str] = []
+
+        for cid in candidate_client_ids:
+
+            try:
                 self.ib_client = IB()
+                self._events_bound = False
+                self.client_id = int(cid)
 
-            self._bind_ib_events()
-
-            if not self.ib_client.isConnected():
                 self.ib_client.connect(
                     host=self.host,
                     port=self.port,
@@ -300,31 +338,52 @@ class IBKRGateway:
                     timeout=timeout,
                 )
 
-            try:
-                self.ib_client.reqMarketDataType(3)
-                self.market_data_type = 3
+                if not self.verify_connection():
+                    errors.append(f"clientId {cid}: connect returned but isConnected=False")
+                    self._hard_reset_ib_client()
+                    time.sleep(0.35)
+                    continue
+
+                self._bind_ib_events()
+
+                try:
+                    self.ib_client.reqMarketDataType(3)
+                    self.market_data_type = 3
+                except Exception as exc:
+                    # Non-fatal: connection is still valid.
+                    self.last_error = f"Delayed market data request failed: {exc}"
+
+                self.ui_connected = True
+                self.broker_connected = True
+
+                if not self.last_error:
+                    self.last_error = ""
+
+                return True
+
             except Exception as exc:
-                self.last_error = f"Delayed market data request failed: {exc}"
+                errors.append(f"clientId {cid}: {exc}")
+                self._hard_reset_ib_client()
+                time.sleep(0.35)
 
-            self.ui_connected = True
-            self.broker_connected = self.verify_connection()
+        self.ui_connected = False
+        self.broker_connected = False
+        self.last_error = "Reconnect failed after fresh-client attempts: " + " | ".join(errors)
+        return False
 
-            self._bind_ib_events()
+    def _hard_reset_ib_client(self) -> None:
+        """Fully tear down the ib_insync client object before reconnecting."""
 
-            # IMPORTANT:
-            # Do NOT call refresh_all() during connect.
-            # Connect must stay socket-only and fast.
-
-            if self.broker_connected:
-                self.last_error = ""
-
-            return self.broker_connected
-
-        except Exception as exc:
-            self.last_error = str(exc)
-            self.ui_connected = False
-            self.broker_connected = False
-            return False
+        try:
+            if self.ib_client is not None:
+                try:
+                    if self.ib_client.isConnected():
+                        self.ib_client.disconnect()
+                except Exception:
+                    pass
+        finally:
+            self.ib_client = None
+            self._events_bound = False
 
     def disconnect(self) -> bool:
 
@@ -342,6 +401,11 @@ class IBKRGateway:
 
         except Exception as exc:
             self.last_error = f"Disconnect warning: {exc}"
+
+        # Fully reset the client object so the next Connect Gateway action
+        # creates a fresh socket/client session instead of reusing a stale IB().
+        self.ib_client = None
+        self._events_bound = False
 
         self.ui_connected = False
         self.broker_connected = False
@@ -1209,6 +1273,100 @@ class IBKRGateway:
     # POSITION / ACCOUNT READS
     # =====================================================
 
+    def _position_market_price(
+        self,
+        symbol: str,
+        contract: Any = None,
+        avg_cost: float = 0.0,
+    ) -> float:
+        symbol = str(symbol or "").upper().strip()
+
+        price = 0.0
+
+        # Prefer cached quote/market data if available.
+        for cache_name in (
+            "quotes_cache",
+            "market_data_cache",
+            "last_prices",
+            "prices",
+            "snapshot_cache",
+        ):
+            try:
+                cache = getattr(self, cache_name, None)
+
+                if not isinstance(cache, dict):
+                    continue
+
+                raw = cache.get(symbol)
+
+                if isinstance(raw, dict):
+                    for key in (
+                        "last_price",
+                        "market_price",
+                        "marketPrice",
+                        "last",
+                        "price",
+                        "close",
+                    ):
+                        price = self._safe_float(raw.get(key))
+
+                        if price > 0:
+                            return price
+
+                else:
+                    price = self._safe_float(raw)
+
+                    if price > 0:
+                        return price
+
+            except Exception:
+                pass
+
+        # Fallback to ib_insync market price when a contract is available.
+        try:
+            if (
+                self.ib_client is not None
+                and contract is not None
+                and self.verify_connection()
+            ):
+                ticker = self.ib_client.reqMktData(
+                    contract,
+                    "",
+                    False,
+                    False,
+                )
+
+                try:
+                    self.ib_client.sleep(0.25)
+                except Exception:
+                    pass
+
+                for attr in (
+                    "marketPrice",
+                    "last",
+                    "close",
+                ):
+                    value = getattr(ticker, attr, None)
+
+                    if callable(value):
+                        value = value()
+
+                    price = self._safe_float(value)
+
+                    if price > 0:
+                        return price
+
+                bid = self._safe_float(getattr(ticker, "bid", 0.0))
+                ask = self._safe_float(getattr(ticker, "ask", 0.0))
+
+                if bid > 0 and ask > 0:
+                    return (bid + ask) / 2.0
+
+        except Exception:
+            pass
+
+        return self._safe_float(avg_cost)
+
     def refresh_positions(self):
 
         try:
@@ -1227,12 +1385,35 @@ class IBKRGateway:
                         getattr(contract, "symbol", "") or ""
                     ).upper().strip()
 
-                    qty = float(getattr(p, "position", 0) or 0)
-                    avg_cost = float(getattr(p, "avgCost", 0) or 0)
-                    account = str(getattr(p, "account", "") or "")
+                    qty = self._safe_float(
+                        getattr(p, "position", 0)
+                    )
+
+                    avg_cost = self._safe_float(
+                        getattr(p, "avgCost", 0)
+                    )
+
+                    account = str(
+                        getattr(p, "account", "") or ""
+                    )
 
                     if not symbol or abs(qty) <= 0:
                         continue
+
+                    last_price = self._position_market_price(
+                        symbol=symbol,
+                        contract=contract,
+                        avg_cost=avg_cost,
+                    )
+
+                    market_value = abs(qty) * last_price
+
+                    unrealized_pnl = 0.0
+
+                    if avg_cost > 0 and last_price > 0:
+                        unrealized_pnl = (
+                            (last_price - avg_cost) * qty
+                        )
 
                     self.positions[symbol] = qty
 
@@ -1245,8 +1426,19 @@ class IBKRGateway:
                         "position": qty,
                         "qty": qty,
                         "quantity": qty,
+                        "signed_qty": qty,
                         "avg_cost": avg_cost,
+                        "avgCost": avg_cost,
                         "avg_price": avg_cost,
+                        "last_price": last_price,
+                        "market_price": last_price,
+                        "marketPrice": last_price,
+                        "position_value": market_value,
+                        "market_value": market_value,
+                        "marketValue": market_value,
+                        "unrealized_pnl": unrealized_pnl,
+                        "realized_pnl": 0.0,
+                        "total_pnl": unrealized_pnl,
                         "con_id": getattr(contract, "conId", ""),
                         "timestamp": self._now(),
                         "truth_source": TRUTH_SOURCE,
@@ -1254,9 +1446,6 @@ class IBKRGateway:
 
                 self.last_positions_df = pd.DataFrame(rows)
                 self.last_positions_refresh = self._now()
-
-                # Broker snapshot sync must remain position-only.
-                # Do NOT subscribe to market data or refresh quotes here.
 
                 return rows
 
@@ -1289,7 +1478,9 @@ class IBKRGateway:
                     status = getattr(trade, "orderStatus", None)
                     contract = getattr(trade, "contract", None)
 
-                    action = self._safe_str(getattr(order, "action", "")).upper()
+                    action = self._safe_str(
+                        getattr(order, "action", "")
+                    ).upper()
 
                     qty = self._safe_float(
                         getattr(order, "totalQuantity", 0)
@@ -1304,21 +1495,39 @@ class IBKRGateway:
                     )
 
                     rows.append({
-                        "broker_order_id": self._safe_str(getattr(order, "orderId", "")),
-                        "broker_id": self._safe_str(getattr(order, "orderId", "")),
-                        "perm_id": self._safe_str(getattr(order, "permId", "")),
-                        "permId": self._safe_str(getattr(order, "permId", "")),
-                        "symbol": self._safe_str(getattr(contract, "symbol", "")).upper(),
+                        "broker_order_id": self._safe_str(
+                            getattr(order, "orderId", "")
+                        ),
+                        "broker_id": self._safe_str(
+                            getattr(order, "orderId", "")
+                        ),
+                        "perm_id": self._safe_str(
+                            getattr(order, "permId", "")
+                        ),
+                        "permId": self._safe_str(
+                            getattr(order, "permId", "")
+                        ),
+                        "symbol": self._safe_str(
+                            getattr(contract, "symbol", "")
+                        ).upper(),
                         "action": action,
                         "side": action,
                         "qty": qty,
                         "quantity": qty,
                         "filled_qty": filled,
                         "remaining_qty": remaining,
-                        "order_type": self._safe_str(getattr(order, "orderType", "")),
-                        "limit_price": self._safe_float(getattr(order, "lmtPrice", 0)),
-                        "avg_fill_price": self._safe_float(getattr(status, "avgFillPrice", 0)),
-                        "status": self._safe_str(getattr(status, "status", "")).upper(),
+                        "order_type": self._safe_str(
+                            getattr(order, "orderType", "")
+                        ),
+                        "limit_price": self._safe_float(
+                            getattr(order, "lmtPrice", 0)
+                        ),
+                        "avg_fill_price": self._safe_float(
+                            getattr(status, "avgFillPrice", 0)
+                        ),
+                        "status": self._safe_str(
+                            getattr(status, "status", "")
+                        ).upper(),
                         "timestamp": self._now(),
                         "truth_source": TRUTH_SOURCE,
                     })
@@ -1373,17 +1582,142 @@ class IBKRGateway:
     def get_account_summary(self) -> List[Dict[str, Any]]:
         return self.refresh_account_summary()
 
+    def account_values(self) -> Dict[str, Any]:
+
+        values: Dict[str, Any] = {}
+
+        try:
+            rows = list(self.account_summary_cache)
+
+            if not rows:
+                rows = self.refresh_account_summary()
+
+            for row in rows:
+
+                if not isinstance(row, dict):
+                    continue
+
+                tag = str(
+                    row.get("tag", "")
+                ).strip()
+
+                if not tag:
+                    continue
+
+                raw_value = row.get("value")
+
+                try:
+                    value = float(raw_value)
+                except Exception:
+                    value = raw_value
+
+                values[tag] = value
+
+                currency = str(
+                    row.get("currency", "")
+                ).strip()
+
+                if currency:
+                    values[f"{tag}_{currency}"] = value
+
+        except Exception as exc:
+            self.last_error = (
+                f"account_values failed: {exc}"
+            )
+
+        return values
+
+    def account_snapshot(self) -> Dict[str, Any]:
+
+        values = self.account_values()
+
+        def first_value(keys: List[str]) -> float:
+            for key in keys:
+                value = self._safe_float(values.get(key), 0.0)
+
+                if value > 0:
+                    return float(value)
+
+            return 0.0
+
+        net_liquidation = first_value([
+            "NetLiquidation",
+            "NetLiquidation_USD",
+            "NetLiquidation_CAD",
+            "FullAvailableFunds",
+            "FullAvailableFunds_USD",
+            "FullAvailableFunds_CAD",
+        ])
+
+        available_funds = first_value([
+            "AvailableFunds",
+            "AvailableFunds_USD",
+            "AvailableFunds_CAD",
+            "FullAvailableFunds",
+            "FullAvailableFunds_USD",
+            "FullAvailableFunds_CAD",
+        ])
+
+        buying_power = first_value([
+            "BuyingPower",
+            "BuyingPower_USD",
+            "BuyingPower_CAD",
+        ])
+
+        total_cash = first_value([
+            "TotalCashValue",
+            "TotalCashValue_USD",
+            "TotalCashValue_CAD",
+            "CashBalance",
+            "CashBalance_USD",
+            "CashBalance_CAD",
+            "SettledCash",
+            "SettledCash_USD",
+            "SettledCash_CAD",
+            "AvailableFunds",
+            "AvailableFunds_USD",
+            "AvailableFunds_CAD",
+        ])
+
+        excess_liquidity = first_value([
+            "ExcessLiquidity",
+            "ExcessLiquidity_USD",
+            "ExcessLiquidity_CAD",
+        ])
+
+        return {
+            "account_equity": net_liquidation,
+            "net_liquidation": net_liquidation,
+            "NetLiquidation": net_liquidation,
+            "available_funds": available_funds,
+            "AvailableFunds": available_funds,
+            "buying_power": buying_power,
+            "BuyingPower": buying_power,
+            "cash": total_cash,
+            "available_cash": total_cash,
+            "TotalCashValue": total_cash,
+            "excess_liquidity": excess_liquidity,
+            "ExcessLiquidity": excess_liquidity,
+            "raw": values,
+            "timestamp": self._now(),
+            "truth_source": TRUTH_SOURCE,
+        }
+
     def pull_broker_snapshot(self) -> Dict[str, Any]:
 
         positions = self.refresh_positions()
         open_orders = self.refresh_open_orders()
         account_summary = self.refresh_account_summary()
+        account_values = self.account_values()
+        account_snapshot = self.account_snapshot()
         fills = self.get_execution_cache()
 
         return {
             "positions": positions,
             "open_orders": open_orders,
             "account_summary": account_summary,
+            "account_values": account_values,
+            "account_snapshot": account_snapshot,
             "fills": fills,
             "timestamp": self._now(),
             "truth_source": TRUTH_SOURCE,
@@ -1397,6 +1731,7 @@ class IBKRGateway:
         if self.mode == LIVE and self.verify_connection():
 
             self.refresh_positions()
+            self.refresh_account_summary()
 
             symbols = list(self.positions.keys())
 
@@ -1412,7 +1747,7 @@ class IBKRGateway:
             self._sync_quotes()
             self._sync_positions()
             self._sync_pnl()
-
+                        
     # =====================================================
     # SYNC HELPERS
     # =====================================================

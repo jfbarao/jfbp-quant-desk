@@ -1,6 +1,6 @@
 # =========================================================
-# 🧠 JFBP QUANT DESK — CORE BOOTSTRAP v33.8
-# FORCED PORTFOLIO → RISK RECONCILIATION
+# 🧠 JFBP QUANT DESK — CORE BOOTSTRAP v33.9
+# LIVE GATEWAY REBUILD + PORTFOLIO → RISK RECONCILIATION
 # =========================================================
 
 from __future__ import annotations
@@ -780,6 +780,12 @@ def init_core():
 
     st.session_state.setdefault("live_gateway_callbacks_bound", False)
 
+    # Multi-Asset Signal Bus
+    # Pulse pages publish regime/stress/breadth/opportunity state here.
+    # Scanner and Quant Executor can read this without importing Pulse pages.
+    st.session_state.setdefault("multi_asset_signal_bus", {})
+    st.session_state.setdefault("multi_asset_signal_bus_version", "v1.0")
+
     mode = st.session_state.get("mode", "SIM")
 
     universe = _get_or_create(
@@ -790,22 +796,81 @@ def init_core():
     # =====================================================
     # GATEWAY SELECTION
     # =====================================================
+    # v33.9 reconnect fix:
+    #
+    # In LIVE mode this app uses IBKRLiveGateway from
+    # core.ibkr_gateway_live, not the SIM gateway from
+    # brokers.ibkr_gateway.
+    #
+    # After a manual disconnect, some IBKR/ib_insync client
+    # objects can remain stale inside the existing gateway
+    # instance. Restarting Streamlit works because it creates
+    # a fresh gateway. This block gives us that same clean
+    # gateway rebuild automatically whenever LIVE mode is
+    # active and the existing live gateway is disconnected.
+    #
+    # Connected live gateways are never replaced.
 
     existing_gateway = st.session_state.get("gateway")
 
+    def _gateway_connected_for_bootstrap(candidate) -> bool:
+        if candidate is None:
+            return False
+
+        try:
+            if hasattr(candidate, "verify_connection"):
+                return bool(candidate.verify_connection())
+        except Exception:
+            return False
+
+        try:
+            connected_attr = getattr(candidate, "connected", False)
+
+            if callable(connected_attr):
+                return bool(connected_attr())
+
+            return bool(connected_attr)
+
+        except Exception:
+            return False
+
     if mode == "LIVE":
+
+        existing_gateway_class = (
+            existing_gateway.__class__.__name__
+            if existing_gateway is not None
+            else ""
+        )
+
+        existing_live_gateway_connected = _gateway_connected_for_bootstrap(
+            existing_gateway
+        )
 
         gateway_needs_replace = (
             existing_gateway is None
-            or existing_gateway.__class__.__name__ != "IBKRLiveGateway"
+            or existing_gateway_class != "IBKRLiveGateway"
+            or not existing_live_gateway_connected
         )
 
         if gateway_needs_replace:
+            try:
+                if existing_gateway is not None and hasattr(existing_gateway, "disconnect"):
+                    existing_gateway.disconnect()
+            except Exception:
+                pass
+
             gateway = IBKRLiveGateway(mode="LIVE")
             st.session_state["gateway"] = gateway
             st.session_state["live_gateway_callbacks_bound"] = False
+
+            st.session_state["bootstrap_live_gateway_rebuilt"] = True
+            st.session_state["bootstrap_live_gateway_rebuild_reason"] = (
+                "MISSING_OR_DISCONNECTED_LIVE_GATEWAY"
+            )
         else:
             gateway = existing_gateway
+            st.session_state["bootstrap_live_gateway_rebuilt"] = False
+            st.session_state["bootstrap_live_gateway_rebuild_reason"] = "CONNECTED_GATEWAY_REUSED"
 
     else:
 
