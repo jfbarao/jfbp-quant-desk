@@ -7,4 +7,3 @@ pillow
 tornado
 pydeck
 protobuf
-torch==2.2.2
