@@ -7,3 +7,4 @@ pillow
 tornado
 pydeck
 protobuf
+yfinance
