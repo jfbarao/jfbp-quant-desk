@@ -1,0 +1,7 @@
+venv/
+__pycache__/
+.DS_Store
+*.sqlite
+runtime_state/
+_db_hold/
+signal_log.csv
