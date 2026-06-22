@@ -1,6 +1,6 @@
 # =========================================================
-# JFBP APP ENTRYPOINT v24.23
-# STABLE ROUTER — MARKET HUB SIDEBAR FIX
+# JFBP APP ENTRYPOINT v24.24
+# STABLE ROUTER — SAAS LOGIN GATE ENABLED
 # FUTURE ASSET MODULES READY
 # =========================================================
 
@@ -119,6 +119,48 @@ except Exception as oil_import_error:
         st.error("Oil Pulse could not be loaded.")
         st.caption("Make sure Oil_Pulse.py is saved inside the pages folder.")
         st.exception(_err)
+
+
+try:
+    from pages.SaaS_Core import (
+        run_page as saas_core_page,
+        init_saas_state,
+        get_current_user,
+        inject_saas_css,
+        render_auth_panel,
+        require_page_access,
+        supabase_logout,
+    )
+except Exception as saas_import_error:
+    def saas_core_page(_err=saas_import_error):
+        st.title("🔐 SaaS Core")
+        st.error("SaaS Core could not be loaded.")
+        st.caption("Make sure SaaS_Core.py is saved inside the pages folder.")
+        st.exception(_err)
+
+    def init_saas_state():
+        st.session_state.setdefault("saas_logged_in", False)
+        st.session_state.setdefault("saas_user", None)
+
+    def get_current_user():
+        return None
+
+    def inject_saas_css():
+        return None
+
+    def render_auth_panel():
+        st.error("SaaS Core could not be loaded, so login is unavailable.")
+        st.exception(saas_import_error)
+
+    def require_page_access(page_name: str) -> bool:
+        st.error("SaaS Core could not be loaded, so access control is unavailable.")
+        st.exception(saas_import_error)
+        return False
+
+    def supabase_logout():
+        st.session_state["saas_logged_in"] = False
+        st.session_state["saas_user"] = None
+        return True, "Logged out."
 
 
 st.set_page_config(
@@ -368,6 +410,14 @@ def workflow_sidebar_navigation() -> str:
             ],
             "always_open": False,
         },
+        {
+            "title": "🔐 Admin",
+            "caption": "SaaS infrastructure and subscription controls.",
+            "items": [
+                ("🔐 SaaS Core", "SaaS Core"),
+            ],
+            "always_open": False,
+        },
     ]
 
     for group in groups:
@@ -383,6 +433,88 @@ def workflow_sidebar_navigation() -> str:
     return st.session_state.get("jfbp_main_navigation", "Opportunity Center")
 
 
+
+# =========================================================
+# SAAS FRONT-DOOR GATE
+# =========================================================
+
+ACCESS_NAME_BY_PAGE = {
+    "🧭 Navigation Guide": "Navigation Guide",
+    "Opportunity Center": "Opportunity Center",
+    "Scanner": "Scanner",
+    "Market Hub": "Market Hub",
+    "Research Stock": "Research Stock",
+    "Trade Command Center": "Trade Command Center",
+    "Options Center": "Options Center",
+    "Market Pulse": "Market Pulse",
+    "Economic Calendar": "Economic Calendar",
+    "Earnings Calendar": "Earnings Calendar",
+    "Automation Control Center": "Automation Control Center",
+    "OMS Execution": "OMS Execution",
+    "Position Command Center": "Position Command Center",
+    "Manual Order Ticket": "Manual Order Ticket",
+    "Portfolio": "Portfolio",
+    "Live IBKR": "Live IBKR",
+    "Journal": "Journal",
+    "Database": "Database",
+    "Private Portfolio": "Private Portfolio",
+    "Crypto Pulse": "Crypto Pulse",
+    "Forex Pulse": "Forex Pulse",
+    "Gold Pulse": "Gold Pulse",
+    "Oil Pulse": "Oil Pulse",
+    "SaaS Core": "SaaS Core",
+}
+
+# Keep the SaaS control room reachable after login while Stripe/admin roles are
+# still being wired. The public front door remains locked for everyone else.
+ALWAYS_ALLOW_AFTER_LOGIN = {"SaaS Core"}
+
+
+def render_front_door() -> None:
+    """Public landing screen shown before the platform is unlocked."""
+    inject_saas_css()
+
+    logo_path = Path(__file__).parent / "JFBP_Quant_Desk.png"
+    if logo_path.exists():
+        st.image(str(logo_path), width=130)
+
+    st.markdown(
+        """
+        <div class="saas-hero">
+            <div class="saas-kicker">JFBP Quant Desk · Secure Access</div>
+            <div class="saas-title">Start your 30-Day Free Trial</div>
+            <div class="saas-text">
+                Create your account or log in to access the platform. No credit card required for the trial.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    render_auth_panel()
+
+
+def enforce_app_login() -> bool:
+    """Stop the app before sidebar/page rendering unless a real user is logged in."""
+    init_saas_state()
+    if get_current_user() is not None:
+        return True
+
+    render_front_door()
+    st.stop()
+    return False
+
+
+def run_protected_page(page_key: str, runner) -> None:
+    """Run a page only when the logged-in user has plan access."""
+    access_name = ACCESS_NAME_BY_PAGE.get(page_key, page_key)
+
+    if access_name not in ALWAYS_ALLOW_AFTER_LOGIN:
+        if not require_page_access(access_name):
+            return
+
+    runner()
+
 # =========================================================
 # APP ROUTER
 # =========================================================
@@ -390,6 +522,7 @@ def workflow_sidebar_navigation() -> str:
 def app():
 
     init_core()
+    enforce_app_login()
     inject_sidebar_workflow_css()
 
     logo_path = Path(__file__).parent / "JFBP_Quant_Desk.png"
@@ -402,76 +535,87 @@ def app():
     else:
         st.sidebar.title("JFBP Desk")
 
+    current_user = get_current_user()
+    if current_user is not None:
+        st.sidebar.caption(f"Signed in: {current_user.email}")
+        if st.sidebar.button("Logout", key="sidebar_saas_logout", width="stretch"):
+            supabase_logout()
+            st.rerun()
+        st.sidebar.divider()
+
     page = workflow_sidebar_navigation()
 
     if page == "🧭 Navigation Guide":
-        navigation_guide_page()
+        run_protected_page(page, navigation_guide_page)
 
     elif page == "Opportunity Center":
-        opportunity_center_page()
+        run_protected_page(page, opportunity_center_page)
 
     elif page == "Scanner":
-        scanner_page()
+        run_protected_page(page, scanner_page)
 
     elif page == "Market Hub":
-        market_hub_page()
+        run_protected_page(page, market_hub_page)
 
     elif page == "Research Stock":
-        research_stock_page()
+        run_protected_page(page, research_stock_page)
 
     elif page == "Trade Command Center":
-        trade_command_center_page()
+        run_protected_page(page, trade_command_center_page)
 
     elif page == "Options Center":
-        options_center_page()
+        run_protected_page(page, options_center_page)
 
     elif page == "Market Pulse":
-        market_pulse_page()
+        run_protected_page(page, market_pulse_page)
 
     elif page == "Economic Calendar":
-        economic_calendar_page()
+        run_protected_page(page, economic_calendar_page)
 
     elif page == "Earnings Calendar":
-        earnings_calendar_page()
+        run_protected_page(page, earnings_calendar_page)
 
     elif page == "Automation Control Center":
-        automation_control_page()
+        run_protected_page(page, automation_control_page)
 
     elif page == "OMS Execution":
-        oms_page()
+        run_protected_page(page, oms_page)
 
     elif page == "Position Command Center":
-        position_command_center_page()
+        run_protected_page(page, position_command_center_page)
 
     elif page == "Manual Order Ticket":
-        order_ticket_page()
+        run_protected_page(page, order_ticket_page)
 
     elif page == "Portfolio":
-        portfolio_page()
+        run_protected_page(page, portfolio_page)
 
     elif page == "Live IBKR":
-        live_ibkr_page()
+        run_protected_page(page, live_ibkr_page)
 
     elif page == "Journal":
-        journal_page()
+        run_protected_page(page, journal_page)
 
     elif page == "Database":
-        database_page()
+        run_protected_page(page, database_page)
 
     elif page == "Private Portfolio":
-        private_portfolio_page()
+        run_protected_page(page, private_portfolio_page)
 
     elif page == "Crypto Pulse":
-        crypto_pulse_page()
+        run_protected_page(page, crypto_pulse_page)
 
     elif page == "Forex Pulse":
-        forex_pulse_page()
+        run_protected_page(page, forex_pulse_page)
 
     elif page == "Gold Pulse":
-        gold_pulse_page()
+        run_protected_page(page, gold_pulse_page)
 
     elif page == "Oil Pulse":
-        oil_pulse_page()
+        run_protected_page(page, oil_pulse_page)
+
+    elif page == "SaaS Core":
+        run_protected_page(page, saas_core_page)
 
     else:
         empty_page("Unknown Page")
