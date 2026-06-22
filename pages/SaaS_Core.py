@@ -1,5 +1,5 @@
 # =========================================================
-# 🚢 JFBP QUANT DESK — SaaS CORE v1.4.0
+# 🚢 JFBP QUANT DESK — SaaS CORE v1.4.1
 # Supabase Auth + Admin Captain Pass + Verified Trial Workspace Provisioning
 # Fix: do not run RLS-protected onboarding until a real auth session exists.
 # =========================================================
@@ -11,6 +11,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
+
+try:
+    import stripe
+except Exception:  # pragma: no cover
+    stripe = None
 
 try:
     from supabase import create_client
@@ -46,14 +51,29 @@ PLAN_PRICES = {
 }
 
 # =========================================================
-# STRIPE CHECKOUT LINKS
+# STRIPE CHECKOUT CONFIG
 # =========================================================
-# These can be overridden in Streamlit Secrets:
-# STRIPE_PRO_CHECKOUT_URL = "https://buy.stripe.com/..."
-# STRIPE_ELITE_CHECKOUT_URL = "https://buy.stripe.com/..."
+# Checkout is created dynamically from Stripe Price IDs.
+# Required Streamlit Secrets:
+# STRIPE_SECRET_KEY = "sk_live_..."
+# MARKET_PULSE_PRICE_ID = "price_..."
+# PRO_PRICE_ID = "price_..."
+# ELITE_PRICE_ID = "price_..."
+# Optional:
+# STRIPE_SUCCESS_URL = "https://jfbp-quant-desk.streamlit.app/?checkout=success"
+# STRIPE_CANCEL_URL = "https://jfbp-quant-desk.streamlit.app/?checkout=cancelled"
 
-DEFAULT_STRIPE_PRO_CHECKOUT_URL = "https://buy.stripe.com/6oU7sM5Sx8ImcELbOt7IY02"
-DEFAULT_STRIPE_ELITE_CHECKOUT_URL = "https://buy.stripe.com/eVq6oI80F0bQ34b3hX7IY03"
+STRIPE_PRICE_SECRET_KEYS = {
+    PLAN_MARKET_PULSE: "MARKET_PULSE_PRICE_ID",
+    PLAN_PRO: "PRO_PRICE_ID",
+    PLAN_ELITE: "ELITE_PRICE_ID",
+}
+
+PLAN_RANK = {
+    PLAN_MARKET_PULSE: 1,
+    PLAN_PRO: 2,
+    PLAN_ELITE: 3,
+}
 
 PLAN_PAGES = {
     PLAN_MARKET_PULSE: {
@@ -802,31 +822,102 @@ def card(label: str, value: str, detail: str = "") -> str:
     )
 
 
-def get_stripe_checkout_url(plan: str) -> str:
-    """Return Stripe checkout URL for a paid upgrade plan.
+def get_stripe_price_id(plan: str) -> str:
+    """Return Stripe Price ID for a subscription plan from Streamlit Secrets."""
+    secret_name = STRIPE_PRICE_SECRET_KEYS.get(plan, "")
+    if not secret_name:
+        return ""
+    return str(st.secrets.get(secret_name, "") or "").strip()
 
-    Streamlit Secrets override the safe defaults so checkout links can be
-    changed later without editing code.
+
+def stripe_checkout_config_ready(plan: str) -> tuple[bool, str]:
+    if stripe is None:
+        return False, "Stripe package is not installed. Add `stripe` to requirements.txt."
+
+    if not str(st.secrets.get("STRIPE_SECRET_KEY", "") or "").strip():
+        return False, "Missing STRIPE_SECRET_KEY in Streamlit Secrets."
+
+    if not get_stripe_price_id(plan):
+        secret_name = STRIPE_PRICE_SECRET_KEYS.get(plan, "PRICE_ID")
+        return False, f"Missing {secret_name} in Streamlit Secrets."
+
+    return True, "Stripe checkout ready."
+
+
+def create_stripe_checkout_session(user: SaaSUser, target_plan: str) -> tuple[bool, str]:
+    """Create a Stripe Checkout Session for a subscription upgrade.
+
+    This avoids hard-coded Payment Links and guarantees the Pro button uses the
+    Pro Price ID, while the Elite button uses the Elite Price ID.
     """
-    if plan == PLAN_PRO:
-        return str(
+    ready, message = stripe_checkout_config_ready(target_plan)
+    if not ready:
+        return False, message
+
+    try:
+        stripe.api_key = str(st.secrets.get("STRIPE_SECRET_KEY", "") or "").strip()
+
+        app_url = "https://jfbp-quant-desk.streamlit.app"
+        success_url = str(
             st.secrets.get(
-                "STRIPE_PRO_CHECKOUT_URL",
-                DEFAULT_STRIPE_PRO_CHECKOUT_URL,
+                "STRIPE_SUCCESS_URL",
+                f"{app_url}/?checkout=success&plan={target_plan}",
             )
-            or DEFAULT_STRIPE_PRO_CHECKOUT_URL
+            or f"{app_url}/?checkout=success&plan={target_plan}"
+        ).strip()
+        cancel_url = str(
+            st.secrets.get(
+                "STRIPE_CANCEL_URL",
+                f"{app_url}/?checkout=cancelled&plan={target_plan}",
+            )
+            or f"{app_url}/?checkout=cancelled&plan={target_plan}"
         ).strip()
 
-    if plan == PLAN_ELITE:
-        return str(
-            st.secrets.get(
-                "STRIPE_ELITE_CHECKOUT_URL",
-                DEFAULT_STRIPE_ELITE_CHECKOUT_URL,
-            )
-            or DEFAULT_STRIPE_ELITE_CHECKOUT_URL
-        ).strip()
+        metadata = {
+            "user_id": user.user_id,
+            "email": user.email,
+            "target_plan": target_plan,
+        }
 
-    return ""
+        session = stripe.checkout.Session.create(
+            mode="subscription",
+            customer_email=user.email,
+            client_reference_id=user.user_id,
+            line_items=[{"price": get_stripe_price_id(target_plan), "quantity": 1}],
+            metadata=metadata,
+            subscription_data={"metadata": metadata},
+            success_url=success_url,
+            cancel_url=cancel_url,
+        )
+
+        checkout_url = str(getattr(session, "url", "") or "").strip()
+        if not checkout_url:
+            return False, "Stripe did not return a checkout URL."
+
+        return True, checkout_url
+
+    except Exception as exc:
+        return False, f"Stripe checkout creation failed: {exc}"
+
+
+def available_upgrade_targets(user: SaaSUser) -> list[str]:
+    current_rank = PLAN_RANK.get(user.plan, 0)
+    return [p for p in [PLAN_PRO, PLAN_ELITE] if PLAN_RANK.get(p, 0) > current_rank]
+
+
+def render_checkout_button(user: SaaSUser, target_plan: str, label: str, key: str) -> None:
+    if st.button(label, use_container_width=True, key=key):
+        ok, result = create_stripe_checkout_session(user, target_plan)
+        if ok:
+            st.session_state[f"stripe_checkout_url_{target_plan}"] = result
+            st.markdown(
+                f'<meta http-equiv="refresh" content="0; url={result}">',
+                unsafe_allow_html=True,
+            )
+            st.success("Opening secure Stripe Checkout...")
+            st.link_button("Open Stripe Checkout", result, use_container_width=True)
+        else:
+            st.error(result)
 
 
 def render_login_required(page_name: str) -> None:
@@ -859,7 +950,31 @@ def render_upgrade_required(user: SaaSUser, page_name: str) -> None:
         unsafe_allow_html=True,
     )
 
+    targets = available_upgrade_targets(user)
+    if not targets:
+        st.warning("Your account already has the highest plan available. Please refresh or contact support if access still looks locked.")
+        return
+
     st.markdown("### Unlock More Tools")
+
+    if targets == [PLAN_ELITE]:
+        elite_col, spacer_col = st.columns([0.62, 0.38], gap="large")
+        with elite_col:
+            st.markdown("#### Quant Desk Elite")
+            st.caption(f"{PLAN_PRICES[PLAN_ELITE]} · {PLAN_TRADING_MODE[PLAN_ELITE]}")
+            st.markdown(
+                """
+                ✅ Everything in Pro  
+                ✅ Quant Executor  
+                ✅ OMS Execution  
+                ✅ Live IBKR  
+                ✅ Automation Control Center  
+                ✅ Crypto / Forex / Gold / Oil Pulse  
+                ✅ Telegram Alerts + Signal Watcher  
+                """
+            )
+            render_checkout_button(user, PLAN_ELITE, "👑 Upgrade to Elite", "stripe_upgrade_elite_only")
+        return
 
     pro_col, elite_col = st.columns(2, gap="large")
 
@@ -868,6 +983,7 @@ def render_upgrade_required(user: SaaSUser, page_name: str) -> None:
         st.caption(f"{PLAN_PRICES[PLAN_PRO]} · {PLAN_TRADING_MODE[PLAN_PRO]}")
         st.markdown(
             """
+            ✅ Everything in Market Pulse  
             ✅ Portfolio Tools  
             ✅ Private Portfolio  
             ✅ Position Command Center  
@@ -877,11 +993,7 @@ def render_upgrade_required(user: SaaSUser, page_name: str) -> None:
             ✅ Options Center  
             """
         )
-        st.link_button(
-            "🚀 Upgrade to Pro",
-            get_stripe_checkout_url(PLAN_PRO),
-            use_container_width=True,
-        )
+        render_checkout_button(user, PLAN_PRO, "🚀 Upgrade to Pro", "stripe_upgrade_pro")
 
     with elite_col:
         st.markdown("#### Quant Desk Elite")
@@ -897,11 +1009,7 @@ def render_upgrade_required(user: SaaSUser, page_name: str) -> None:
             ✅ Telegram Alerts + Signal Watcher  
             """
         )
-        st.link_button(
-            "👑 Upgrade to Elite",
-            get_stripe_checkout_url(PLAN_ELITE),
-            use_container_width=True,
-        )
+        render_checkout_button(user, PLAN_ELITE, "👑 Upgrade to Elite", "stripe_upgrade_elite")
 
 
 def render_auth_status() -> None:
@@ -1009,7 +1117,7 @@ def render_saas_core_dashboard() -> None:
     st.markdown(
         """
         <div class="saas-hero">
-            <div class="saas-kicker">JFBP Quant Desk · SaaS Core v1.4.0</div>
+            <div class="saas-kicker">JFBP Quant Desk · SaaS Core v1.4.1</div>
             <div class="saas-title">Supabase Auth & User Workspace Control</div>
             <div class="saas-text">Real authentication foundation for user sign up, login, password reset, trial control, plan permissions, and private-user access rules.</div>
         </div>
