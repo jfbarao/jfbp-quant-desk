@@ -1,5 +1,5 @@
 # =========================================================
-# 🚢 JFBP QUANT DESK — SaaS CORE v1.4.3
+# 🚢 JFBP QUANT DESK — SaaS CORE v1.4.4
 # Supabase Auth + Admin Captain Pass + Verified Trial Workspace Provisioning
 # Fix: do not run RLS-protected onboarding until a real auth session exists.
 # =========================================================
@@ -358,6 +358,42 @@ def _verified_user_row(client: Any, table_name: str, user_id: str) -> list:
     return _response_data(response)
 
 
+def _profile_rows_for_auth_user(client: Any, user_id: str, email: str = "") -> list:
+    """Load the user's profile row from public.user_profiles.
+
+    Stripe webhooks update public.user_profiles, while Supabase Auth metadata
+    can remain stale after checkout. This helper makes database state the source
+    of truth for plan and account_status. It also supports older table shapes by
+    trying user_id first, then id, then email.
+    """
+    if client is None:
+        return []
+
+    queries = []
+    if user_id:
+        queries.append(("user_id", user_id))
+        queries.append(("id", user_id))
+    if email:
+        queries.append(("email", email.strip().lower()))
+
+    for column, value in queries:
+        try:
+            response = (
+                client.table("user_profiles")
+                .select("*")
+                .eq(column, value)
+                .limit(1)
+                .execute()
+            )
+            rows = _response_data(response)
+            if rows:
+                return rows
+        except Exception:
+            continue
+
+    return []
+
+
 def _create_profile_record(
     client: Any,
     user_id: str,
@@ -551,11 +587,39 @@ def build_saas_user_from_auth(auth_user: Any, selected_plan: str | None = None) 
     meta = _user_metadata(auth_user)
     now = _utc_now()
 
+    user_id = _auth_user_id(auth_user)
     email = _auth_user_email(auth_user)
-    full_name = meta.get("full_name") or meta.get("name") or "JFBP User"
-    role = str(meta.get("role") or "user").strip().lower()
-    plan = meta.get("plan") or selected_plan or st.session_state.get("saas_selected_plan") or PLAN_MARKET_PULSE
-    account_status = str(meta.get("account_status") or ACCOUNT_TRIAL)
+
+    # Auth metadata is only the signup snapshot. After Stripe checkout, the
+    # canonical subscription state lives in public.user_profiles, so always try
+    # to refresh plan/account_status from the database before enforcing access.
+    profile: dict[str, Any] = {}
+    try:
+        client = get_supabase_client()
+        rows = _profile_rows_for_auth_user(client, user_id=user_id, email=email)
+        profile = rows[0] if rows else {}
+    except Exception:
+        profile = {}
+
+    full_name = (
+        profile.get("full_name")
+        or meta.get("full_name")
+        or meta.get("name")
+        or "JFBP User"
+    )
+    role = str(profile.get("role") or meta.get("role") or "user").strip().lower()
+    plan = (
+        profile.get("plan")
+        or meta.get("plan")
+        or selected_plan
+        or st.session_state.get("saas_selected_plan")
+        or PLAN_MARKET_PULSE
+    )
+    account_status = str(
+        profile.get("account_status")
+        or meta.get("account_status")
+        or ACCOUNT_TRIAL
+    )
 
     # Founder/Admin pass: the captain must never be blocked by trials, plan
     # limits, or Stripe while the SaaS engine is under construction.
@@ -564,11 +628,14 @@ def build_saas_user_from_auth(auth_user: Any, selected_plan: str | None = None) 
         plan = PLAN_ELITE
         account_status = ACCOUNT_ACTIVE
 
-    trial_start = _parse_dt(meta.get("trial_start"), fallback=now)
-    trial_end = _parse_dt(meta.get("trial_end"), fallback=trial_start + timedelta(days=3650) if role == "admin" else trial_start + timedelta(days=30))
+    trial_start = _parse_dt(profile.get("trial_start") or meta.get("trial_start"), fallback=now)
+    trial_end = _parse_dt(
+        profile.get("trial_end") or meta.get("trial_end"),
+        fallback=trial_start + timedelta(days=3650) if role == "admin" else trial_start + timedelta(days=30),
+    )
 
     return SaaSUser(
-        user_id=_auth_user_id(auth_user),
+        user_id=user_id,
         email=email,
         full_name=str(full_name),
         plan=str(plan),
@@ -622,6 +689,10 @@ def set_authenticated_session(auth_response: Any, selected_plan: str | None = No
             selected_plan=selected_plan,
             auth_session=session,
         )
+
+        # Refresh again after onboarding applies the authenticated session. This
+        # catches Stripe-updated profile rows immediately after logout/login.
+        st.session_state["saas_user"] = build_saas_user_from_auth(user, selected_plan=selected_plan)
         st.session_state["saas_auth_last_message"] = onboarding_message
         st.session_state["saas_onboarding_ready"] = onboarding_ok
         return True
@@ -1157,7 +1228,7 @@ def render_saas_core_dashboard() -> None:
     st.markdown(
         """
         <div class="saas-hero">
-            <div class="saas-kicker">JFBP Quant Desk · SaaS Core v1.4.3</div>
+            <div class="saas-kicker">JFBP Quant Desk · SaaS Core v1.4.4</div>
             <div class="saas-title">Supabase Auth & User Workspace Control</div>
             <div class="saas-text">Real authentication foundation for user sign up, login, password reset, trial control, plan permissions, and private-user access rules.</div>
         </div>
