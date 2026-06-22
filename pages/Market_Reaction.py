@@ -164,6 +164,20 @@ def format_pct(value):
     return f"{value:.2f}%"
 
 
+
+def safe_float(value, default: float = 0.0) -> float:
+    """Convert values from market data/session state into a safe finite float."""
+    try:
+        number = float(value)
+    except Exception:
+        return default
+
+    if not math.isfinite(number):
+        return default
+
+    return number
+
+
 def style_pct(val):
     try:
         val = float(val)
@@ -698,7 +712,8 @@ def calculate_market_stress(indexes, sectors) -> tuple[int, str]:
     if vixy is not None and vixy > 0:
         score += min(vixy * 2, 15)
 
-    score = int(min(score, 100))
+    score = safe_float(score, default=0.0)
+    score = int(max(0, min(score, 100)))
 
     if score >= 80:
         label = "Severe Stress"
@@ -921,7 +936,8 @@ def calculate_buy_the_dip_score(
 
     score += min(stress_score // 5, 10)
 
-    score = int(min(score, 100))
+    score = safe_float(score, default=0.0)
+    score = int(max(0, min(score, 100)))
 
     if score >= 80:
         label = "Exceptional"
@@ -1763,12 +1779,13 @@ def run_page() -> None:
     # Market Breadth Overlay
     # =====================================================
 
-    economic_score = int(
+    economic_score = int(safe_float(
         st.session_state.get(
             "economic_risk_score",
             0,
-        )
-    )
+        ),
+        default=0.0,
+    ))
 
     economic_label = str(
         st.session_state.get(
@@ -1777,12 +1794,13 @@ def run_page() -> None:
         )
     )
 
-    earnings_score = int(
+    earnings_score = int(safe_float(
         st.session_state.get(
             "earnings_risk_score",
             0,
-        )
-    )
+        ),
+        default=0.0,
+    ))
 
     earnings_label = str(
         st.session_state.get(
