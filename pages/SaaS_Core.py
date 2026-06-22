@@ -1,6 +1,6 @@
 # =========================================================
-# 🚢 JFBP QUANT DESK — SaaS CORE v1.3.3
-# Supabase Auth + Verified Automated Trial Workspace Provisioning
+# 🚢 JFBP QUANT DESK — SaaS CORE v1.3.4
+# Supabase Auth + Admin Captain Pass + Verified Trial Workspace Provisioning
 # Fix: do not run RLS-protected onboarding until a real auth session exists.
 # =========================================================
 
@@ -125,6 +125,7 @@ class SaaSUser:
     trial_end: datetime
     created_at: datetime
     source: str = "supabase"
+    role: str = "user"
 
 
 # =========================================================
@@ -149,6 +150,32 @@ def _parse_dt(value: Any, fallback: Optional[datetime] = None) -> datetime:
 
     return fallback or _utc_now()
 
+
+
+
+def _admin_email_set() -> set[str]:
+    """Emails that receive founder/admin access.
+
+    Configure in Streamlit Secrets as either:
+    ADMIN_EMAILS = "jfbarao@icloud.com, another@email.com"
+
+    The founder email is included as a safe fallback so the owner cannot be
+    locked out while Stripe/admin roles are still being wired.
+    """
+    raw = str(st.secrets.get("ADMIN_EMAILS", "") or "")
+    emails = {e.strip().lower() for e in raw.replace(";", ",").split(",") if e.strip()}
+    emails.add("jfbarao@icloud.com")
+    return emails
+
+
+def is_admin_email(email: str) -> bool:
+    return str(email or "").strip().lower() in _admin_email_set()
+
+
+def is_admin_user(user: "SaaSUser | None") -> bool:
+    if user is None:
+        return False
+    return str(getattr(user, "role", "user") or "user").upper() == "ADMIN" or is_admin_email(user.email)
 
 def init_saas_state() -> None:
     st.session_state.setdefault("saas_logged_in", False)
@@ -465,21 +492,33 @@ def build_saas_user_from_auth(auth_user: Any, selected_plan: str | None = None) 
     meta = _user_metadata(auth_user)
     now = _utc_now()
 
+    email = _auth_user_email(auth_user)
     full_name = meta.get("full_name") or meta.get("name") or "JFBP User"
+    role = str(meta.get("role") or "user").strip().lower()
     plan = meta.get("plan") or selected_plan or st.session_state.get("saas_selected_plan") or PLAN_MARKET_PULSE
+    account_status = str(meta.get("account_status") or ACCOUNT_TRIAL)
+
+    # Founder/Admin pass: the captain must never be blocked by trials, plan
+    # limits, or Stripe while the SaaS engine is under construction.
+    if is_admin_email(email) or role == "admin":
+        role = "admin"
+        plan = PLAN_ELITE
+        account_status = ACCOUNT_ACTIVE
+
     trial_start = _parse_dt(meta.get("trial_start"), fallback=now)
-    trial_end = _parse_dt(meta.get("trial_end"), fallback=trial_start + timedelta(days=30))
+    trial_end = _parse_dt(meta.get("trial_end"), fallback=trial_start + timedelta(days=3650) if role == "admin" else trial_start + timedelta(days=30))
 
     return SaaSUser(
         user_id=_auth_user_id(auth_user),
-        email=_auth_user_email(auth_user),
+        email=email,
         full_name=str(full_name),
         plan=str(plan),
-        account_status=str(meta.get("account_status") or ACCOUNT_TRIAL),
+        account_status=str(account_status),
         trial_start=trial_start,
         trial_end=trial_end,
         created_at=_parse_dt(getattr(auth_user, "created_at", None), fallback=now),
         source="supabase",
+        role=role,
     )
 
 
@@ -673,6 +712,9 @@ def trial_days_remaining(user: SaaSUser) -> int:
 
 
 def is_account_open(user: SaaSUser) -> bool:
+    if is_admin_user(user):
+        return True
+
     if user.account_status in {ACCOUNT_SUSPENDED, ACCOUNT_EXPIRED, ACCOUNT_PAST_DUE}:
         return False
 
@@ -683,6 +725,9 @@ def is_account_open(user: SaaSUser) -> bool:
 
 
 def can_access_page(user: SaaSUser, page_name: str) -> bool:
+    if is_admin_user(user):
+        return True
+
     if st.session_state.get("saas_admin_override", False):
         return True
 
@@ -849,10 +894,12 @@ def render_auth_panel() -> None:
 
 def render_user_status(user: SaaSUser) -> None:
     days_left = trial_days_remaining(user)
+    role_label = "Admin / Founder" if is_admin_user(user) else "User"
     cards = [
         card("User", user.email, user.full_name),
+        card("Role", role_label, "Full platform access" if is_admin_user(user) else "Plan-based access"),
         card("Plan", PLAN_LABELS.get(user.plan, user.plan), PLAN_PRICES.get(user.plan, "")),
-        card("Account Status", user.account_status, f"Trial days remaining: {days_left}"),
+        card("Account Status", user.account_status, "Lifetime admin access" if is_admin_user(user) else f"Trial days remaining: {days_left}"),
         card("Trading Mode", PLAN_TRADING_MODE.get(user.plan, "N/A"), "Controlled by subscription plan"),
     ]
     st.markdown('<div class="saas-card-grid">' + "".join(cards) + "</div>", unsafe_allow_html=True)
@@ -921,6 +968,8 @@ def render_saas_core_dashboard() -> None:
                 "user_id": user.user_id,
                 "email": user.email,
                 "source": user.source,
+                "role": user.role,
+                "admin_access": is_admin_user(user),
                 "plan": user.plan,
                 "account_status": user.account_status,
                 "trial_start": user.trial_start.isoformat(),
