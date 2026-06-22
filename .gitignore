@@ -1,4 +1,9 @@
+.streamlit/secrets.toml
 venv/
+.venv/
+venv_py39_backup_2/
+__pycache__/
+.DS_Storevenv/
 __pycache__/
 .DS_Store
 *.sqlite
