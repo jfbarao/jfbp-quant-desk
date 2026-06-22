@@ -1,5 +1,5 @@
 # =========================================================
-# 🚢 JFBP QUANT DESK — SaaS CORE v1.3.4
+# 🚢 JFBP QUANT DESK — SaaS CORE v1.4.0
 # Supabase Auth + Admin Captain Pass + Verified Trial Workspace Provisioning
 # Fix: do not run RLS-protected onboarding until a real auth session exists.
 # =========================================================
@@ -44,6 +44,16 @@ PLAN_PRICES = {
     PLAN_PRO: "$99/month",
     PLAN_ELITE: "$199/month",
 }
+
+# =========================================================
+# STRIPE CHECKOUT LINKS
+# =========================================================
+# These can be overridden in Streamlit Secrets:
+# STRIPE_PRO_CHECKOUT_URL = "https://buy.stripe.com/..."
+# STRIPE_ELITE_CHECKOUT_URL = "https://buy.stripe.com/..."
+
+DEFAULT_STRIPE_PRO_CHECKOUT_URL = "https://buy.stripe.com/6oU7sM5Sx8ImcELbOt7IY02"
+DEFAULT_STRIPE_ELITE_CHECKOUT_URL = "https://buy.stripe.com/eVq6oI80F0bQ34b3hX7IY03"
 
 PLAN_PAGES = {
     PLAN_MARKET_PULSE: {
@@ -792,6 +802,33 @@ def card(label: str, value: str, detail: str = "") -> str:
     )
 
 
+def get_stripe_checkout_url(plan: str) -> str:
+    """Return Stripe checkout URL for a paid upgrade plan.
+
+    Streamlit Secrets override the safe defaults so checkout links can be
+    changed later without editing code.
+    """
+    if plan == PLAN_PRO:
+        return str(
+            st.secrets.get(
+                "STRIPE_PRO_CHECKOUT_URL",
+                DEFAULT_STRIPE_PRO_CHECKOUT_URL,
+            )
+            or DEFAULT_STRIPE_PRO_CHECKOUT_URL
+        ).strip()
+
+    if plan == PLAN_ELITE:
+        return str(
+            st.secrets.get(
+                "STRIPE_ELITE_CHECKOUT_URL",
+                DEFAULT_STRIPE_ELITE_CHECKOUT_URL,
+            )
+            or DEFAULT_STRIPE_ELITE_CHECKOUT_URL
+        ).strip()
+
+    return ""
+
+
 def render_login_required(page_name: str) -> None:
     inject_saas_css()
     st.markdown(
@@ -810,10 +847,61 @@ def render_account_locked(user: SaaSUser) -> None:
 
 def render_upgrade_required(user: SaaSUser, page_name: str) -> None:
     inject_saas_css()
+
     st.markdown(
-        f'<div class="saas-upgrade"><strong>Upgrade required.</strong><br>Your current plan is <strong>{PLAN_LABELS.get(user.plan, user.plan)}</strong>.<br><strong>{page_name}</strong> is not included in your current subscription.</div>',
+        f"""
+        <div class="saas-upgrade">
+            <strong>🚀 Upgrade Required</strong><br>
+            Your current plan is <strong>{PLAN_LABELS.get(user.plan, user.plan)}</strong>.<br>
+            <strong>{page_name}</strong> is not included in your current subscription.
+        </div>
+        """,
         unsafe_allow_html=True,
     )
+
+    st.markdown("### Unlock More Tools")
+
+    pro_col, elite_col = st.columns(2, gap="large")
+
+    with pro_col:
+        st.markdown("#### Quant Desk Pro")
+        st.caption(f"{PLAN_PRICES[PLAN_PRO]} · {PLAN_TRADING_MODE[PLAN_PRO]}")
+        st.markdown(
+            """
+            ✅ Portfolio Tools  
+            ✅ Private Portfolio  
+            ✅ Position Command Center  
+            ✅ Journal  
+            ✅ Database  
+            ✅ Trade Command Center  
+            ✅ Options Center  
+            """
+        )
+        st.link_button(
+            "🚀 Upgrade to Pro",
+            get_stripe_checkout_url(PLAN_PRO),
+            use_container_width=True,
+        )
+
+    with elite_col:
+        st.markdown("#### Quant Desk Elite")
+        st.caption(f"{PLAN_PRICES[PLAN_ELITE]} · {PLAN_TRADING_MODE[PLAN_ELITE]}")
+        st.markdown(
+            """
+            ✅ Everything in Pro  
+            ✅ Quant Executor  
+            ✅ OMS Execution  
+            ✅ Live IBKR  
+            ✅ Automation Control Center  
+            ✅ Crypto / Forex / Gold / Oil Pulse  
+            ✅ Telegram Alerts + Signal Watcher  
+            """
+        )
+        st.link_button(
+            "👑 Upgrade to Elite",
+            get_stripe_checkout_url(PLAN_ELITE),
+            use_container_width=True,
+        )
 
 
 def render_auth_status() -> None:
@@ -921,7 +1009,7 @@ def render_saas_core_dashboard() -> None:
     st.markdown(
         """
         <div class="saas-hero">
-            <div class="saas-kicker">JFBP Quant Desk · SaaS Core v1.3.3</div>
+            <div class="saas-kicker">JFBP Quant Desk · SaaS Core v1.4.0</div>
             <div class="saas-title">Supabase Auth & User Workspace Control</div>
             <div class="saas-text">Real authentication foundation for user sign up, login, password reset, trial control, plan permissions, and private-user access rules.</div>
         </div>
