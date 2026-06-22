@@ -1,5 +1,5 @@
 # =========================================================
-# 🚢 JFBP QUANT DESK — SaaS CORE v1.4.1
+# 🚢 JFBP QUANT DESK — SaaS CORE v1.4.3
 # Supabase Auth + Admin Captain Pass + Verified Trial Workspace Provisioning
 # Fix: do not run RLS-protected onboarding until a real auth session exists.
 # =========================================================
@@ -935,18 +935,29 @@ def available_upgrade_targets(user: SaaSUser) -> list[str]:
 
 
 def render_checkout_button(user: SaaSUser, target_plan: str, label: str, key: str) -> None:
+    """Create checkout and show a clean Stripe link.
+
+    Streamlit Cloud can be unreliable with meta-refresh redirects after a
+    button click. A normal link_button is more stable and avoids the Stripe
+    gray loading screen caused by iframe/redirect handoff issues.
+    """
+    session_key = f"stripe_checkout_url_{target_plan}"
+
     if st.button(label, use_container_width=True, key=key):
         ok, result = create_stripe_checkout_session(user, target_plan)
         if ok:
-            st.session_state[f"stripe_checkout_url_{target_plan}"] = result
-            st.markdown(
-                f'<meta http-equiv="refresh" content="0; url={result}">',
-                unsafe_allow_html=True,
-            )
-            st.success("Opening secure Stripe Checkout...")
-            st.link_button("Open Stripe Checkout", result, use_container_width=True)
+            st.session_state[session_key] = result
+            st.success("Secure Stripe Checkout is ready.")
         else:
             st.error(result)
+
+    checkout_url = st.session_state.get(session_key, "")
+    if checkout_url:
+        st.link_button(
+            "Continue to secure Stripe Checkout",
+            checkout_url,
+            use_container_width=True,
+        )
 
 
 def render_login_required(page_name: str) -> None:
@@ -1146,7 +1157,7 @@ def render_saas_core_dashboard() -> None:
     st.markdown(
         """
         <div class="saas-hero">
-            <div class="saas-kicker">JFBP Quant Desk · SaaS Core v1.4.1</div>
+            <div class="saas-kicker">JFBP Quant Desk · SaaS Core v1.4.3</div>
             <div class="saas-title">Supabase Auth & User Workspace Control</div>
             <div class="saas-text">Real authentication foundation for user sign up, login, password reset, trial control, plan permissions, and private-user access rules.</div>
         </div>
