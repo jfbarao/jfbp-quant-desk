@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import os
+
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -181,6 +183,33 @@ def _parse_dt(value: Any, fallback: Optional[datetime] = None) -> datetime:
     return fallback or _utc_now()
 
 
+
+
+
+def _secret_value(name: str, default: str = "") -> str:
+    """Read a secret safely from Streamlit Secrets, then environment variables.
+
+    This avoids false negatives when Streamlit Cloud exposes secrets differently
+    and keeps secret values out of the UI.
+    """
+    value = ""
+    try:
+        value = st.secrets.get(name, "")
+    except Exception:
+        value = ""
+
+    if value is None or str(value).strip() == "":
+        value = os.environ.get(name, default)
+
+    return str(value or default).strip()
+
+
+def _secret_status(name: str) -> str:
+    """Return safe diagnostics without exposing the secret value."""
+    value = _secret_value(name, "")
+    if not value:
+        return "MISSING"
+    return f"FOUND len={len(value)} prefix={value[:3]}..."
 
 
 def _admin_email_set() -> set[str]:
@@ -827,15 +856,15 @@ def get_stripe_price_id(plan: str) -> str:
     secret_name = STRIPE_PRICE_SECRET_KEYS.get(plan, "")
     if not secret_name:
         return ""
-    return str(st.secrets.get(secret_name, "") or "").strip()
+    return _secret_value(secret_name)
 
 
 def stripe_checkout_config_ready(plan: str) -> tuple[bool, str]:
     if stripe is None:
         return False, "Stripe package is not installed. Add `stripe` to requirements.txt."
 
-    if not str(st.secrets.get("STRIPE_SECRET_KEY", "") or "").strip():
-        return False, "Missing STRIPE_SECRET_KEY in Streamlit Secrets."
+    if not _secret_value("STRIPE_SECRET_KEY"):
+        return False, f"Missing STRIPE_SECRET_KEY in Streamlit Secrets. Safe check: {_secret_status('STRIPE_SECRET_KEY')}."
 
     if not get_stripe_price_id(plan):
         secret_name = STRIPE_PRICE_SECRET_KEYS.get(plan, "PRICE_ID")
@@ -855,7 +884,7 @@ def create_stripe_checkout_session(user: SaaSUser, target_plan: str) -> tuple[bo
         return False, message
 
     try:
-        stripe.api_key = str(st.secrets.get("STRIPE_SECRET_KEY", "") or "").strip()
+        stripe.api_key = _secret_value("STRIPE_SECRET_KEY")
 
         app_url = "https://jfbp-quant-desk.streamlit.app"
         success_url = str(
