@@ -2230,6 +2230,30 @@ class PortfolioEngine:
     def _now(self):
         return datetime.now(timezone.utc).isoformat()
 
+    def export_positions(self):
+
+        rows = []
+
+        for symbol, pos in self.positions.items():
+
+            qty = float(pos.quantity)
+
+            last_price = self.last_prices.get(
+                symbol,
+                pos.avg_price,
+            )
+
+            rows.append({
+                "symbol": symbol,
+                "shares": qty,
+                "avg_price": pos.avg_price,
+                "cost_basis": qty * pos.avg_price,
+                "market_value": qty * last_price,
+                "realized_pnl": pos.realized_pnl,
+            })
+
+        return rows
+
     def clear(self):
         self.__init__()
 
