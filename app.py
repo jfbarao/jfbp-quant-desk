@@ -538,6 +538,13 @@ def app():
     current_user = get_current_user()
     if current_user is not None:
         st.sidebar.caption(f"Signed in: {current_user.email}")
+
+        st.sidebar.link_button(
+            "💳 Manage Subscription",
+            "https://billing.stripe.com/p/login/3cIcN63Kpe2GcELaKp7IY00",
+            use_container_width=True,
+        )
+
         if st.sidebar.button("Logout", key="sidebar_saas_logout", width="stretch"):
             supabase_logout()
             st.rerun()
