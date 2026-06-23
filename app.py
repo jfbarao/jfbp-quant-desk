@@ -211,7 +211,29 @@ def inject_sidebar_workflow_css() -> None:
                 background: #f8fafc;
             }
 
+            section[data-testid="stSidebar"] > div:first-child {
+                display: flex;
+                flex-direction: column;
+                min-height: 100vh;
+            }
+
             section[data-testid="stSidebar"] div[data-testid="stMarkdownContainer"] {
+                overflow-wrap: anywhere;
+            }
+
+            .jfbp-sidebar-footer {
+                margin-top: auto;
+                padding-top: 0.95rem;
+                padding-bottom: 0.65rem;
+                background: #f8fafc;
+                border-top: 1px solid #d6dbe5;
+            }
+
+            .jfbp-sidebar-footer-email {
+                margin-top: 0.35rem;
+                font-size: 0.76rem;
+                color: #64748b;
+                line-height: 1.25;
                 overflow-wrap: anywhere;
             }
 
@@ -535,9 +557,14 @@ def app():
     else:
         st.sidebar.title("JFBP Desk")
 
+    page = workflow_sidebar_navigation()
+
     current_user = get_current_user()
     if current_user is not None:
-        st.sidebar.caption(f"Signed in: {current_user.email}")
+        st.sidebar.markdown(
+            '<div class="jfbp-sidebar-footer">',
+            unsafe_allow_html=True,
+        )
 
         st.sidebar.link_button(
             "💳 Manage Subscription",
@@ -548,9 +575,13 @@ def app():
         if st.sidebar.button("Logout", key="sidebar_saas_logout", width="stretch"):
             supabase_logout()
             st.rerun()
-        st.sidebar.divider()
 
-    page = workflow_sidebar_navigation()
+        st.sidebar.markdown(
+            f'<div class="jfbp-sidebar-footer-email">Signed in:<br>{current_user.email}</div>',
+            unsafe_allow_html=True,
+        )
+
+        st.sidebar.markdown("</div>", unsafe_allow_html=True)
 
     if page == "🧭 Navigation Guide":
         run_protected_page(page, navigation_guide_page)
