@@ -11,6 +11,18 @@ from typing import Any, Dict, List, Optional, Tuple
 import math
 import time
 
+try:
+    import streamlit as st
+except Exception:  # pragma: no cover
+    st = None
+
+try:
+    from core.portfolio_db import upsert_position, delete_position
+except Exception:  # pragma: no cover
+    upsert_position = None
+    delete_position = None
+
+
 
 @dataclass
 class Position:
@@ -104,6 +116,10 @@ class PortfolioEngine:
         self.last_broker_drift_report: Dict[str, Any] = {}
         self.last_broker_repair_report: Dict[str, Any] = {}
         self.last_broker_execution_report: Dict[str, Any] = {}
+
+        self.user_id: Optional[str] = None
+        self.last_persistence_report: Dict[str, Any] = {}
+        self.persistence_trace: List[Dict[str, Any]] = []
 
     # =====================================================
     # CORE FILL ENTRY
@@ -383,6 +399,8 @@ class PortfolioEngine:
             "truth_source": self.TRUTH_SOURCE,
         })
 
+        ledger_row["persistence_report"] = self.persist_position_to_supabase(symbol)
+
         self.last_event = ledger_row
         self.last_error = ""
 
@@ -568,6 +586,9 @@ class PortfolioEngine:
     def commit_snapshot(self):
         return list(self.commit_trace)
 
+    def persistence_snapshot(self):
+        return list(self.persistence_trace)
+
     def broker_snapshot_report(self):
         return dict(self.last_broker_snapshot_report)
 
@@ -604,6 +625,200 @@ class PortfolioEngine:
 
     def open_positions_count(self):
         return len(self.risk_positions_no_reconcile())
+
+    # =====================================================
+    # SUPABASE POSITION PERSISTENCE
+    # =====================================================
+
+    def set_user_id(self, user_id: Any) -> None:
+        self.user_id = str(user_id or "").strip() or None
+
+    def _current_user_id(self) -> Optional[str]:
+        if self.user_id:
+            return str(self.user_id).strip()
+
+        if st is None:
+            return None
+
+        try:
+            session = st.session_state
+        except Exception:
+            return None
+
+        direct_keys = (
+            "user_id",
+            "supabase_user_id",
+            "auth_user_id",
+            "current_user_id",
+            "logged_in_user_id",
+        )
+
+        for key in direct_keys:
+            value = session.get(key)
+            if value:
+                return str(value).strip()
+
+        object_keys = (
+            "user",
+            "auth_user",
+            "supabase_user",
+            "current_user",
+            "logged_in_user",
+        )
+
+        for key in object_keys:
+            user = session.get(key)
+
+            if not user:
+                continue
+
+            if isinstance(user, dict):
+                for field in ("id", "user_id", "sub"):
+                    value = user.get(field)
+                    if value:
+                        return str(value).strip()
+
+                nested = user.get("user")
+                if isinstance(nested, dict):
+                    for field in ("id", "user_id", "sub"):
+                        value = nested.get(field)
+                        if value:
+                            return str(value).strip()
+
+            for field in ("id", "user_id", "sub"):
+                try:
+                    value = getattr(user, field, None)
+                    if value:
+                        return str(value).strip()
+                except Exception:
+                    pass
+
+        return None
+
+    def persist_position_to_supabase(self, symbol: Any) -> Dict[str, Any]:
+        symbol = self._symbol(symbol)
+        user_id = self._current_user_id()
+
+        if not symbol:
+            report = {
+                "timestamp": self._now(),
+                "status": "SKIPPED",
+                "reason": "Missing symbol",
+                "truth_source": self.TRUTH_SOURCE,
+            }
+            self.last_persistence_report = report
+            return report
+
+        if not user_id:
+            report = {
+                "timestamp": self._now(),
+                "status": "SKIPPED_NO_USER",
+                "symbol": symbol,
+                "reason": "No authenticated user id available in session state",
+                "truth_source": self.TRUTH_SOURCE,
+            }
+            self.last_persistence_report = report
+            self.persistence_trace.append(report)
+            self.persistence_trace = self.persistence_trace[-500:]
+            return report
+
+        if upsert_position is None or delete_position is None:
+            report = {
+                "timestamp": self._now(),
+                "status": "SKIPPED_NO_DB_HELPER",
+                "symbol": symbol,
+                "user_id": user_id,
+                "reason": "core.portfolio_db helpers are unavailable",
+                "truth_source": self.TRUTH_SOURCE,
+            }
+            self.last_persistence_report = report
+            self.persistence_trace.append(report)
+            self.persistence_trace = self.persistence_trace[-500:]
+            return report
+
+        try:
+            self.reconcile_positions()
+            pos = self.positions.get(symbol)
+
+            if pos is None or abs(self._float(pos.quantity)) <= self.EPSILON:
+                delete_position(user_id, symbol)
+
+                report = {
+                    "timestamp": self._now(),
+                    "status": "DELETED",
+                    "symbol": symbol,
+                    "user_id": user_id,
+                    "reason": "Position is flat; removed from portfolio_positions",
+                    "truth_source": self.TRUTH_SOURCE,
+                }
+
+            else:
+                shares = self._float(pos.quantity)
+                avg_price = self._float(pos.avg_price)
+                last_price = self._float(self.last_prices.get(symbol, avg_price))
+
+                if last_price <= 0:
+                    last_price = avg_price
+
+                cost_basis = shares * avg_price
+                market_value = shares * last_price
+
+                upsert_position(
+                    user_id=user_id,
+                    symbol=symbol,
+                    shares=shares,
+                    cost_basis=cost_basis,
+                    market_value=market_value,
+                    avg_price=avg_price,
+                    realized_pnl=self._float(pos.realized_pnl),
+                )
+
+                report = {
+                    "timestamp": self._now(),
+                    "status": "UPSERTED",
+                    "symbol": symbol,
+                    "user_id": user_id,
+                    "shares": shares,
+                    "avg_price": avg_price,
+                    "cost_basis": cost_basis,
+                    "market_value": market_value,
+                    "realized_pnl": self._float(pos.realized_pnl),
+                    "truth_source": self.TRUTH_SOURCE,
+                }
+
+        except Exception as exc:
+            report = {
+                "timestamp": self._now(),
+                "status": "ERROR",
+                "symbol": symbol,
+                "user_id": user_id,
+                "reason": str(exc),
+                "truth_source": self.TRUTH_SOURCE,
+            }
+
+        self.last_persistence_report = report
+        self.persistence_trace.append(report)
+        self.persistence_trace = self.persistence_trace[-500:]
+
+        return report
+
+    def persist_all_positions_to_supabase(self) -> Dict[str, Any]:
+        self.reconcile_positions()
+
+        symbols = sorted(set(self.positions.keys()) | set(self.last_prices.keys()))
+        reports = [self.persist_position_to_supabase(symbol) for symbol in symbols]
+
+        report = {
+            "timestamp": self._now(),
+            "status": "OK" if all(r.get("status") in ("UPSERTED", "DELETED", "SKIPPED_NO_USER") for r in reports) else "CHECK",
+            "reports": reports,
+            "count": len(reports),
+            "truth_source": self.TRUTH_SOURCE,
+        }
+
+        self.last_persistence_report = report
+        return report
+
 
     # =====================================================
     # BROKER AUTHORITY REPAIR LAYER
