@@ -771,6 +771,9 @@ class PortfolioEngine:
                     "truth_source": self.TRUTH_SOURCE,
                 }
             except Exception as exc:
+
+                print("SUPABASE POSITION SAVE ERROR:", repr(exc))
+
                 report = {
                     "timestamp": self._now(),
                     "status": "ERROR",
