@@ -1,5 +1,5 @@
 # =========================================================
-# 🚢 JFBP QUANT DESK — SaaS CORE v1.4.4
+# 🚢 JFBP QUANT DESK — SaaS CORE v1.4.5
 # Supabase Auth + Admin Captain Pass + Verified Trial Workspace Provisioning
 # Fix: do not run RLS-protected onboarding until a real auth session exists.
 # =========================================================
@@ -247,6 +247,20 @@ def init_saas_state() -> None:
     st.session_state.setdefault("saas_onboarding_debug", {})
 
 
+def clear_stripe_checkout_state() -> None:
+    """Remove cached Stripe Checkout links when users change or log out.
+
+    Checkout URLs are bound to the user and metadata used when they were
+    created. Keeping an old URL in session state can show the wrong customer
+    email on Stripe Checkout after switching accounts.
+    """
+    for key in list(st.session_state.keys()):
+        if str(key).startswith("stripe_checkout_url_"):
+            del st.session_state[key]
+        elif str(key).startswith("stripe_checkout_owner_"):
+            del st.session_state[key]
+
+
 # =========================================================
 # SUPABASE CLIENT
 # =========================================================
@@ -358,40 +372,43 @@ def _verified_user_row(client: Any, table_name: str, user_id: str) -> list:
     return _response_data(response)
 
 
-def _profile_rows_for_auth_user(client: Any, user_id: str, email: str = "") -> list:
-    """Load the user's profile row from public.user_profiles.
+def _profile_row_for_auth_user(client: Any, user_id: str, email: str) -> dict:
+    """Load the current subscription profile from public.user_profiles.
 
-    Stripe webhooks update public.user_profiles, while Supabase Auth metadata
-    can remain stale after checkout. This helper makes database state the source
-    of truth for plan and account_status. It also supports older table shapes by
-    trying user_id first, then id, then email.
+    Stripe webhooks update public.user_profiles, not auth.users metadata.
+    Therefore app access must prefer this table after login.
     """
     if client is None:
-        return []
+        return {}
 
-    queries = []
-    if user_id:
-        queries.append(("user_id", user_id))
-        queries.append(("id", user_id))
-    if email:
-        queries.append(("email", email.strip().lower()))
-
-    for column, value in queries:
-        try:
+    try:
+        if user_id:
             response = (
                 client.table("user_profiles")
                 .select("*")
-                .eq(column, value)
+                .eq("user_id", user_id)
                 .limit(1)
                 .execute()
             )
             rows = _response_data(response)
             if rows:
-                return rows
-        except Exception:
-            continue
+                return rows[0] if isinstance(rows[0], dict) else {}
 
-    return []
+        if email:
+            response = (
+                client.table("user_profiles")
+                .select("*")
+                .eq("email", email.strip().lower())
+                .limit(1)
+                .execute()
+            )
+            rows = _response_data(response)
+            if rows:
+                return rows[0] if isinstance(rows[0], dict) else {}
+    except Exception:
+        return {}
+
+    return {}
 
 
 def _create_profile_record(
@@ -590,16 +607,10 @@ def build_saas_user_from_auth(auth_user: Any, selected_plan: str | None = None) 
     user_id = _auth_user_id(auth_user)
     email = _auth_user_email(auth_user)
 
-    # Auth metadata is only the signup snapshot. After Stripe checkout, the
-    # canonical subscription state lives in public.user_profiles, so always try
-    # to refresh plan/account_status from the database before enforcing access.
-    profile: dict[str, Any] = {}
-    try:
-        client = get_supabase_client()
-        rows = _profile_rows_for_auth_user(client, user_id=user_id, email=email)
-        profile = rows[0] if rows else {}
-    except Exception:
-        profile = {}
+    # Stripe updates public.user_profiles. Auth metadata may still contain the
+    # original trial plan, so database values must win after login.
+    client = get_supabase_client()
+    profile = _profile_row_for_auth_user(client, user_id, email)
 
     full_name = (
         profile.get("full_name")
@@ -628,7 +639,10 @@ def build_saas_user_from_auth(auth_user: Any, selected_plan: str | None = None) 
         plan = PLAN_ELITE
         account_status = ACCOUNT_ACTIVE
 
-    trial_start = _parse_dt(profile.get("trial_start") or meta.get("trial_start"), fallback=now)
+    trial_start = _parse_dt(
+        profile.get("trial_start") or meta.get("trial_start"),
+        fallback=now,
+    )
     trial_end = _parse_dt(
         profile.get("trial_end") or meta.get("trial_end"),
         fallback=trial_start + timedelta(days=3650) if role == "admin" else trial_start + timedelta(days=30),
@@ -664,6 +678,7 @@ def set_authenticated_session(auth_response: Any, selected_plan: str | None = No
 
         access_token, _ = _get_session_tokens(session)
         if not access_token:
+            clear_stripe_checkout_state()
             st.session_state["saas_logged_in"] = False
             st.session_state["saas_user"] = None
             st.session_state["saas_auth_session"] = None
@@ -680,6 +695,18 @@ def set_authenticated_session(auth_response: Any, selected_plan: str | None = No
             }
             return False
 
+        new_user_id = _auth_user_id(user)
+        old_user = st.session_state.get("saas_user")
+        old_user_id = str(getattr(old_user, "user_id", "") or "")
+        if old_user_id and old_user_id != new_user_id:
+            clear_stripe_checkout_state()
+
+        # Attach the JWT before building SaaSUser so RLS-protected profile
+        # reads can see public.user_profiles for the logged-in user.
+        client = get_supabase_client()
+        if client is not None:
+            _apply_auth_session_to_client(client, session)
+
         st.session_state["saas_auth_session"] = session
         st.session_state["saas_user"] = build_saas_user_from_auth(user, selected_plan=selected_plan)
         st.session_state["saas_logged_in"] = True
@@ -689,10 +716,6 @@ def set_authenticated_session(auth_response: Any, selected_plan: str | None = No
             selected_plan=selected_plan,
             auth_session=session,
         )
-
-        # Refresh again after onboarding applies the authenticated session. This
-        # catches Stripe-updated profile rows immediately after logout/login.
-        st.session_state["saas_user"] = build_saas_user_from_auth(user, selected_plan=selected_plan)
         st.session_state["saas_auth_last_message"] = onboarding_message
         st.session_state["saas_onboarding_ready"] = onboarding_ok
         return True
@@ -703,6 +726,7 @@ def set_authenticated_session(auth_response: Any, selected_plan: str | None = No
 
 
 def clear_authenticated_session() -> None:
+    clear_stripe_checkout_state()
     st.session_state["saas_logged_in"] = False
     st.session_state["saas_user"] = None
     st.session_state["saas_auth_session"] = None
@@ -1008,13 +1032,21 @@ def available_upgrade_targets(user: SaaSUser) -> list[str]:
 def render_checkout_button(user: SaaSUser, target_plan: str, label: str, key: str) -> None:
     """Create checkout and show a clean Stripe link.
 
-    Streamlit Cloud can be unreliable with meta-refresh redirects after a
-    button click. A normal link_button is more stable and avoids the Stripe
-    gray loading screen caused by iframe/redirect handoff issues.
+    Checkout URLs are user-specific. If a different account logs in, any old
+    checkout URL is removed so Stripe cannot show the wrong customer email.
     """
     session_key = f"stripe_checkout_url_{target_plan}"
+    owner_key = f"stripe_checkout_owner_{target_plan}"
+    current_owner = f"{user.user_id}:{user.email}"
+
+    if st.session_state.get(owner_key) != current_owner:
+        st.session_state.pop(session_key, None)
+        st.session_state[owner_key] = current_owner
 
     if st.button(label, use_container_width=True, key=key):
+        st.session_state.pop(session_key, None)
+        st.session_state[owner_key] = current_owner
+
         ok, result = create_stripe_checkout_session(user, target_plan)
         if ok:
             st.session_state[session_key] = result
@@ -1228,7 +1260,7 @@ def render_saas_core_dashboard() -> None:
     st.markdown(
         """
         <div class="saas-hero">
-            <div class="saas-kicker">JFBP Quant Desk · SaaS Core v1.4.4</div>
+            <div class="saas-kicker">JFBP Quant Desk · SaaS Core v1.4.5</div>
             <div class="saas-title">Supabase Auth & User Workspace Control</div>
             <div class="saas-text">Real authentication foundation for user sign up, login, password reset, trial control, plan permissions, and private-user access rules.</div>
         </div>
