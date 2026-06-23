@@ -748,6 +748,7 @@ class PortfolioEngine:
             }
         else:
             try:
+                print("SUPABASE POSITION SAVE:", user_id, symbol, shares, avg_price)
                 upsert_position(
                     user_id=user_id,
                     symbol=symbol,
