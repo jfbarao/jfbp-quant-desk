@@ -1040,6 +1040,37 @@ def init_core():
         lambda: PortfolioEngine(),
     )
 
+    # =====================================================
+    # LOAD PORTFOLIO FROM SUPABASE
+    # =====================================================
+    # SaaS_Core stores the authenticated user as st.session_state["saas_user"].
+    # If PortfolioEngine supports Supabase hydration, load the user's saved
+    # portfolio_positions into runtime before GC, risk sync, OMS, and pipeline
+    # wiring continue.
+
+    try:
+        saas_user = st.session_state.get("saas_user")
+        user_id = getattr(saas_user, "user_id", "")
+
+        loaded_key = f"portfolio_supabase_loaded_{user_id}" if user_id else ""
+
+        if (
+            user_id
+            and hasattr(portfolio_engine, "load_positions_from_supabase")
+            and not st.session_state.get(loaded_key, False)
+        ):
+            report = portfolio_engine.load_positions_from_supabase(user_id)
+
+            st.session_state["portfolio_supabase_loaded"] = True
+            st.session_state[loaded_key] = True
+            st.session_state["portfolio_supabase_user_id"] = user_id
+            st.session_state["portfolio_supabase_load_report"] = report
+            st.session_state["portfolio_supabase_load_error"] = ""
+
+    except Exception as exc:
+        st.session_state["portfolio_supabase_loaded"] = False
+        st.session_state["portfolio_supabase_load_error"] = str(exc)
+
     portfolio_gc = _get_or_create(
         "portfolio_gc",
         lambda: PortfolioGarbageCollector(

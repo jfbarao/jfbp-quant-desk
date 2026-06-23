@@ -13,8 +13,13 @@ import math
 import time
 
 try:
-    from core.portfolio_db import upsert_position, delete_position
+    from core.portfolio_db import (
+        load_positions,
+        upsert_position,
+        delete_position,
+    )
 except Exception:  # pragma: no cover
+    load_positions = None
     upsert_position = None
     delete_position = None
 
@@ -609,6 +614,119 @@ class PortfolioEngine:
     def set_user_id(self, user_id: Any):
         self.user_id = str(user_id or "").strip() or None
         return self.user_id
+
+    def load_positions_from_supabase(self, user_id: Any) -> Dict[str, Any]:
+        """Hydrate runtime portfolio positions from Supabase.
+
+        This is the read side of portfolio persistence. OMS writes the
+        authoritative position snapshot to public.portfolio_positions; this
+        method reloads those user-owned positions into PortfolioEngine after
+        login, restart, or deployment.
+        """
+
+        user_id = str(user_id or "").strip()
+
+        if not user_id:
+            report = {
+                "timestamp": self._now(),
+                "status": "SKIPPED",
+                "reason": "Missing user_id for Supabase portfolio load",
+                "truth_source": self.TRUTH_SOURCE,
+            }
+            self.last_supabase_sync_report = report
+            self.supabase_sync_trace.append(report)
+            self.supabase_sync_trace = self.supabase_sync_trace[-250:]
+            return report
+
+        if load_positions is None:
+            report = {
+                "timestamp": self._now(),
+                "status": "SKIPPED",
+                "reason": "core.portfolio_db.load_positions unavailable",
+                "user_id": user_id,
+                "truth_source": self.TRUTH_SOURCE,
+            }
+            self.last_supabase_sync_report = report
+            self.supabase_sync_trace.append(report)
+            self.supabase_sync_trace = self.supabase_sync_trace[-250:]
+            return report
+
+        try:
+            rows = load_positions(user_id)
+        except Exception as exc:
+            report = {
+                "timestamp": self._now(),
+                "status": "ERROR",
+                "reason": str(exc),
+                "user_id": user_id,
+                "truth_source": self.TRUTH_SOURCE,
+            }
+            self.last_supabase_sync_report = report
+            self.supabase_sync_trace.append(report)
+            self.supabase_sync_trace = self.supabase_sync_trace[-250:]
+            return report
+
+        self.positions = {}
+        self.lots = {}
+        self.last_prices = {}
+
+        loaded = 0
+
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+
+            symbol = self._symbol(row.get("symbol"))
+            shares = self._float(row.get("shares"))
+            avg_price = self._float(row.get("avg_price"))
+            realized_pnl = self._float(row.get("realized_pnl"))
+
+            if not symbol or abs(shares) <= self.EPSILON:
+                continue
+
+            last_price = self._float(
+                row.get("last_price")
+                or row.get("market_price")
+                or (self._float(row.get("market_value")) / abs(shares) if abs(shares) > self.EPSILON else 0.0)
+                or avg_price
+            )
+
+            self.positions[symbol] = Position(
+                symbol=symbol,
+                quantity=shares,
+                avg_price=avg_price,
+                realized_pnl=realized_pnl,
+            )
+
+            self.lots[symbol] = [
+                Lot(
+                    symbol=symbol,
+                    qty=shares,
+                    price=avg_price,
+                    fill_id="SUPABASE_LOAD",
+                    timestamp=str(row.get("updated_at") or row.get("created_at") or self._now()),
+                )
+            ]
+
+            if last_price > 0:
+                self.last_prices[symbol] = last_price
+
+            loaded += 1
+
+        self.user_id = user_id
+        self.reconcile_positions()
+
+        report = {
+            "timestamp": self._now(),
+            "status": "OK",
+            "user_id": user_id,
+            "positions_loaded": loaded,
+            "truth_source": self.TRUTH_SOURCE,
+        }
+        self.last_supabase_sync_report = report
+        self.supabase_sync_trace.append(report)
+        self.supabase_sync_trace = self.supabase_sync_trace[-250:]
+        return report
 
     def _resolve_user_id(self, row: Optional[Dict[str, Any]] = None) -> Optional[str]:
         row = row if isinstance(row, dict) else {}
