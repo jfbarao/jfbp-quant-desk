@@ -666,7 +666,11 @@ class PortfolioEngine:
         symbol = self._symbol(symbol)
         source_row = source_row if isinstance(source_row, dict) else {}
 
+        print("PORTFOLIO SAVE ROW:", source_row)
+
         user_id = self._resolve_user_id(source_row)
+
+        print("RESOLVED USER ID:", user_id)
 
         if not user_id:
             report = {

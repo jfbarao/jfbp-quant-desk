@@ -1835,7 +1835,7 @@ def run_page():
             else:
                 scanner_action = "HOLD"
                 adjusted_qty = 0.0
-                overlay_reason = "MARKET_REACTION_RISK_OFF_HOLD"
+                overlay_reason = "MARKET_REACTION_RISK_OFF_MONITOR_ONLY"
 
         elif ctx["risk_on"]:
 
@@ -2702,11 +2702,6 @@ def run_page():
 
     # =====================================================
     # SCANNER OPPORTUNITY RANKING HELPERS
-    # Includes:
-    # - sector leadership ranking
-    # - opportunity quality scoring
-    # - trade recommendation labels
-    # - Scanner Confidence score + Intelligence Brief
     # =====================================================
 
     def leadership_tier_from_percentile(percentile: Any) -> str:
@@ -2739,9 +2734,7 @@ def run_page():
             return "D"
         return "F"
 
-    def sector_leadership_map(
-        rows: List[Dict[str, Any]],
-    ) -> Dict[str, Dict[str, Any]]:
+    def sector_leadership_map(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
         sector_groups: Dict[str, List[Dict[str, Any]]] = {}
 
         for row in rows:
@@ -2755,14 +2748,12 @@ def run_page():
             if not symbol:
                 continue
 
-            sector_groups.setdefault(sector, []).append(
-                {
-                    "symbol": symbol,
-                    "sector": sector,
-                    "rs_score": rs_score,
-                    "model_score": safe_float(row.get("model_score"), 0.0),
-                }
-            )
+            sector_groups.setdefault(sector, []).append({
+                "symbol": symbol,
+                "sector": sector,
+                "rs_score": rs_score,
+                "model_score": safe_float(row.get("model_score"), 0.0),
+            })
 
         leadership: Dict[str, Dict[str, Any]] = {}
 
@@ -2780,13 +2771,10 @@ def run_page():
             sector_leader = members[0]["symbol"] if members else ""
 
             for idx, item in enumerate(members, start=1):
-                if count <= 1:
-                    percentile = 100.0
-                else:
-                    percentile = round(
-                        ((count - idx) / (count - 1)) * 100.0,
-                        1,
-                    )
+                percentile = 100.0 if count <= 1 else round(
+                    ((count - idx) / (count - 1)) * 100.0,
+                    1,
+                )
 
                 symbol = item["symbol"]
 
@@ -2814,10 +2802,6 @@ def run_page():
 
         trend = str(row.get("trend") or "").upper().strip()
 
-        earnings_label = str(
-            row.get("earnings_risk_label") or "NONE"
-        ).upper().strip()
-
         event_risk_label = str(
             row.get("combined_event_risk_label")
             or row.get("earnings_risk_label")
@@ -2833,7 +2817,6 @@ def run_page():
 
         high_event_risk = (
             event_risk_label in ("HIGH", "EXTREME")
-            or earnings_label in ("HIGH", "EXTREME")
             or (days_until is not None and days_until <= 7)
         )
 
@@ -2859,16 +2842,8 @@ def run_page():
         row = row if isinstance(row, dict) else {}
         symbol = str(row.get("symbol") or "").upper().strip()
 
-        leadership = st.session_state.get(
-            "scanner_sector_leadership_map",
-            {},
-        )
-
-        leadership_row = (
-            leadership.get(symbol, {})
-            if isinstance(leadership, dict)
-            else {}
-        )
+        leadership = st.session_state.get("scanner_sector_leadership_map", {})
+        leadership_row = leadership.get(symbol, {}) if isinstance(leadership, dict) else {}
 
         if not leadership_row:
             leadership_row = {
@@ -2894,11 +2869,7 @@ def run_page():
 
         model_score = safe_float(row.get("model_score"), 0.0)
         rs_score = safe_float(row.get("rs_score"), 0.0)
-
-        sector_pct = safe_float(
-            leadership_row.get("sector_percentile"),
-            0.0,
-        )
+        sector_pct = safe_float(leadership_row.get("sector_percentile"), 0.0)
 
         earnings_label = str(
             row.get("earnings_risk_label")
@@ -2938,8 +2909,11 @@ def run_page():
             or "NEUTRAL"
         ).upper().strip()
 
+        market_buy_allowed = bool(market_ctx.get("buy_allowed", True))
+
         pulse_asset_class = row.get("pulse_asset_class") or infer_signal_asset_class(row)
         pulse_ctx = pulse_bus_row(pulse_asset_class)
+
         pulse_trade_allowed = bool(pulse_ctx.get("trade_allowed", True)) if pulse_ctx else True
         pulse_stress_score = safe_float(pulse_ctx.get("stress_score"), 0.0) if pulse_ctx else 0.0
         pulse_breadth_score = safe_float(pulse_ctx.get("breadth_score"), 0.0) if pulse_ctx else 0.0
@@ -2947,44 +2921,65 @@ def run_page():
 
         score = 0
         max_score = 10
+        score_reasons = []
 
         if trend == "BULLISH":
             score += 1
+            score_reasons.append("bullish trend")
 
         if rs_score >= 1.05:
             score += 1
+            score_reasons.append("strong relative strength")
 
         if sector_pct >= 75:
             score += 1
+            score_reasons.append("sector leader")
 
         if model_score >= 4:
             score += 1
+            score_reasons.append("strong model score")
 
         if action == "BUY" or (trend == "BULLISH" and model_score >= 3):
             score += 1
+            score_reasons.append("buyable setup")
 
-        if not (
+        earnings_clear = not (
             earnings_label in ("HIGH", "EXTREME")
             or (earnings_days_int is not None and earnings_days_int <= 7)
-        ):
-            score += 1
+        )
 
-        if not (
+        if earnings_clear:
+            score += 1
+            score_reasons.append("earnings clear")
+
+        economic_clear = not (
             economic_label in ("HIGH", "EXTREME")
             or economic_score >= 60
-        ):
-            score += 1
+        )
 
-        if market_regime != "RISK_OFF":
+        if economic_clear:
             score += 1
+            score_reasons.append("economic risk acceptable")
+
+        if market_regime != "RISK_OFF" and market_buy_allowed:
+            score += 1
+            score_reasons.append("market allows buys")
 
         if pulse_trade_allowed and pulse_stress_score < 70:
             score += 1
+            score_reasons.append("asset stress acceptable")
 
-        if pulse_best_symbol and symbol == pulse_best_symbol:
-            score += 1
-        elif pulse_breadth_score >= 60 and pulse_asset_class in ("crypto", "forex", "gold", "oil"):
-            score += 1
+        if pulse_asset_class in ("crypto", "forex", "gold", "oil"):
+            if pulse_best_symbol and symbol == pulse_best_symbol:
+                score += 1
+                score_reasons.append("pulse best symbol")
+            elif pulse_breadth_score >= 60:
+                score += 1
+                score_reasons.append("pulse breadth supportive")
+        else:
+            if market_regime != "RISK_OFF" and market_buy_allowed:
+                score += 1
+                score_reasons.append("stock-market context supportive")
 
         score_pct = round((score / max_score) * 100.0, 1)
         rating = rating_from_score_pct(score_pct)
@@ -2992,7 +2987,6 @@ def run_page():
         combined_event_risk_score = max(
             int(safe_float(earnings_ctx.get("risk_score"), 0.0)),
             economic_score,
-            int(safe_float(market_ctx.get("score"), 0.0)),
         )
 
         if combined_event_risk_score >= 80:
@@ -3014,9 +3008,7 @@ def run_page():
             "leadership_tier": leadership_row.get("leadership_tier"),
             "sector_leader": leadership_row.get("sector_leader"),
             "earnings_risk_label": earnings_label,
-            "earnings_risk_score": int(
-                safe_float(earnings_ctx.get("risk_score"), 0.0)
-            ),
+            "earnings_risk_score": int(safe_float(earnings_ctx.get("risk_score"), 0.0)),
             "earnings_date": (
                 row.get("earnings_date")
                 if row.get("earnings_date") is not None
@@ -3026,6 +3018,7 @@ def run_page():
             "economic_risk_label": economic_label,
             "economic_risk_score": economic_score,
             "market_reaction_regime": market_regime,
+            "market_buy_allowed": market_buy_allowed,
             "pulse_asset_class": pulse_asset_class,
             "pulse_regime": pulse_ctx.get("regime") if pulse_ctx else row.get("pulse_regime"),
             "pulse_stress_score": pulse_stress_score,
@@ -3038,6 +3031,7 @@ def run_page():
             "opportunity_max_score": max_score,
             "opportunity_score_pct": score_pct,
             "overall_rating": rating,
+            "score_reasons": " • ".join(score_reasons),
         }
 
         enriched["trade_recommendation"] = scanner_trade_recommendation(
@@ -3068,361 +3062,7 @@ def run_page():
             ),
             reverse=True,
         )
-
-    # =====================================================
-    # SCANNER CONFIDENCE + INTELLIGENCE BRIEF
-    # =====================================================
-
-    def scanner_confidence_label(score: Any) -> Dict[str, str]:
-        score = safe_float(score, 0.0)
-
-        if score >= 90:
-            return {
-                "label": "HIGH CONVICTION",
-                "icon": "🟢",
-                "tone": "green",
-            }
-        if score >= 75:
-            return {
-                "label": "FAVORABLE",
-                "icon": "🟢",
-                "tone": "green",
-            }
-        if score >= 60:
-            return {
-                "label": "SELECTIVE",
-                "icon": "🟡",
-                "tone": "yellow",
-            }
-        if score >= 40:
-            return {
-                "label": "DEFENSIVE",
-                "icon": "🟠",
-                "tone": "yellow",
-            }
-
-        return {
-            "label": "CAPITAL PRESERVATION",
-            "icon": "🔴",
-            "tone": "red",
-        }
-
-    def scanner_confidence_profile(
-        rows=None,
-        plan=None,
-        hold_rows=None,
-    ) -> Dict[str, Any]:
-        """
-        Transparent Scanner Confidence score.
-
-        This is not AI magic. It combines market regime, leadership,
-        relative strength, event risk, breadth, and execution readiness.
-        """
-
-        rows = rows if isinstance(rows, list) else st.session_state.get(
-            "scanner_last_raw_signals",
-            [],
-        )
-        rows = [row for row in rows if isinstance(row, dict)]
-
-        plan = plan if isinstance(plan, list) else st.session_state.get(
-            "scanner_last_risk_plan",
-            [],
-        )
-        plan = [row for row in plan if isinstance(row, dict)]
-
-        hold_rows = hold_rows if isinstance(hold_rows, list) else st.session_state.get(
-            "scanner_last_hold_rows",
-            [],
-        )
-        hold_rows = [row for row in hold_rows if isinstance(row, dict)]
-
-        market_ctx = market_reaction_context()
-        economic_ctx = economic_calendar_context()
-        earnings_ctx = earnings_universe_context()
-
-        regime = str(
-            market_ctx.get("regime_label") or "NEUTRAL"
-        ).upper().strip()
-
-        market_confidence = safe_float(
-            market_ctx.get("confidence"),
-            0.0,
-        )
-
-        if regime == "RISK_ON":
-            market_component = 22
-        elif regime == "RISK_OFF":
-            market_component = 5
-        else:
-            market_component = 14
-
-        market_component += min(3, int(market_confidence / 35))
-        market_component = max(0, min(25, market_component))
-
-        if rows:
-            avg_leadership = sum(
-                safe_float(row.get("sector_percentile"), 0.0)
-                for row in rows
-            ) / len(rows)
-
-            avg_rs_quality = sum(
-                min(
-                    100.0,
-                    max(
-                        0.0,
-                        (safe_float(row.get("rs_score"), 1.0) - 0.95) / 0.20 * 100.0,
-                    ),
-                )
-                for row in rows
-            ) / len(rows)
-        else:
-            avg_leadership = 0.0
-            avg_rs_quality = 0.0
-
-        leadership_component = int(round(avg_leadership / 100.0 * 20.0))
-        rs_component = int(round(avg_rs_quality / 100.0 * 20.0))
-
-        economic_risk = safe_float(economic_ctx.get("score"), 0.0)
-        earnings_risk = safe_float(earnings_ctx.get("score"), 0.0)
-        event_risk = max(economic_risk, earnings_risk)
-        event_component = int(round(max(0.0, 15.0 - (event_risk / 100.0 * 15.0))))
-
-        leadership_map = st.session_state.get(
-            "scanner_sector_leadership_map",
-            {},
-        )
-
-        if isinstance(leadership_map, dict) and leadership_map:
-            strong_leaders = len([
-                item for item in leadership_map.values()
-                if str(item.get("leadership_tier") or "").upper() in (
-                    "ELITE",
-                    "LEADER",
-                    "STRONG",
-                )
-            ])
-            breadth_component = min(10, strong_leaders)
-        else:
-            breadth_component = 0
-
-        executable_count = len([
-            row for row in plan
-            if bool(row.get("executable"))
-        ])
-
-        planned_count = len(plan)
-        ignored_count = len(hold_rows)
-
-        if executable_count >= 5:
-            execution_component = 10
-        elif executable_count >= 3:
-            execution_component = 8
-        elif executable_count >= 1:
-            execution_component = 6
-        elif planned_count > 0 or ignored_count > 0:
-            execution_component = 3
-        else:
-            execution_component = 0
-
-        components = {
-            "Market Regime": market_component,
-            "Sector Leadership": leadership_component,
-            "Relative Strength": rs_component,
-            "Event Risk": event_component,
-            "Breadth": breadth_component,
-            "Execution Readiness": execution_component,
-        }
-
-        score = int(round(sum(components.values())))
-        score = max(0, min(100, score))
-
-        label = scanner_confidence_label(score)
-
-        best_row = rows[0] if rows else {}
-        best_symbol = str(best_row.get("symbol") or "N/A").upper().strip()
-        best_sector = str(best_row.get("sector") or "Unknown")
-        best_rating = str(best_row.get("overall_rating") or "N/A")
-        best_recommendation = str(
-            best_row.get("trade_recommendation") or "N/A"
-        )
-
-        leading_sectors = []
-        sector_rows: Dict[str, List[Dict[str, Any]]] = {}
-
-        for row in rows:
-            sector = str(row.get("sector") or "Unknown")
-            sector_rows.setdefault(sector, []).append(row)
-
-        for sector, members in sector_rows.items():
-            avg_score = sum(
-                safe_float(row.get("opportunity_score_pct"), 0.0)
-                for row in members
-            ) / max(1, len(members))
-
-            leading_sectors.append((sector, avg_score))
-
-        leading_sectors = [
-            sector for sector, _ in sorted(
-                leading_sectors,
-                key=lambda item: item[1],
-                reverse=True,
-            )[:3]
-        ]
-
-        if regime == "RISK_OFF":
-            action_focus = (
-                "Capital preservation comes first. New long exposure should "
-                "wait for market confirmation or stronger risk approval."
-            )
-        elif executable_count > 0 and score >= 75:
-            action_focus = (
-                "Focus on the highest-ranked ELITE and LEADER names that also "
-                "pass the risk-aware execution plan."
-            )
-        elif score >= 60:
-            action_focus = (
-                "Be selective. The scanner has usable ideas, but position size "
-                "and event-risk checks still matter."
-            )
-        else:
-            action_focus = (
-                "Avoid forcing trades. Wait for stronger leadership, relative "
-                "strength, and cleaner execution approval."
-            )
-
-        summary = (
-            f"Scanner Confidence is {score}/100 ({label['label']}). "
-            f"Best current opportunity is {best_symbol} ({best_sector}), "
-            f"rated {best_rating} with a {best_recommendation} recommendation. "
-            f"Executable opportunities: {executable_count}. "
-            f"Economic risk: {economic_ctx.get('label', 'NONE')}. "
-            f"Earnings risk: {earnings_ctx.get('label', 'NONE')}."
-        )
-
-        return {
-            "score": score,
-            "label": label["label"],
-            "icon": label["icon"],
-            "tone": label["tone"],
-            "components": components,
-            "summary": summary,
-            "action_focus": action_focus,
-            "best_symbol": best_symbol,
-            "best_sector": best_sector,
-            "best_rating": best_rating,
-            "best_recommendation": best_recommendation,
-            "leading_sectors": leading_sectors,
-            "executable_count": executable_count,
-            "market_regime": regime,
-            "economic_risk_label": economic_ctx.get("label", "NONE"),
-            "earnings_risk_label": earnings_ctx.get("label", "NONE"),
-        }
-
-    def render_scanner_intelligence_brief(
-        rows=None,
-        plan=None,
-        hold_rows=None,
-    ) -> Dict[str, Any]:
-        """Render the top-of-page Scanner Intelligence Brief."""
-
-        profile = scanner_confidence_profile(
-            rows=rows,
-            plan=plan,
-            hold_rows=hold_rows,
-        )
-
-        tone_palette = {
-            "green": ("#ecfdf3", "#bbebca", "#087a2f"),
-            "yellow": ("#fff8e6", "#ffe2a8", "#92400e"),
-            "red": ("#fff1f2", "#fecdd3", "#9f1239"),
-            "blue": ("#f3f8ff", "#cfe2ff", "#1f2937"),
-        }
-
-        background, border, color = tone_palette.get(
-            profile.get("tone", "blue"),
-            tone_palette["blue"],
-        )
-
-        leading_sectors = profile.get("leading_sectors") or []
-        sector_text = ", ".join(leading_sectors) if leading_sectors else "Not enough data yet"
-
-        st.markdown("### 🧠 Scanner Intelligence Brief")
-
-        st.markdown(
-            f"""
-            <div style="
-                background:{background};
-                border:1px solid {border};
-                border-radius:16px;
-                padding:1rem 1.1rem;
-                margin-bottom:0.8rem;
-                overflow-wrap:anywhere;
-            ">
-                <div style="font-size:0.78rem;font-weight:850;color:#52677d;
-                    text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.25rem;">
-                    Scanner Confidence
-                </div>
-                <div style="font-size:2.0rem;font-weight:900;color:{color};line-height:1.05;">
-                    {profile['icon']} {profile['score']}/100
-                </div>
-                <div style="font-size:1.0rem;font-weight:850;color:{color};margin-top:0.25rem;">
-                    {profile['label']}
-                </div>
-                <div style="font-size:0.92rem;color:#374151;margin-top:0.65rem;line-height:1.45;">
-                    {profile['summary']}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        c1, c2, c3, c4 = responsive_columns(4)
-
-        with c1:
-            scanner_compact_card(
-                "Best Opportunity",
-                f"{profile['best_symbol']} • {profile['best_rating']}",
-                profile.get("tone", "blue"),
-            )
-
-        with c2:
-            scanner_compact_card(
-                "Leading Sectors",
-                sector_text,
-                "blue",
-            )
-
-        with c3:
-            scanner_compact_card(
-                "Executable",
-                profile.get("executable_count", 0),
-                "green" if profile.get("executable_count", 0) else "yellow",
-            )
-
-        with c4:
-            scanner_compact_card(
-                "Risk Backdrop",
-                f"Eco {profile['economic_risk_label']} • Earn {profile['earnings_risk_label']}",
-                "yellow" if profile["economic_risk_label"] not in ("NONE", "LOW") else "blue",
-            )
-
-        st.caption(f"💡 {profile['action_focus']}")
-
-        with st.expander("Confidence score breakdown", expanded=False):
-            st.dataframe(
-                pd.DataFrame(
-                    [
-                        {"Component": key, "Points": value}
-                        for key, value in profile["components"].items()
-                    ]
-                ),
-                width="stretch",
-                hide_index=True,
-            )
-
-        return profile
-
+    
     # =====================================================
     # SIGNAL GENERATION / NORMALIZATION
     # =====================================================

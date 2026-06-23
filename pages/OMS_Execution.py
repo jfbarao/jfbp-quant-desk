@@ -20,6 +20,11 @@ import streamlit as st
 from core.bootstrap import init_core
 
 try:
+    from core.portfolio_db import upsert_position as supabase_upsert_position
+except Exception:  # pragma: no cover
+    supabase_upsert_position = None
+
+try:
     from core.responsive import inject_responsive_css
     from core.ui_cards import inject_card_css, card_grid, hero_card
 except Exception:  # pragma: no cover
@@ -620,6 +625,339 @@ def run_page():
 
         except Exception:
             return False
+
+
+    def resolve_current_user_id():
+        """
+        Resolve the authenticated Supabase user id from Streamlit session state.
+
+        The SaaS/auth layer stores the logged-in user as st.session_state["saas_user"].
+        Older builds used several different key names, so this resolver remains
+        defensive and falls back through legacy keys. It returns a UUID-like string
+        when available, otherwise an empty string.
+        """
+
+        # SaaS Core v1.4.x authenticated user object
+        saas_user = st.session_state.get("saas_user")
+
+        if saas_user is not None:
+            user_id = getattr(saas_user, "user_id", "")
+            if user_id:
+                return str(user_id).strip()
+
+        candidate_keys = (
+            "user_id",
+            "auth_user_id",
+            "supabase_user_id",
+            "current_user_id",
+            "jfbp_user_id",
+            "session_user_id",
+        )
+
+        for key in candidate_keys:
+            value = st.session_state.get(key)
+            if value:
+                return str(value).strip()
+
+        object_keys = (
+            "saas_user",
+            "user",
+            "auth_user",
+            "supabase_user",
+            "current_user",
+            "profile",
+            "user_profile",
+            "subscription",
+            "auth_session",
+            "session",
+        )
+
+        for key in object_keys:
+            obj = st.session_state.get(key)
+
+            if isinstance(obj, dict):
+                for field in ("id", "user_id", "uid"):
+                    value = obj.get(field)
+                    if value:
+                        return str(value).strip()
+
+                nested_user = obj.get("user")
+                if isinstance(nested_user, dict):
+                    for field in ("id", "user_id", "uid"):
+                        value = nested_user.get(field)
+                        if value:
+                            return str(value).strip()
+
+                if nested_user is not None:
+                    for field in ("id", "user_id", "uid"):
+                        value = getattr(nested_user, field, None)
+                        if value:
+                            return str(value).strip()
+
+            if obj is not None:
+                for field in ("id", "user_id", "uid"):
+                    value = getattr(obj, field, None)
+                    if value:
+                        return str(value).strip()
+
+                nested_user = getattr(obj, "user", None)
+                if nested_user is not None:
+                    for field in ("id", "user_id", "uid"):
+                        value = getattr(nested_user, field, None)
+                        if value:
+                            return str(value).strip()
+
+        return ""
+
+    def _runtime_record_test_fill(fill):
+        """
+        Keep the SIM test fill visible in the local runtime objects.
+
+        This does not replace the real execution pipeline. It is a diagnostic
+        tool used only by the OMS Test Fill button.
+        """
+
+        refresh_refs()
+
+        if oms is not None:
+            for method_name in (
+                "record_fill",
+                "ingest_fill",
+                "process_fill",
+                "apply_fill",
+            ):
+                if hasattr(oms, method_name):
+                    try:
+                        getattr(oms, method_name)(fill)
+                        break
+                    except Exception:
+                        pass
+
+            try:
+                if not hasattr(oms, "fills") or getattr(oms, "fills", None) is None:
+                    oms.fills = []
+                if isinstance(oms.fills, list):
+                    oms.fills.append(fill)
+            except Exception:
+                pass
+
+        if portfolio_engine is not None:
+            for method_name in (
+                "record_fill",
+                "apply_fill",
+                "process_fill",
+                "update_from_fill",
+                "ingest_fill",
+            ):
+                if hasattr(portfolio_engine, method_name):
+                    try:
+                        getattr(portfolio_engine, method_name)(fill)
+                        break
+                    except Exception:
+                        pass
+
+            try:
+                if not hasattr(portfolio_engine, "positions") or getattr(portfolio_engine, "positions", None) is None:
+                    portfolio_engine.positions = {}
+
+                positions = getattr(portfolio_engine, "positions", {})
+                if isinstance(positions, dict):
+                    symbol = str(fill.get("symbol") or "").upper().strip()
+                    qty = float(fill.get("filled_qty", fill.get("qty", 0)) or 0)
+                    price = float(fill.get("fill_price", fill.get("price", 0)) or 0)
+                    side = str(fill.get("side") or fill.get("action") or "BUY").upper().strip()
+
+                    signed_delta = qty if side == "BUY" else -qty
+
+                    existing = positions.get(symbol, {})
+                    if not isinstance(existing, dict):
+                        existing = {}
+
+                    old_signed = float(existing.get("signed_qty", existing.get("qty", 0)) or 0)
+                    old_cost = float(existing.get("cost_basis", 0) or 0)
+                    new_signed = old_signed + signed_delta
+                    new_cost = old_cost + (signed_delta * price)
+
+                    avg_price = abs(new_cost / new_signed) if abs(new_signed) > 1e-9 else 0.0
+
+                    if abs(new_signed) <= 1e-9:
+                        positions.pop(symbol, None)
+                    else:
+                        positions[symbol] = {
+                            **existing,
+                            "symbol": symbol,
+                            "side": "LONG" if new_signed > 0 else "SHORT",
+                            "qty": abs(new_signed),
+                            "signed_qty": new_signed,
+                            "avg_price": avg_price,
+                            "price": price,
+                            "last_price": price,
+                            "cost_basis": abs(new_cost),
+                            "market_value": abs(new_signed) * price,
+                            "realized_pnl": float(existing.get("realized_pnl", 0) or 0),
+                            "updated_at": now(),
+                            "source": "oms_test_fill",
+                        }
+            except Exception:
+                pass
+
+            try:
+                if not hasattr(portfolio_engine, "ledger") or getattr(portfolio_engine, "ledger", None) is None:
+                    portfolio_engine.ledger = []
+                if isinstance(portfolio_engine.ledger, list):
+                    portfolio_engine.ledger.append(fill)
+            except Exception:
+                pass
+
+        audit_event("OMS_TEST_FILL", fill)
+
+        try:
+            sync_risk()
+        except Exception:
+            pass
+
+    def execute_oms_test_fill():
+        """
+        Create a deterministic SIM fill and persist it into Supabase.
+
+        This is intentionally small and boring. The purpose is to validate:
+        OMS page -> runtime fill -> portfolio_positions upsert.
+        """
+
+        refresh_refs()
+
+        user_id = resolve_current_user_id()
+
+        symbol = "JPM"
+        qty = 1.0
+        price = 100.0
+        side = "BUY"
+
+        fill = {
+            "timestamp": now(),
+            "updated_at": now(),
+            "id": uuid.uuid4().hex[:8],
+            "fill_id": uuid.uuid4().hex[:8],
+            "order_id": new_id("OMS-TEST"),
+            "broker_order_id": None,
+            "execution_id": "OMS_TEST_FILL",
+            "symbol": symbol,
+            "action": side,
+            "side": side,
+            "qty": qty,
+            "filled_qty": qty,
+            "price": price,
+            "fill_price": price,
+            "avg_fill_price": price,
+            "status": "COMPLETE",
+            "execution_status": "COMPLETE",
+            "order_status": "COMPLETE",
+            "stage": "COMPLETE",
+            "reason": "OMS SIM test fill complete",
+            "risk_approved": True,
+            "has_fill": True,
+            "partial_fill": False,
+            "source": "oms_manual_test_fill",
+            "mode": "SIM",
+            "test_fill": True,
+        }
+
+        report = {
+            "timestamp": now(),
+            "status": "PENDING",
+            "source": "oms_manual_test_fill",
+            "user_id": user_id,
+            "symbol": symbol,
+            "action": side,
+            "qty": qty,
+            "price": price,
+            "results": [],
+        }
+
+        try:
+            _runtime_record_test_fill(fill)
+
+            supabase_result_data = None
+
+            if not user_id:
+                report.update({
+                    "status": "ERROR",
+                    "reason": "No authenticated user_id found in session_state",
+                    "fill": fill,
+                })
+            elif supabase_upsert_position is None:
+                report.update({
+                    "status": "ERROR",
+                    "reason": "core.portfolio_db.upsert_position is unavailable",
+                    "fill": fill,
+                })
+            else:
+                print("OMS TEST FILL SUPABASE SAVE:", user_id, symbol, qty, price)
+
+                result = supabase_upsert_position(
+                    user_id=user_id,
+                    symbol=symbol,
+                    shares=qty,
+                    cost_basis=qty * price,
+                    market_value=qty * price,
+                    avg_price=price,
+                    realized_pnl=0.0,
+                )
+
+                try:
+                    supabase_result_data = getattr(result, "data", None)
+                except Exception:
+                    supabase_result_data = None
+
+                report.update({
+                    "status": "EXECUTED_1_BLOCKED_0_FAILED_0",
+                    "fingerprint": hashlib.sha256(
+                        json.dumps(
+                            {
+                                "user_id": user_id,
+                                "symbol": symbol,
+                                "qty": qty,
+                                "price": price,
+                                "source": "oms_manual_test_fill",
+                            },
+                            sort_keys=True,
+                        ).encode()
+                    ).hexdigest(),
+                    "approved_signals": 1,
+                    "executed": 1,
+                    "blocked": 0,
+                    "failed": 0,
+                    "fill": fill,
+                    "supabase_saved": True,
+                    "supabase_result_data": supabase_result_data,
+                    "results": [{
+                        **fill,
+                        "status": "COMPLETE",
+                        "portfolio_persisted": True,
+                    }],
+                })
+
+        except Exception as exc:
+            report.update({
+                "status": "ERROR",
+                "reason": str(exc),
+                "fill": fill,
+                "supabase_saved": False,
+            })
+
+        st.session_state["oms_last_execution_report"] = report
+        st.session_state["oms_last_execution_ts"] = time.time()
+        st.session_state["oms_execution_history"] = (
+            [report] + st.session_state.get("oms_execution_history", [])
+        )[:50]
+
+        try:
+            full_truth_sync()
+        except Exception:
+            pass
+
+        return report
+
 
     def clear_runtime():
         """
@@ -1870,7 +2208,16 @@ def run_page():
         if not confirm_test:
             st.warning("OMS fill test requires confirmation.")
         else:
-            st.info("OMS test fill not enabled in this build.")
+            report = execute_oms_test_fill()
+
+            status = str(report.get("status", "UNKNOWN"))
+
+            if status.startswith("EXECUTED_"):
+                st.success("OMS SIM test fill executed and persisted to portfolio_positions.")
+            else:
+                st.error(report.get("reason", status))
+
+            st.rerun()
 
     # =====================================================
     # RUNTIME CLEAR
