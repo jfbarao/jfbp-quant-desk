@@ -385,6 +385,43 @@ def suggested_options_structure(row: Dict[str, Any], market: Dict[str, Any]) -> 
     return "No Options Trade", "Wait for stronger confirmation", "warning"
 
 
+def opportunity_grade(score: Any, rating: Any = "", signal: Any = "") -> Tuple[str, str, str]:
+    s = safe_float(score, 0.0)
+    r = str(rating or "").upper().strip()
+    sig = normalize_signal(signal)
+    if sig in {"AVOID", "SELL"} and s < 60:
+        return "🔴 AVOID", "risk", "Opportunity quality is weak or adverse."
+    if s >= 85 or (s >= 75 and r in {"A+", "A", "A-"}):
+        return "🟢 TRADEABLE", "good", "High-quality candidate worth considering."
+    if s >= 60:
+        return "🟡 DEVELOPING", "warning", "Candidate is forming but still needs confirmation."
+    return "⚪ MONITOR", "neutral", "Watch only until the opportunity improves."
+
+
+def institutional_grade(decision: Dict[str, Any], checklist: List[Tuple[str, bool]] | None = None, plan: Dict[str, Any] | None = None) -> Tuple[str, str, str]:
+    label = str((decision or {}).get("label", "")).upper()
+    score = safe_float((decision or {}).get("score"), 0.0)
+    plan = plan if isinstance(plan, dict) else {}
+    executable = bool(plan.get("executable")) or str(plan.get("position_action") or "").upper().startswith("OPEN")
+    passed = sum(1 for _, ok in (checklist or []) if ok)
+
+    if "BLOCKED" in label:
+        return "🔴 BLOCKED", "risk", "Risk controls do not allow execution."
+    if "TRADE READY" in label and (executable or passed >= 7):
+        return "🔵 READY", "good", "Institutional execution criteria are aligned."
+    if score >= 60 or "WATCH" in label or "REVIEW" in label:
+        return "🟡 PENDING CONFIRMATION", "warning", "Opportunity exists, but full institutional confirmation is not complete."
+    return "⚪ STAND BY", "neutral", "Insufficient confirmation for capital deployment."
+
+
+def grade_explainer() -> str:
+    return (
+        "JFBP Quant Desk protects capital first and pursues opportunity second. "
+        "Opportunity Grade measures whether the candidate is worth considering. "
+        "Institutional Grade measures whether the setup is ready for capital deployment."
+    )
+
+
 def decision_score(row: Dict[str, Any], market: Dict[str, Any], plan: Dict[str, Any], risk: Dict[str, Any]) -> Dict[str, Any]:
     score = 0
     reasons: List[str] = []
@@ -838,15 +875,21 @@ def run_page() -> None:
     price = row.get("price") or row.get("last_price") or row.get("close")
     levels = derive_trade_levels(row, plan, signal)
     conviction, conviction_tone = conviction_label(decision, row, market, plan)
+    opp_grade, opp_tone, opp_detail = opportunity_grade(scanner_score, rating, signal)
+    inst_grade, inst_tone, inst_detail = institutional_grade(decision, None, plan)
 
     st.subheader("Phase 1 — Opportunity Assessment")
     render_card_grid([
         {"title": "Decision", "value": decision["label"], "detail": f"Trade Command Score {decision['score']}/100", "tone": decision["tone"]},
+        {"title": "Opportunity Grade", "value": opp_grade, "detail": opp_detail, "tone": opp_tone},
+        {"title": "Institutional Grade", "value": inst_grade, "detail": inst_detail, "tone": inst_tone},
         {"title": "Symbol", "value": symbol or "Run Scanner", "detail": f"{sector} | Price {fmt_money(price) if safe_float(price, 0) else 'N/A'}", "tone": "info"},
         {"title": "Scanner", "value": signal, "detail": f"Score {fmt_score(scanner_score)} | Rating {rating} | Leadership {leadership}", "tone": "good" if signal == "BUY" else "risk" if signal == "SELL" else "warning"},
         {"title": "Conviction", "value": conviction, "detail": "Derived from score, rating, regime, and risk plan", "tone": conviction_tone},
         {"title": "Options", "value": option_strategy, "detail": option_detail, "tone": option_tone},
     ])
+
+    st.info(grade_explainer())
 
     top_reasons = top_decision_reasons(decision)
     if top_reasons:
@@ -869,6 +912,8 @@ def run_page() -> None:
             ("Market Regime", market.get("regime", "UNKNOWN")),
             ("Risk State", execution.get("risk_state", "NORMAL")),
             ("Conviction", conviction),
+            ("Opportunity Grade", opp_grade),
+            ("Institutional Grade", inst_grade),
         ])
         section_close()
 
@@ -934,6 +979,8 @@ def run_page() -> None:
 
         section_open("✅ Phase 3 — Execution Readiness", "All boxes should be green before sending to OMS.")
         checklist = build_checklist(decision, plan, sizing, execution, market)
+        opp_grade, opp_tone, opp_detail = opportunity_grade(scanner_score, rating, signal)
+        inst_grade, inst_tone, inst_detail = institutional_grade(decision, checklist, plan)
         render_checklist(checklist)
         passed = sum(1 for _, ok in checklist if ok)
         total = len(checklist)
@@ -1016,6 +1063,8 @@ def run_page() -> None:
         ("Decision", decision.get("label", "N/A")),
         ("Trade Command Score", f"{decision.get('score', 0)}/100"),
         ("Final Recommendation", rec.get("value", "N/A")),
+        ("Opportunity Grade", opp_grade),
+        ("Institutional Grade", inst_grade),
         ("Planned Action", sizing.get("action", "N/A")),
         ("Planned Qty", sizing.get("qty", 0)),
         ("Risk", fmt_money(sizing.get("dollar_risk", 0))),

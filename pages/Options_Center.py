@@ -669,6 +669,42 @@ def build_options_opportunity_score(ctx: Dict[str, Any], market: Dict[str, Any],
     }
 
 
+def opportunity_grade_from_score(scorecard: Dict[str, Any]) -> Tuple[str, str, str]:
+    score = safe_float((scorecard or {}).get("total"), 0.0)
+    if score >= 80:
+        return "🟢 TRADEABLE", "good", "High-quality options candidate worth considering."
+    if score >= 60:
+        return "🟡 DEVELOPING", "warning", "Options setup is forming but still needs confirmation."
+    return "🔴 AVOID", "risk", "Options opportunity quality is not strong enough yet."
+
+
+def institutional_grade_from_options(ctx: Dict[str, Any], scorecard: Dict[str, Any], market: Dict[str, Any], event_ctx: Dict[str, Any]) -> Tuple[str, str, str]:
+    strategy = str((ctx or {}).get("strategy") or "")
+    score = safe_float((scorecard or {}).get("total"), 0.0)
+    stress = safe_float((market or {}).get("stress_score"), 0.0)
+    buy_allowed = bool((market or {}).get("buy_allowed", True))
+    event_status = str((event_ctx or {}).get("status") or "")
+    optionable = bool((ctx or {}).get("optionable", False))
+
+    if not optionable or strategy in {"No options structure", "No Options Trade", "No New Long Premium"}:
+        return "🟡 PENDING CONFIRMATION", "warning", "No executable options structure has cleared the final gate."
+    if stress >= 70 or not buy_allowed or event_status.startswith("🔴"):
+        return "🔴 BLOCKED", "risk", "Risk, market, or event filters block institutional execution."
+    if score >= 80:
+        return "🔵 READY", "good", "Options structure and risk filters are sufficiently aligned."
+    if score >= 60:
+        return "🟡 PENDING CONFIRMATION", "warning", "Opportunity exists, but institutional confirmation is not complete."
+    return "⚪ STAND BY", "neutral", "Insufficient confirmation for options deployment."
+
+
+def grade_explainer() -> str:
+    return (
+        "JFBP separates opportunity quality from execution readiness. "
+        "Opportunity Grade asks whether the options idea is worth considering. "
+        "Institutional Grade asks whether the trade is ready for disciplined capital deployment."
+    )
+
+
 def strategy_confidence_reasons(ctx: Dict[str, Any], market: Dict[str, Any], scorecard: Dict[str, Any]) -> str:
     reasons: List[str] = []
 
@@ -909,7 +945,7 @@ def build_strike_builder(ctx: Dict[str, Any], row: Dict[str, Any], vol_ctx: Dict
         ]
         cards = [{"title": "Target Put", "value": fmt_money(strike), "detail": "Aggressive long premium", "tone": "risk"}]
     else:
-        rows = [{"Field": "Status", "Value": "Wait", "Why": "No valid options structure selected."}]
+        rows = [{"Field": "Status", "Value": "PENDING CONFIRMATION", "Why": "No valid options structure selected."}]
         cards = []
 
     return {"summary": strategy, "rows": rows, "cards": cards}
@@ -1339,7 +1375,9 @@ def build_wheel_dashboard_rows() -> pd.DataFrame:
 
 def publish_options_best_opportunity(ctx: Dict[str, Any], scorecard: Dict[str, Any], vol_ctx: Dict[str, Any], event_ctx: Dict[str, Any]) -> None:
     allowed = bool(ctx.get("optionable")) and str(ctx.get("strategy")) not in {"No options structure", "No Options Trade", "No New Long Premium"}
-    st.session_state["options_best_opportunity"] = {"timestamp": now_iso(), "symbol": ctx.get("symbol"), "strategy": ctx.get("strategy"), "score": scorecard.get("total"), "allowed": allowed and safe_int(scorecard.get("total"), 0) >= 60, "reason": strategy_confidence_reasons(ctx, market_snapshot(), scorecard), "volatility_regime": vol_ctx.get("regime"), "event_risk": event_ctx.get("status"), "source": "Options_Center_v5_1_freezer_ready"}
+    opp_grade, _, _ = opportunity_grade_from_score(scorecard)
+    inst_grade, _, _ = institutional_grade_from_options(ctx, scorecard, market_snapshot(), event_ctx)
+    st.session_state["options_best_opportunity"] = {"timestamp": now_iso(), "symbol": ctx.get("symbol"), "strategy": ctx.get("strategy"), "score": scorecard.get("total"), "allowed": allowed and safe_int(scorecard.get("total"), 0) >= 60, "opportunity_grade": opp_grade, "institutional_grade": inst_grade, "reason": strategy_confidence_reasons(ctx, market_snapshot(), scorecard), "volatility_regime": vol_ctx.get("regime"), "event_risk": event_ctx.get("status"), "source": "Options_Center_v5_1_freezer_ready"}
 
 
 def prepare_options_oms_ticket(symbol: str, strategy: str, strike_plan: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
@@ -1504,6 +1542,8 @@ def run_page() -> None:
     scorecard = build_options_opportunity_score(ctx, market, row)
     vol_ctx = volatility_proxy(ctx, row)
     event_ctx = earnings_risk_context_v2(row)
+    opp_grade, opp_tone, opp_detail = opportunity_grade_from_score(scorecard)
+    inst_grade, inst_tone, inst_detail = institutional_grade_from_options(ctx, scorecard, market, event_ctx)
     strike_plan = build_strike_builder(ctx, row, vol_ctx)
     ranking_df = strategy_ranking_table(ctx, scorecard, vol_ctx, event_ctx)
     publish_options_best_opportunity(ctx, scorecard, vol_ctx, event_ctx)
@@ -1517,6 +1557,8 @@ def run_page() -> None:
     st.subheader("Command Summary")
     render_summary_strip([
         ("Best Strategy", ctx["strategy"]),
+        ("Opportunity Grade", opp_grade),
+        ("Institutional Grade", inst_grade),
         ("Options Score", f"{scorecard['total']}/100"),
         ("Wheel Score", f"{current_wheel_score}/100"),
         ("CSP Candidates", csp_count),
@@ -1528,20 +1570,25 @@ def run_page() -> None:
     st.subheader("Options Command Brief")
     render_card_grid([
         {"title": "Candidate", "value": ctx["symbol"], "detail": f"{ctx['sector']} | Signal {ctx['signal']} | Rating {ctx['rating']} | Score {fmt_score(ctx['score'])}", "tone": ctx["tone"]},
+        {"title": "Opportunity Grade", "value": opp_grade, "detail": opp_detail, "tone": opp_tone},
+        {"title": "Institutional Grade", "value": inst_grade, "detail": inst_detail, "tone": inst_tone},
         {"title": "Recommended Structure", "value": ctx["strategy"], "detail": ctx["alternative"], "tone": ctx["tone"]},
         {"title": "Market Filter", "value": ctx["regime"], "detail": f"Stress {safe_int(ctx['stress'])}/100 | Size {ctx['multiplier']:.2f}x | Buy allowed: {'YES' if market.get('buy_allowed', True) else 'NO'}", "tone": "risk" if safe_float(ctx["stress"]) >= 70 else "warning" if ctx["regime"] in {"SELECTIVE", "UNKNOWN"} else "good"},
         {"title": "Options Readiness", "value": "Ready" if ctx["optionable"] else "Not Optionable", "detail": ctx["risk"], "tone": "info" if ctx["optionable"] else "neutral"},
     ])
 
+    st.info(grade_explainer())
+
     score_left, score_right = st.columns([0.62, 0.38])
     with score_left:
-        section_open("🎯 Options Opportunity Score")
+        section_open("🎯 Opportunity Grade Score")
         render_static_table(pd.DataFrame(scorecard["components"]), height="compact")
         section_close()
     with score_right:
         section_open("Strategy Confidence")
         render_card_grid([
-            {"title": "Options Opportunity Score", "value": f"{scorecard['total']}/100", "detail": scorecard["label"], "tone": scorecard["tone"]},
+            {"title": "Opportunity Grade", "value": opp_grade, "detail": f"Options Score {scorecard['total']}/100 | {scorecard['label']}", "tone": opp_tone},
+            {"title": "Institutional Grade", "value": inst_grade, "detail": inst_detail, "tone": inst_tone},
             {"title": "Primary Structure", "value": ctx["strategy"], "detail": strategy_confidence_reasons(ctx, market, scorecard), "tone": scorecard["tone"]},
         ])
         section_close()

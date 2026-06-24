@@ -440,7 +440,7 @@ def quick_start() -> None:
     step_grid([
         ("Read Market Pulse", "Identify regime, stress, breadth, leadership, and the current playbook."),
         ("Check Calendars", "Review Economic Calendar and Earnings Calendar before trusting any trade idea."),
-        ("Run Scanner", "Find ranked opportunities that match current market conditions and risk filters."),
+        ("Run Scanner", "Find ranked opportunities and separate Opportunity Grade from Institutional Grade."),
         ("Research One Symbol", "Validate the setup, thesis, levels, sector strength, and recommendation."),
         ("Prepare Trade Command", "Convert the idea into a trade plan, risk/reward, conviction, and OMS handoff."),
         ("Route Through OMS", "Execute only approved signals or manual tickets after safety gates are confirmed."),
@@ -545,6 +545,47 @@ def page_catalog() -> None:
         guide_card("LIVE", "Real-risk mode", "LIVE can route real broker orders after OMS and IBKR gates are armed.", "risk")
         guide_card("Paper", "Local simulation", "Quant Executor paper positions are local simulator records, not IBKR positions.", "warning")
 
+
+
+
+def decision_grade_guide() -> None:
+    st.subheader("🛡️ Opportunity Grade vs Institutional Grade")
+    st.caption("Why JFBP can identify a strong candidate and still say PENDING CONFIRMATION.")
+
+    st.markdown(
+        """
+        <div class="guide-warning">
+            <strong>JFBP Quant Desk was designed to protect capital first and pursue opportunity second.</strong><br><br>
+            Most platforms focus on producing as many trade ideas as possible. JFBP uses a stricter workflow: market regime, breadth, stress, scanner quality, research validation, risk controls, position sizing, and execution readiness.
+            Because of that, a stock can be a strong opportunity while still not meeting full institutional-style execution standards.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    guide_card_grid([
+        {"title": "Opportunity Grade", "value": "Is it worth considering?", "detail": "Measures candidate quality from Scanner, rating, leadership, trend, sector strength, and opportunity score.", "tone": "good"},
+        {"title": "Institutional Grade", "value": "Is it ready to deploy?", "detail": "Measures execution readiness after Market Pulse, risk controls, sizing, checklist, OMS, and confirmation gates.", "tone": "warning"},
+        {"title": "Example", "value": "TRADEABLE / PENDING CONFIRMATION", "detail": "The opportunity is real, but JFBP is waiting for stronger confirmation before institutional deployment.", "tone": "info"},
+        {"title": "Main Principle", "value": "No forced trades", "detail": "The system is built to improve decision quality, not maximize activity.", "tone": "dark"},
+    ])
+
+    st.markdown("### Grade Language")
+    check_row("🟢 Opportunity Grade: TRADEABLE", "High-quality candidate worth considering. This does not automatically mean full execution is ready.", "Opportunity")
+    check_row("🟡 Opportunity Grade: DEVELOPING", "Candidate is forming, but the opportunity still needs better confirmation.", "Opportunity")
+    check_row("🔵 Institutional Grade: READY", "Execution criteria, risk controls, and workflow checks are sufficiently aligned.", "Execution")
+    check_row("🟡 Institutional Grade: PENDING CONFIRMATION", "Opportunity exists, but full institutional confirmation is not complete.", "Execution")
+    check_row("🔴 Institutional Grade: BLOCKED", "Risk controls, market conditions, or execution checks do not allow deployment.", "Execution")
+
+    st.markdown("### What this means in practice")
+    workflow_path([
+        "Scanner finds candidate",
+        "Opportunity Grade evaluates quality",
+        "Research validates thesis",
+        "Trade Command evaluates readiness",
+        "Institutional Grade decides deployment",
+        "OMS controls execution",
+    ])
 
 def live_trading_safety() -> None:
     st.subheader("🔌 LIVE Trading Safety Procedure")
@@ -685,6 +726,7 @@ def run_page() -> None:
         "Quick Start",
         "Workflow Maps",
         "Page Catalog",
+        "Decision Grades",
         "LIVE Safety",
         "Quant Executor",
         "Multi-Asset",
@@ -702,18 +744,21 @@ def run_page() -> None:
         page_catalog()
 
     with tabs[3]:
-        live_trading_safety()
+        decision_grade_guide()
 
     with tabs[4]:
-        quant_executor_guide()
+        live_trading_safety()
 
     with tabs[5]:
-        multi_asset_guide()
+        quant_executor_guide()
 
     with tabs[6]:
-        faq_section()
+        multi_asset_guide()
 
     with tabs[7]:
+        faq_section()
+
+    with tabs[8]:
         final_checklist()
 
 

@@ -1,10 +1,10 @@
 # =========================================================
-# 🌎 MARKET PULSE PAGE — v88 iPad Card Grid Fix
+# 🌎 MARKET PULSE PAGE — v90 Independent Engines
 # JFBP Quant Desk
 # Public Dashboard + Event History
 # Market Playbook + Regime Dashboard + Similar Events
 # AI Market Brief + Education Layer v2 + Decision-First Right Rail
-# Responsive Layout Pass v89 — iPad card grid standardization
+# v90 — Stress, Breadth, and Regime separated into independent diagnostic engines
 # =========================================================
 
 from __future__ import annotations
@@ -642,6 +642,20 @@ def regime_icon(regime: str) -> str:
     return "⚪"
 
 
+def confidence_state(confidence: float) -> str:
+    """Convert event confidence into a simple conviction label."""
+
+    confidence_value = safe_float(confidence, default=0.0)
+
+    if confidence_value >= 70:
+        return "High Conviction"
+
+    if confidence_value >= 40:
+        return "Moderate Conviction"
+
+    return "Low Conviction"
+
+
 def command_status_pill(regime: str, stress_score: int, breadth_score: float) -> None:
     tone = regime_tone(regime)
 
@@ -688,32 +702,72 @@ def command_status_pill(regime: str, stress_score: int, breadth_score: float) ->
 
 
 def calculate_market_stress(indexes, sectors) -> tuple[int, str]:
+    """Independent technical stress engine.
+
+    Stress answers one question only: how dangerous is today's market tape?
+    Breadth is intentionally excluded here and is combined later only inside
+    the Regime Engine.
+    """
 
     qqq = get_move(indexes, "QQQ")
     spy = get_move(indexes, "SPY")
     iwm = get_move(indexes, "IWM")
+    soxx = get_move(indexes, "SOXX")
+    dia = get_move(indexes, "DIA")
     vixy = get_move(indexes, "VIXY")
+    hyg = get_move(indexes, "HYG")
     xlk = get_move(sectors, "XLK")
 
-    score = 0
+    score = 0.0
 
+    # Growth / leadership stress. QQQ and SOXX carry the most weight because
+    # they usually define risk appetite in the JFBP trading universe.
     if qqq is not None:
-        score += min(abs(min(qqq, 0)) * 10, 30)
+        score += min(abs(min(qqq, 0)) * 11, 36)
 
+    if soxx is not None:
+        score += min(abs(min(soxx, 0)) * 4, 28)
+
+    # Broad market pressure.
     if spy is not None:
-        score += min(abs(min(spy, 0)) * 8, 25)
+        score += min(abs(min(spy, 0)) * 9, 24)
 
     if iwm is not None:
-        score += min(abs(min(iwm, 0)) * 5, 15)
+        score += min(abs(min(iwm, 0)) * 5, 12)
 
+    if dia is not None:
+        score += min(abs(min(dia, 0)) * 3, 8)
+
+    # Sector leadership stress.
     if xlk is not None:
         score += min(abs(min(xlk, 0)) * 5, 15)
 
+    # Volatility and credit stress.
     if vixy is not None and vixy > 0:
-        score += min(vixy * 2, 15)
+        score += min(vixy * 3, 22)
+
+    if hyg is not None and hyg < 0:
+        score += min(abs(hyg) * 8, 8)
+
+    # Shock floors prevent obvious selloff days from being under-scored.
+    if qqq is not None and qqq <= -3:
+        score = max(score, 60)
+
+    if soxx is not None and soxx <= -5:
+        score = max(score, 65)
+
+    if vixy is not None and vixy >= 5:
+        score = max(score, 60)
+
+    if (
+        qqq is not None and qqq <= -3
+        and soxx is not None and soxx <= -5
+        and vixy is not None and vixy >= 5
+    ):
+        score = max(score, 70)
 
     score = safe_float(score, default=0.0)
-    score = int(max(0, min(score, 100)))
+    score = int(max(0, min(round(score), 100)))
 
     if score >= 80:
         label = "Severe Stress"
@@ -1497,7 +1551,7 @@ def build_ai_market_brief(
     regime_key = str(scanner_regime or "").upper().strip()
 
     if regime_key in ("RISK_ON", "RISK-ON"):
-        bias = "Constructive / Risk-On"
+        bias = "RISK_ON"
         tone = "good"
         setup = "breakouts, relative-strength leaders, and trend continuation"
         avoid = "bottom fishing weak names or chasing extended laggards"
@@ -1505,8 +1559,8 @@ def build_ai_market_brief(
             "The market structure remains healthy enough for normal long exposure."
         )
 
-    elif regime_key in ("CAUTIOUS", "SELECTIVE"):
-        bias = "Selective / Cautious"
+    elif regime_key == "SELECTIVE":
+        bias = "SELECTIVE"
         tone = "warning"
         setup = "only the strongest relative-strength setups"
         avoid = "weak sectors, low-quality rebounds, and oversized positions"
@@ -1514,8 +1568,17 @@ def build_ai_market_brief(
             "The market is tradable, but selectivity matters more than aggression."
         )
 
+    elif regime_key == "CAUTIOUS":
+        bias = "CAUTIOUS"
+        tone = "warning"
+        setup = "reduced-size trades and only high-quality confirmed setups"
+        avoid = "weak sectors, low-quality rebounds, and oversized positions"
+        conclusion = (
+            "Trading is possible, but caution should dominate until conditions improve."
+        )
+
     elif regime_key in ("DEFENSIVE", "RISK_OFF", "RISK-OFF"):
-        bias = "Defensive / Risk-Off"
+        bias = regime_key
         tone = "risk"
         setup = "capital protection, smaller size, and only exceptional A+ setups"
         avoid = "new broad long exposure and averaging down weak stocks"
@@ -1524,7 +1587,7 @@ def build_ai_market_brief(
         )
 
     else:
-        bias = "Neutral / Mixed"
+        bias = "NEUTRAL"
         tone = "info"
         setup = "confirmed setups with clear leadership"
         avoid = "forcing trades without confirmation"
@@ -1547,13 +1610,15 @@ def build_ai_market_brief(
         0,
     ) or 0
 
+    confidence_label = confidence_state(event_confidence)
+
     brief = (
         f"Market Pulse is currently reading **{bias}**. "
         f"The active regime is **{scanner_regime}**, market stress is "
         f"**{stress_score}/100 ({stress_label})**, and breadth is "
         f"**{breadth_score:.1f}/100 ({breadth_state})**. "
         f"The main event read is **{event_label}** with "
-        f"**{event_confidence}% confidence**. "
+        f"**{event_confidence}% confidence ({confidence_label})**. "
         f"Leadership is currently strongest in **{best_sector}** "
         f"({best_sector_move}) with **{best_mega}** leading megacaps "
         f"({best_mega_move}). "
@@ -1818,7 +1883,7 @@ def run_page() -> None:
 
     # =====================================================
     # MARKET BREADTH CALCULATION
-    # Single source of truth for stress, scanner, and display.
+    # Independent breadth engine. Regime combines breadth with stress later.
     # =====================================================
 
     breadth_result = calculate_market_breadth(
@@ -1840,7 +1905,10 @@ def run_page() -> None:
     # CORE STRESS SCORE
     # =====================================================
 
-    technical_component = technical_stress_score * 0.70
+    # Technical stress is the base score. Economic and earnings risk are
+    # additive overlays; they should not dilute a dangerous tape when their
+    # scores are zero.
+    technical_component = technical_stress_score
     economic_component = economic_score * 0.15
     earnings_component = earnings_score * 0.15
 
@@ -1853,7 +1921,7 @@ def run_page() -> None:
     )
 
     stress_score = max(
-        0,
+        5,
         min(
             stress_score,
             100,
@@ -1861,26 +1929,16 @@ def run_page() -> None:
     )
 
     # =====================================================
-    # BREADTH-ADJUSTED STRESS SCORE
+    # INDEPENDENT STRESS SCORE
     # =====================================================
-
-    if breadth_score < 25:
-        stress_score = max(
-            stress_score,
-            75,
-        )
-
-    elif breadth_score < 40:
-        stress_score = max(
-            stress_score,
-            65,
-        )
-
-    elif breadth_score < 55:
-        stress_score = max(
-            stress_score,
-            55,
-        )
+    # Stress now answers one question only:
+    # "How dangerous is the market environment?"
+    #
+    # Breadth is intentionally NOT allowed to overwrite stress here.
+    # Breadth remains its own diagnostic engine, and the Regime Engine
+    # below is the only place where stress + breadth are combined into
+    # a trading decision. This reduces repeated conclusions across the
+    # Stress, Breadth, and Regime dashboards.
 
     if stress_score >= 80:
         stress_label = "Severe Stress"
@@ -1916,13 +1974,80 @@ def run_page() -> None:
         "Mixed",
     )
 
-    if breadth_score < 25:
+    # =====================================================
+    # REGIME ENGINE
+    # =====================================================
+    # Regime is the decision layer. It combines independent diagnostics:
+    # - Stress: market danger / volatility / event risk
+    # - Breadth: participation health
+    # - Confidence: conviction behind the active market event
+    # - Overall regime: leadership / rotation read
+    #
+    # This keeps Stress and Breadth educationally separate while still
+    # producing one clear scanner/trading posture. Confidence now prevents
+    # the engine from calling full Risk-On when the tape is calm but the
+    # signal conviction is still only moderate.
+
+    event_confidence = float(
+        getattr(
+            event,
+            "confidence",
+            0,
+        )
+        or 0
+    )
+
+    confidence_label = confidence_state(event_confidence)
+
+    scanner_regime_reason = ""
+
+    if stress_score >= 80 and breadth_score < 40:
+
+        scanner_playbook = "SEVERE STRESS + WEAK BREADTH"
+        scanner_regime = "DEFENSIVE"
+        scanner_buy_allowed = False
+        scanner_sell_allowed = True
+        scanner_execution_multiplier = 0.50
+        scanner_regime_reason = (
+            f"Stress is severe ({stress_score}/100) and breadth is weak "
+            f"({breadth_score:.1f}/100). Capital protection takes priority."
+        )
+
+    elif stress_score >= 70:
+
+        scanner_playbook = "HIGH STRESS"
+        scanner_regime = "RISK_OFF"
+        scanner_buy_allowed = False
+        scanner_sell_allowed = True
+        scanner_execution_multiplier = 0.50
+        scanner_regime_reason = (
+            f"Stress is high ({stress_score}/100). New long exposure is reduced "
+            "until risk cools."
+        )
+
+    elif breadth_score < 25:
 
         scanner_playbook = "BREADTH DAMAGE"
         scanner_regime = "DEFENSIVE"
         scanner_buy_allowed = False
         scanner_sell_allowed = True
         scanner_execution_multiplier = 0.50
+        scanner_regime_reason = (
+            f"Breadth is damaged ({breadth_score:.1f}/100). Participation is "
+            "too weak for normal long exposure."
+        )
+
+    elif stress_score >= 40 and breadth_score < 40:
+
+        scanner_playbook = "STRESS + WEAK BREADTH"
+        scanner_regime = "CAUTIOUS"
+        scanner_buy_allowed = True
+        scanner_sell_allowed = True
+        scanner_execution_multiplier = 0.65
+        scanner_regime_reason = (
+            f"Stress is elevated ({stress_score}/100) and breadth is weak "
+            f"({breadth_score:.1f}/100). Trade selectively with reduced size."
+        )
 
     elif breadth_score < 40:
 
@@ -1931,38 +2056,69 @@ def run_page() -> None:
         scanner_buy_allowed = True
         scanner_sell_allowed = True
         scanner_execution_multiplier = 0.65
+        scanner_regime_reason = (
+            f"Breadth is weak ({breadth_score:.1f}/100). Stress may be contained, "
+            "but participation is not broad enough for normal aggression."
+        )
 
-    elif breadth_score < 55:
+    elif stress_score >= 40:
 
-        scanner_playbook = "SELECTIVE MARKET"
+        scanner_playbook = "SELECTIVE / CAUTION"
         scanner_regime = "SELECTIVE"
         scanner_buy_allowed = True
         scanner_sell_allowed = True
         scanner_execution_multiplier = 0.75
+        scanner_regime_reason = (
+            f"Stress is moderate or higher ({stress_score}/100). Setups can be "
+            "traded, but position size should stay reduced."
+        )
 
-    elif stress_score >= 70:
+    elif breadth_score < 55:
 
-        scanner_playbook = "INSTITUTIONAL RISK OFF"
-        scanner_regime = "RISK_OFF"
-        scanner_buy_allowed = False
-        scanner_sell_allowed = True
-        scanner_execution_multiplier = 0.50
-
-    elif stress_score >= 40:
-
-        scanner_playbook = "CAUTION"
-        scanner_regime = "NEUTRAL"
+        scanner_playbook = "SELECTIVE / MIXED BREADTH"
+        scanner_regime = "SELECTIVE"
         scanner_buy_allowed = True
         scanner_sell_allowed = True
         scanner_execution_multiplier = 0.75
+        scanner_regime_reason = (
+            f"Stress is low ({stress_score}/100), but breadth is only mixed "
+            f"({breadth_score:.1f}/100). Favor confirmed leaders only."
+        )
 
-    elif overall_regime == "Risk-On":
+    elif (
+        stress_score < 25
+        and breadth_score >= 65
+        and event_confidence >= 65
+        and overall_regime == "Risk-On"
+    ):
 
         scanner_playbook = "RISK ON"
         scanner_regime = "RISK_ON"
         scanner_buy_allowed = True
         scanner_sell_allowed = True
         scanner_execution_multiplier = 1.00
+        scanner_regime_reason = (
+            f"Stress is low ({stress_score}/100), breadth is strong "
+            f"({breadth_score:.1f}/100), confidence is high "
+            f"({event_confidence:.0f}%), and leadership confirms Risk-On."
+        )
+
+    elif (
+        stress_score < 40
+        and breadth_score >= 55
+        and event_confidence >= 50
+    ):
+
+        scanner_playbook = "CONSTRUCTIVE / SELECTIVE"
+        scanner_regime = "SELECTIVE"
+        scanner_buy_allowed = True
+        scanner_sell_allowed = True
+        scanner_execution_multiplier = 0.75
+        scanner_regime_reason = (
+            f"Stress is low ({stress_score}/100) and breadth is constructive "
+            f"({breadth_score:.1f}/100), but confidence is only "
+            f"{event_confidence:.0f}%. Use selective exposure until confirmation improves."
+        )
 
     else:
 
@@ -1971,6 +2127,11 @@ def run_page() -> None:
         scanner_buy_allowed = True
         scanner_sell_allowed = True
         scanner_execution_multiplier = 1.00
+        scanner_regime_reason = (
+            f"Stress is {stress_score}/100, breadth is {breadth_score:.1f}/100, "
+            f"and confidence is {event_confidence:.0f}%. Conditions are mixed, so "
+            "normal trading is allowed but should wait for clearer confirmation."
+        )
 
     # =====================================================
     # MARKET DECISION SUPPORT v42
@@ -1999,6 +2160,7 @@ def run_page() -> None:
     st.session_state["market_reaction_confidence"] = float(
         getattr(event, "confidence", 0) or 0
     )
+    st.session_state["market_reaction_confidence_label"] = confidence_label
     st.session_state["market_reaction_event"] = str(
         getattr(event, "label", "") or ""
     )
@@ -2017,6 +2179,7 @@ def run_page() -> None:
         breadth_score
     )
     st.session_state["market_reaction_breadth_state"] = breadth_state
+    st.session_state["market_reaction_regime_reason"] = scanner_regime_reason
 
     summary = build_market_summary(
         event,
@@ -2243,28 +2406,19 @@ def run_page() -> None:
         )
 
         help_text(
-            "Stress Score combines technical stress, economic risk, "
-            "earnings risk, and breadth deterioration. Higher scores "
-            "require more caution."
+            "Stress Score measures technical market danger, with economic "
+            "and earnings risk added as overlays. Breadth is not included "
+            "here; it is combined later in the Regime Engine."
         )
 
-        breadth_overlay_component = max(
-            0,
-            stress_score - int(
-                round(
-                    technical_component
-                    + economic_component
-                    + earnings_component
-                )
-            ),
-        )
+        breadth_overlay_component = 0
 
         stress_df = pd.DataFrame(
             [
                 {
                     "Component": "Technical Stress",
                     "Raw Score": technical_stress_score,
-                    "Weight": "70%",
+                    "Weight": "Base",
                     "Weighted Contribution": round(
                         technical_component,
                         2,
@@ -2294,8 +2448,8 @@ def run_page() -> None:
                         breadth_score,
                         1,
                     ),
-                    "Weight": "Overlay",
-                    "Weighted Contribution": breadth_overlay_component,
+                    "Weight": "Regime Only",
+                    "Weighted Contribution": 0,
                 },
                 {
                     "Component": "Final Market Stress",
@@ -2340,7 +2494,12 @@ def run_page() -> None:
 
         pulse_metric_grid(
             [
-                {"label": "Event Confidence", "value": f"{event.confidence}%", "tone": "info"},
+                {
+                    "label": "Event Confidence",
+                    "value": f"{event.confidence}%",
+                    "detail": confidence_state(event.confidence),
+                    "tone": "info",
+                },
                 {"label": "Market Stress", "value": f"{stress_score}/100", "detail": stress_label, "tone": stress_tone(stress_score)},
                 {
                     "label": "Buy-The-Dip",
@@ -3674,6 +3833,7 @@ def run_page() -> None:
             pulse_metric_card(
                 "Confidence",
                 f"{event.confidence}%",
+                confidence_state(event.confidence),
                 tone="info",
             )
 
@@ -3697,6 +3857,8 @@ def run_page() -> None:
                 "No decision guidance available.",
             )
         )
+
+        st.caption(f"Regime reason: {scanner_regime_reason}")
 
         # =====================================================
         # REGIME GUIDANCE SOURCE
@@ -3932,7 +4094,7 @@ def run_page() -> None:
                 {
                     "label": "Confidence",
                     "value": f"{getattr(event, 'confidence', 0):.0f}%",
-                    "detail": "Signal confidence.",
+                    "detail": confidence_state(getattr(event, "confidence", 0)),
                     "tone": "info",
                 },
                 {
@@ -3976,12 +4138,20 @@ def run_page() -> None:
                     "Reading": scanner_playbook,
                 },
                 {
+                    "Metric": "Regime Reason",
+                    "Reading": scanner_regime_reason,
+                },
+                {
                     "Metric": "Stress Score",
                     "Reading": f"{stress_score}/100",
                 },
                 {
                     "Metric": "Breadth Score",
                     "Reading": f"{breadth_score:.1f}/100",
+                },
+                {
+                    "Metric": "Confidence State",
+                    "Reading": confidence_label,
                 },
                 {
                     "Metric": "Breadth State",
@@ -4001,6 +4171,8 @@ def run_page() -> None:
                 },
             ]
         )
+
+        st.caption(f"Regime reason: {scanner_regime_reason}")
 
         with st.expander(
             "Regime Details",

@@ -57,3 +57,59 @@ def delete_position(user_id, symbol):
         .eq("symbol", symbol)
         .execute()
     )
+
+# =====================================================
+# JOURNAL ENTRIES
+# =====================================================
+
+def load_journal_entries(user_id):
+    supabase = get_supabase_client()
+
+    result = (
+        supabase.table("journal_entries")
+        .select("*")
+        .eq("user_id", user_id)
+        .order("timestamp", desc=True)
+        .execute()
+    )
+
+    return result.data or []
+
+
+def insert_journal_entry(payload):
+    supabase = get_supabase_client()
+
+    return (
+        supabase.table("journal_entries")
+        .insert(payload)
+        .execute()
+    )
+
+
+# =====================================================
+# JOURNAL REVIEWS
+# =====================================================
+
+def load_journal_reviews(user_id):
+    supabase = get_supabase_client()
+
+    result = (
+        supabase.table("journal_reviews")
+        .select("*")
+        .eq("user_id", user_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+
+    return result.data or []
+
+
+def insert_journal_review(payload):
+    supabase = get_supabase_client()
+
+    return (
+        supabase.table("journal_reviews")
+        .insert(payload)
+        .execute()
+    )
+

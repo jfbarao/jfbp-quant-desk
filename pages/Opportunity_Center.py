@@ -230,6 +230,44 @@ def tone_palette(tone: str) -> tuple[str, str, str]:
     return palette.get(str(tone), palette["neutral"])
 
 
+def opportunity_grade(score: Any, rating: Any = "", signal: Any = "") -> tuple[str, str, str]:
+    """Quality of the opportunity, independent from final execution readiness."""
+    s = safe_float(score, 0.0)
+    r = str(rating or "").upper().strip()
+    sig = str(signal or "").upper().strip()
+
+    if sig in {"AVOID", "STRONG SELL"}:
+        return "🔴 AVOID", "risk", "Opportunity quality is weak or adverse."
+    if s >= 85 or (s >= 75 and r in {"A+", "A", "A-"}):
+        return "🟢 TRADEABLE", "good", "High-quality candidate worth considering."
+    if s >= 60:
+        return "🟡 DEVELOPING", "warning", "Candidate is forming but still needs confirmation."
+    return "⚪ MONITOR", "neutral", "Watch only until the opportunity improves."
+
+
+def institutional_grade(status: Any, score: Any = 0, executable: bool = False, blocked: bool = False) -> tuple[str, str, str]:
+    """Execution readiness after institutional-style risk and process gates."""
+    status_text = str(status or "").upper().strip()
+    s = safe_float(score, 0.0)
+
+    if blocked or "BLOCK" in status_text or "AVOID" in status_text:
+        return "🔴 BLOCKED", "risk", "Risk controls do not allow execution."
+    if executable or "EXECUTABLE" in status_text or "ALLOWED" in status_text or s >= 80:
+        return "🔵 READY", "good", "Execution criteria are sufficiently aligned."
+    if s >= 60 or "BUY" in status_text or "WATCH" in status_text or "PENDING CONFIRMATION" in status_text or "INFERRED" in status_text:
+        return "🟡 PENDING CONFIRMATION", "warning", "Opportunity exists, but full institutional confirmation is not complete."
+    return "⚪ STAND BY", "neutral", "Insufficient confirmation for deployment."
+
+
+def grade_explainer() -> str:
+    return (
+        "**JFBP Quant Desk protects capital first and pursues opportunity second.** "
+        "A symbol can be a strong opportunity while still not meeting full institutional execution standards. "
+        "**Opportunity Grade** answers: *Is this worth considering?* "
+        "**Institutional Grade** answers: *Is it ready for capital deployment?*"
+    )
+
+
 def inject_css() -> None:
     st.markdown(
         """
@@ -346,7 +384,7 @@ def inject_css() -> None:
 
             .oc-rank-table {
                 width: 100%;
-                min-width: 920px;
+                min-width: 1120px;
                 border-collapse: collapse;
                 table-layout: fixed;
                 font-size: 0.92rem;
@@ -385,6 +423,8 @@ def inject_css() -> None:
             .oc-rank-col-setup { width: 175px; }
             .oc-rank-col-score { width: 70px; text-align: right; }
             .oc-rank-col-status { width: 130px; }
+            .oc-rank-col-opportunity-grade { width: 150px; }
+            .oc-rank-col-institutional-grade { width: 165px; }
             .oc-rank-col-reason { width: 300px; }
             .oc-rank-col-size { width: 80px; text-align: right; }
             .oc-rank-col-handoff { width: 135px; }
@@ -799,7 +839,7 @@ def options_opportunity_snapshot(scanner: Dict[str, Any]) -> Dict[str, Any]:
         "display": f"{best_symbol} {strategy}",
         "score": options_score,
         "allowed": allowed,
-        "status": "Inferred" if allowed else "Wait",
+        "status": "Inferred" if allowed else "PENDING CONFIRMATION",
         "reason": "Inferred from Scanner leader. Open Options Center to confirm structure, strike, volatility, and liquidity.",
         "freshness": "Inferred now",
         "tone": "good" if allowed and options_score >= 80 else "warning" if allowed else "neutral",
@@ -930,6 +970,8 @@ def build_global_opportunity_rows(scanner: Dict[str, Any]) -> List[Dict[str, Any
         status = "🟢 Executable" if executable else f"🟡 {recommendation}"
         if recommendation in {"AVOID", "SELL"} and not executable:
             status = f"🔴 {recommendation}" if recommendation == "AVOID" else f"🟡 {recommendation}"
+        opp_label, _, _ = opportunity_grade(score, rating, recommendation)
+        inst_label, _, _ = institutional_grade(status, score, executable=executable, blocked="🔴" in status)
 
         rows.append(
             {
@@ -939,6 +981,8 @@ def build_global_opportunity_rows(scanner: Dict[str, Any]) -> List[Dict[str, Any
                 "Setup": recommendation,
                 "Score": round(score, 1),
                 "Status": status,
+                "Opportunity Grade": opp_label,
+                "Institutional Grade": inst_label,
                 "Reason": f"{sector} | Rating {rating} | Event risk {event_label}",
                 "Size": fmt_multiplier(market.get("execution_multiplier", 1.0)),
                 "Handoff": "Trade Command",
@@ -950,6 +994,8 @@ def build_global_opportunity_rows(scanner: Dict[str, Any]) -> List[Dict[str, Any
         strategy, detail, allowed, tone = option_strategy_for_row(source_row, market)
         if strategy not in {"No Options", "No Options Trade"}:
             option_score = min(100.0, max(0.0, score + (8 if str(rating).upper() in {"A+", "A", "A-"} else 0)))
+            opp_label, _, _ = opportunity_grade(option_score, rating, recommendation)
+            inst_label, _, _ = institutional_grade("Allowed" if allowed else "Blocked", option_score, executable=allowed, blocked=not allowed)
             rows.append(
                 {
                     "Asset Class": "Options",
@@ -958,6 +1004,8 @@ def build_global_opportunity_rows(scanner: Dict[str, Any]) -> List[Dict[str, Any
                     "Setup": strategy,
                     "Score": round(option_score, 1),
                     "Status": "🟢 Allowed" if allowed else "🔴 Blocked",
+                    "Opportunity Grade": opp_label,
+                    "Institutional Grade": inst_label,
                     "Reason": detail,
                     "Size": fmt_multiplier(1.0),
                     "Handoff": "Options Center",
@@ -970,6 +1018,8 @@ def build_global_opportunity_rows(scanner: Dict[str, Any]) -> List[Dict[str, Any
     opt = options_opportunity_snapshot(scanner)
     opt_symbol = str(opt.get("symbol") or "").upper().strip()
     if opt.get("display") != "Not Loaded" and safe_float(opt.get("score"), 0.0) > 0:
+        opp_label, _, _ = opportunity_grade(opt.get("score"), "", opt.get("strategy"))
+        inst_label, _, _ = institutional_grade("Allowed" if opt.get("allowed") else opt.get("status"), opt.get("score"), executable=bool(opt.get("allowed")), blocked=False)
         rows.append(
             {
                 "Asset Class": "Options",
@@ -978,6 +1028,8 @@ def build_global_opportunity_rows(scanner: Dict[str, Any]) -> List[Dict[str, Any
                 "Setup": opt.get("strategy"),
                 "Score": round(safe_float(opt.get("score"), 0.0), 1),
                 "Status": "🟢 Allowed" if opt.get("allowed") else f"🟡 {opt.get('status')}",
+                "Opportunity Grade": opp_label,
+                "Institutional Grade": inst_label,
                 "Reason": opt.get("reason"),
                 "Size": fmt_multiplier(1.0),
                 "Handoff": "Options Center",
@@ -1007,6 +1059,8 @@ def build_global_opportunity_rows(scanner: Dict[str, Any]) -> List[Dict[str, Any
         elif fresh_tone == "risk":
             adjusted_score = min(adjusted_score, 59.0)
 
+        opp_label, _, _ = opportunity_grade(adjusted_score, "", row.get("regime"))
+        inst_label, _, _ = institutional_grade("Allowed" if allowed else "Blocked", adjusted_score, executable=allowed, blocked=not allowed)
         rows.append(
             {
                 "Asset Class": label,
@@ -1015,6 +1069,8 @@ def build_global_opportunity_rows(scanner: Dict[str, Any]) -> List[Dict[str, Any
                 "Setup": row.get("regime", "UNKNOWN"),
                 "Score": round(adjusted_score, 1),
                 "Status": "🟢 Allowed" if allowed else "🔴 Blocked",
+                "Opportunity Grade": opp_label,
+                "Institutional Grade": inst_label,
                 "Reason": f"{pulse_allowed_reason(row)} | {freshness}",
                 "Size": fmt_multiplier(row.get("execution_multiplier", 1.0)),
                 "Handoff": f"{label} Pulse",
@@ -1058,6 +1114,8 @@ def opportunity_ranking_table(scanner: Dict[str, Any]) -> pd.DataFrame:
                     "Setup": "Waiting",
                     "Score": "",
                     "Status": "Waiting for data",
+                    "Opportunity Grade": "—",
+                    "Institutional Grade": "—",
                     "Reason": "No published opportunities yet.",
                     "Size": "",
                     "Handoff": "",
@@ -1065,7 +1123,7 @@ def opportunity_ranking_table(scanner: Dict[str, Any]) -> pd.DataFrame:
             ]
         )
 
-    cols = ["Rank", "Asset Class", "Opportunity", "Setup", "Score", "Status", "Reason", "Size", "Handoff"]
+    cols = ["Rank", "Asset Class", "Opportunity", "Setup", "Score", "Status", "Opportunity Grade", "Institutional Grade", "Reason", "Size", "Handoff"]
     return pd.DataFrame(rows)[cols]
 
 
@@ -1162,6 +1220,8 @@ def render_commander_opportunity(best_row: Dict[str, Any]) -> None:
         handoff = "Workflow"
         tone = "neutral"
         reason = "No published opportunity yet."
+        opportunity_grade_text = "—"
+        institutional_grade_text = "—"
     else:
         title = str(best_row.get("Opportunity", "N/A"))
         asset = str(best_row.get("Asset Class", "N/A"))
@@ -1170,7 +1230,9 @@ def render_commander_opportunity(best_row: Dict[str, Any]) -> None:
         size = str(best_row.get("Size", "N/A"))
         handoff = str(best_row.get("Handoff", "Workflow"))
         reason = str(best_row.get("Reason", ""))
-        tone = "good" if "🟢" in status else "risk" if "🔴" in status else "warning"
+        opportunity_grade_text = str(best_row.get("Opportunity Grade", "—"))
+        institutional_grade_text = str(best_row.get("Institutional Grade", "—"))
+        tone = "good" if "🟢" in opportunity_grade_text or "🔵" in institutional_grade_text else "risk" if "🔴" in status else "warning"
 
     bg, border, color = tone_palette(tone)
     st.subheader("🏆 Commander Opportunity")
@@ -1183,6 +1245,8 @@ def render_commander_opportunity(best_row: Dict[str, Any]) -> None:
         <strong>Asset:</strong> {html.escape(asset)} ·
         <strong>Score:</strong> {html.escape(score)} ·
         <strong>Status:</strong> {html.escape(status)} ·
+        <strong>Opportunity Grade:</strong> {html.escape(opportunity_grade_text)} ·
+        <strong>Institutional Grade:</strong> {html.escape(institutional_grade_text)} ·
         <strong>Size:</strong> {html.escape(size)}
     </div>
     <div class="oc-hero-action">Next action: {html.escape(handoff)} — {html.escape(reason)}</div>
@@ -1207,7 +1271,7 @@ def render_elite_candidates(ranking_rows: List[Dict[str, Any]], max_items: int =
             {
                 "title": f"#{idx} · {row.get('Asset Class', 'N/A')}",
                 "value": row.get("Opportunity", "N/A"),
-                "detail": f"Score {row.get('Score', 'N/A')} | {row.get('Status', 'Waiting')} | Next: {row.get('Handoff', '')}",
+                "detail": f"Score {row.get('Score', 'N/A')} | Opportunity {row.get('Opportunity Grade', '—')} | Institutional {row.get('Institutional Grade', '—')} | Next: {row.get('Handoff', '')}",
                 "tone": tone,
             }
         )
@@ -1269,6 +1333,8 @@ def render_global_ranking_table(df: pd.DataFrame, height: int = 390) -> None:
         "Setup": "oc-rank-col-setup",
         "Score": "oc-rank-col-score",
         "Status": "oc-rank-col-status",
+        "Opportunity Grade": "oc-rank-col-opportunity-grade",
+        "Institutional Grade": "oc-rank-col-institutional-grade",
         "Reason": "oc-rank-col-reason",
         "Size": "oc-rank-col-size",
         "Handoff": "oc-rank-col-handoff",
@@ -1382,6 +1448,7 @@ def run_page() -> None:
                 st.rerun()
 
     freshness_panel()
+    st.info(grade_explainer())
 
     # =====================================================
     # COMMANDER OPPORTUNITY HERO
@@ -1410,7 +1477,8 @@ def run_page() -> None:
                     "value": scanner.get("best_symbol", "Run Scanner"),
                     "detail": (
                         f"{scanner.get('best_sector')} | Recommendation: {scanner.get('best_recommendation')} | "
-                        f"Executable: {scanner.get('executable')} | Blocked Shorts: {scanner.get('blocked_shorts')}"
+                        f"Opportunity: {opportunity_grade(scanner.get('best_score'), scanner.get('best_rating'), scanner.get('best_recommendation'))[0]} | "
+                        f"Institutional: {'🔵 READY' if safe_int(scanner.get('executable')) > 0 else '🟡 PENDING CONFIRMATION'} | Blocked Shorts: {scanner.get('blocked_shorts')}"
                     ),
                     "tone": "good" if safe_int(scanner.get("executable")) > 0 else "warning",
                 },

@@ -7,12 +7,12 @@
     "ARM": "WATCH",
     "AVGO": "WATCH",
     "DIA": "WATCH",
-    "GOOGL": "WATCH",
+    "GOOGL": "SELL",
     "IWM": "WATCH",
     "JPM": "WATCH",
-    "META": "WATCH",
-    "MSFT": "WATCH",
-    "NVDA": "WATCH",
+    "META": "SELL",
+    "MSFT": "SELL",
+    "NVDA": "SELL",
     "QQQ": "WATCH",
     "SPY": "WATCH"
   },
@@ -21,11 +21,12 @@
     "last_scan_buy_symbols": [],
     "last_scan_duplicates_blocked": 0,
     "last_scan_errors": 0,
-    "last_scan_finished": "2026-06-20T02:35:22+00:00",
-    "last_scan_id": "2026-06-20T023520_0000",
+    "last_scan_finished": "2026-06-24T20:23:02+00:00",
+    "last_scan_id": "2026-06-24T202300_0000",
     "last_scan_interval_minutes": 5,
     "last_scan_recommendation_counts": {
-      "WATCH": 14
+      "SELL": 4,
+      "WATCH": 10
     },
     "last_scan_rows": 14,
     "last_scan_sector_counts": {
@@ -37,9 +38,10 @@
       "Technology": 3
     },
     "last_scan_signal_counts": {
-      "NO TRADE": 14
+      "NO TRADE": 10,
+      "SELL": 4
     },
-    "last_scan_started": "2026-06-20T02:35:20+00:00",
+    "last_scan_started": "2026-06-24T20:23:00+00:00",
     "last_scan_status": "OK",
     "last_scan_symbol_count": 14,
     "watcher_version": "v3.0-analytics"

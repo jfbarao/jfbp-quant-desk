@@ -1,9 +1,9 @@
 {
   "cwd": "/Users/josepereira/rs_clean",
-  "pid": 4746,
-  "python": "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+  "pid": 71282,
+  "python": "/Users/josepereira/rs_clean/venv/bin/python3.11",
   "script": "/Users/josepereira/rs_clean/core/Signal_Watcher_v3_Analytics.py",
-  "started_at": "2026-06-14 19:50:32",
+  "started_at": "2026-06-24 07:58:44",
   "status": "STARTED",
   "stderr_log": "/Users/josepereira/rs_clean/data/signal_watcher_process_stderr.log",
   "stdout_log": "/Users/josepereira/rs_clean/data/signal_watcher_process_stdout.log",

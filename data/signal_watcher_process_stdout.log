@@ -2606,3 +2606,140 @@ No OMS. No IBKR. No orders. Alerts only.
 [2026-06-19 19:30:20] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=14
 [2026-06-19 19:35:20] Signal Watcher scan started: 14 symbols
 [2026-06-19 19:35:22] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=14
+======================================================================
+JFBP Signal Watcher v3.0-analytics
+Interval: 5 minute(s)
+Telegram enabled: True
+Dry run: False
+No OMS. No IBKR. No orders. Alerts only.
+======================================================================
+[2026-06-24 07:58:47] Signal Watcher scan started: 14 symbols
+[2026-06-24 07:58:49] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=14
+[2026-06-24 08:03:49] Signal Watcher scan started: 14 symbols
+[2026-06-24 08:03:51] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=14
+[2026-06-24 08:08:54] Signal Watcher scan started: 14 symbols
+[2026-06-24 08:08:55] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=14
+[2026-06-24 08:13:59] Signal Watcher scan started: 14 symbols
+[2026-06-24 08:14:01] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=14
+[2026-06-24 08:19:04] Signal Watcher scan started: 14 symbols
+[2026-06-24 08:19:06] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=14
+[2026-06-24 08:24:09] Signal Watcher scan started: 14 symbols
+[2026-06-24 08:24:10] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=14
+[2026-06-24 08:29:14] Signal Watcher scan started: 14 symbols
+[2026-06-24 08:29:16] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=14
+[2026-06-24 08:34:19] Signal Watcher scan started: 14 symbols
+[2026-06-24 08:34:21] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=14
+[2026-06-24 08:39:21] Signal Watcher scan started: 14 symbols
+[2026-06-24 08:39:24] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=14
+[2026-06-24 08:44:27] Signal Watcher scan started: 14 symbols
+[2026-06-24 08:44:30] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=13
+[2026-06-24 08:49:30] Signal Watcher scan started: 14 symbols
+[2026-06-24 08:49:32] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=13
+[2026-06-24 08:54:35] Signal Watcher scan started: 14 symbols
+[2026-06-24 08:54:37] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=14
+[2026-06-24 08:59:40] Signal Watcher scan started: 14 symbols
+[2026-06-24 08:59:41] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=14
+[2026-06-24 09:04:45] Signal Watcher scan started: 14 symbols
+[2026-06-24 09:04:46] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=13
+[2026-06-24 09:09:47] Signal Watcher scan started: 14 symbols
+[2026-06-24 09:09:48] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=13
+[2026-06-24 09:14:52] Signal Watcher scan started: 14 symbols
+[2026-06-24 09:14:53] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=14
+[2026-06-24 09:19:56] Signal Watcher scan started: 14 symbols
+[2026-06-24 09:19:58] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=14
+[2026-06-24 09:24:58] Signal Watcher scan started: 14 symbols
+[2026-06-24 09:25:00] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=13
+[2026-06-24 09:30:00] Signal Watcher scan started: 14 symbols
+[2026-06-24 09:30:03] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=13
+[2026-06-24 09:35:03] Signal Watcher scan started: 14 symbols
+[2026-06-24 09:35:06] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=13
+[2026-06-24 09:40:09] Signal Watcher scan started: 14 symbols
+[2026-06-24 09:40:11] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=11
+[2026-06-24 09:45:11] Signal Watcher scan started: 14 symbols
+[2026-06-24 09:45:13] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=11
+[2026-06-24 09:50:13] Signal Watcher scan started: 14 symbols
+[2026-06-24 09:50:15] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=11
+[2026-06-24 09:55:15] Signal Watcher scan started: 14 symbols
+[2026-06-24 09:55:17] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=11
+[2026-06-24 10:00:17] Signal Watcher scan started: 14 symbols
+[2026-06-24 10:00:19] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=11
+[2026-06-24 10:05:22] Signal Watcher scan started: 14 symbols
+[2026-06-24 10:05:24] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=11
+[2026-06-24 10:10:27] Signal Watcher scan started: 14 symbols
+[2026-06-24 10:10:30] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=11
+[2026-06-24 10:15:33] Signal Watcher scan started: 14 symbols
+[2026-06-24 10:15:35] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=11
+[2026-06-24 10:20:35] Signal Watcher scan started: 14 symbols
+[2026-06-24 10:20:36] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=11
+[2026-06-24 10:25:36] Signal Watcher scan started: 14 symbols
+[2026-06-24 10:25:38] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=11
+[2026-06-24 10:30:42] Signal Watcher scan started: 14 symbols
+[2026-06-24 10:30:45] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=11
+[2026-06-24 10:35:45] Signal Watcher scan started: 14 symbols
+[2026-06-24 10:35:47] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=11
+[2026-06-24 10:40:47] Signal Watcher scan started: 14 symbols
+[2026-06-24 10:40:48] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=11
+[2026-06-24 10:45:49] Signal Watcher scan started: 14 symbols
+[2026-06-24 10:45:50] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=10
+[2026-06-24 10:50:52] Signal Watcher scan started: 14 symbols
+[2026-06-24 10:50:56] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=11
+[2026-06-24 10:55:56] Signal Watcher scan started: 14 symbols
+[2026-06-24 10:55:59] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=11
+[2026-06-24 11:00:59] Signal Watcher scan started: 14 symbols
+[2026-06-24 11:01:00] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=10
+[2026-06-24 11:06:01] Signal Watcher scan started: 14 symbols
+[2026-06-24 11:06:02] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=11
+[2026-06-24 11:11:03] Signal Watcher scan started: 14 symbols
+[2026-06-24 11:11:19] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=11
+[2026-06-24 11:16:19] Signal Watcher scan started: 14 symbols
+[2026-06-24 11:16:23] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=11
+[2026-06-24 11:21:23] Signal Watcher scan started: 14 symbols
+[2026-06-24 11:21:25] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=11
+[2026-06-24 11:26:25] Signal Watcher scan started: 14 symbols
+[2026-06-24 11:26:28] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=10
+[2026-06-24 11:31:31] Signal Watcher scan started: 14 symbols
+[2026-06-24 11:31:34] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=10
+[2026-06-24 11:36:34] Signal Watcher scan started: 14 symbols
+[2026-06-24 11:36:36] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=10
+[2026-06-24 11:41:37] Signal Watcher scan started: 14 symbols
+[2026-06-24 11:41:51] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=10
+[2026-06-24 11:46:51] Signal Watcher scan started: 14 symbols
+[2026-06-24 11:46:54] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=9
+[2026-06-24 11:51:57] Signal Watcher scan started: 14 symbols
+[2026-06-24 11:51:59] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=9
+[2026-06-24 11:57:02] Signal Watcher scan started: 14 symbols
+[2026-06-24 11:57:05] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=9
+[2026-06-24 12:02:08] Signal Watcher scan started: 14 symbols
+[2026-06-24 12:02:11] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=9
+[2026-06-24 12:07:15] Signal Watcher scan started: 14 symbols
+[2026-06-24 12:07:18] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=9
+[2026-06-24 12:12:21] Signal Watcher scan started: 14 symbols
+[2026-06-24 12:12:23] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=9
+[2026-06-24 12:17:23] Signal Watcher scan started: 14 symbols
+[2026-06-24 12:17:25] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=9
+[2026-06-24 12:22:25] Signal Watcher scan started: 14 symbols
+[2026-06-24 12:22:27] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=9
+[2026-06-24 12:27:27] Signal Watcher scan started: 14 symbols
+[2026-06-24 12:27:29] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=9
+[2026-06-24 12:32:32] Signal Watcher scan started: 14 symbols
+[2026-06-24 12:32:34] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=9
+[2026-06-24 12:37:34] Signal Watcher scan started: 14 symbols
+[2026-06-24 12:37:36] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=9
+[2026-06-24 12:42:39] Signal Watcher scan started: 14 symbols
+[2026-06-24 12:42:41] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=9
+[2026-06-24 12:47:41] Signal Watcher scan started: 14 symbols
+[2026-06-24 12:47:43] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=9
+[2026-06-24 12:52:43] Signal Watcher scan started: 14 symbols
+[2026-06-24 12:52:44] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=9
+[2026-06-24 12:57:45] Signal Watcher scan started: 14 symbols
+[2026-06-24 12:57:46] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=10
+[2026-06-24 13:02:50] Signal Watcher scan started: 14 symbols
+[2026-06-24 13:02:51] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=10
+[2026-06-24 13:07:54] Signal Watcher scan started: 14 symbols
+[2026-06-24 13:07:56] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=10
+[2026-06-24 13:12:56] Signal Watcher scan started: 14 symbols
+[2026-06-24 13:12:58] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=10
+[2026-06-24 13:17:58] Signal Watcher scan started: 14 symbols
+[2026-06-24 13:18:00] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=10
+[2026-06-24 13:23:00] Signal Watcher scan started: 14 symbols
+[2026-06-24 13:23:02] Scan finished: alerts=0, duplicates=0, errors=0, buys=0, strong_buys=0, watches=10
