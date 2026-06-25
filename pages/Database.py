@@ -1,5 +1,5 @@
 # =========================================================
-# 🗄️ JFBP DATABASE COMMAND CENTER v38.0
+# 🗄️ JFBP DATABASE COMMAND CENTER v39.0
 # FINAL SYSTEM TRUST CENTER — reconciliation, broker sync, runtime recovery, freeze gate
 # =========================================================
 
@@ -134,6 +134,18 @@ def db_metric_grid(cards: list[dict]) -> None:
 
 def db_tip(text: str) -> None:
     st.caption(f"💡 {text}")
+
+
+def grade_from_score(score: int) -> str:
+    if score >= 90:
+        return "A"
+    if score >= 80:
+        return "B"
+    if score >= 70:
+        return "C"
+    if score >= 60:
+        return "D"
+    return "F"
 
 
 def page():
@@ -1064,6 +1076,15 @@ def run_page():
     freeze_ready = all([audit_ok, ledger_ok, runtime_ok, broker_ok, execution_ok, recovery_ok])
     database_score = score_from_checks([audit_ok, ledger_ok, runtime_ok, broker_ok, execution_ok, recovery_ok])
 
+    journal_status = st.session_state.get("journal_status", "UNKNOWN")
+    supabase_status = st.session_state.get("supabase_status", "UNKNOWN")
+    supabase_last_sync = st.session_state.get("supabase_last_sync", "UNKNOWN")
+    supabase_sync_lag = st.session_state.get("supabase_sync_lag_minutes", "UNKNOWN")
+    portfolio_status = "ONLINE" if portfolio_engine else "MISSING"
+    freeze_status = "READY" if freeze_ready else "NOT READY"
+    grade = grade_from_score(database_score)
+    grade_tone = "good" if grade in ("A", "B") else "warning" if grade == "C" else "risk"
+
     if not audit_ok:
         top_weakness = "Audit and portfolio ledger are not aligned."
         recommended_action = "Review Audit ↔ Ledger reconciliation before running repairs or freezing."
@@ -1081,6 +1102,45 @@ def run_page():
         recommended_action = "Database is ready for freeze review."
 
     top_strength = "Audit and portfolio ledger are aligned." if audit_ok and ledger_ok else "Runtime services are online." if runtime_ok else "Database diagnostics are available for review."
+
+    with st.container():
+        st.subheader("📊 Executive Dashboard")
+        st.caption("Top-level readiness metrics for database, recovery, journal, Supabase, portfolio, and freeze status.")
+        st.divider()
+        exec_cols = st.columns(6)
+        exec_cols[0].metric("Database Health", "ONLINE" if audit_store else "MISSING")
+        exec_cols[1].metric("Recovery Status", recovery_state)
+        exec_cols[2].metric("Journal Status", journal_status)
+        exec_cols[3].metric("Supabase Status", supabase_status)
+        exec_cols[4].metric("Portfolio Status", portfolio_status)
+        exec_cols[5].metric("Freeze Readiness", freeze_status)
+        st.divider()
+
+    with st.container():
+        st.subheader("🏅 Commander Assessment")
+        st.caption("Executive grade, top strengths, top risks, and recommended next action for the system.")
+        assessment_cols = st.columns(4)
+        assessment_cols[0].markdown(f"**Overall Grade**\n\n# {grade}\n{database_score}/100")
+        assessment_cols[1].markdown(f"**Top Strength**\n{top_strength}")
+        assessment_cols[2].markdown(f"**Top Risk**\n{top_weakness}")
+        assessment_cols[3].markdown(f"**Recommended Action**\n{recommended_action}")
+        st.divider()
+
+    with st.expander("📈 Business Intelligence", expanded=False):
+        st.subheader("Business Intelligence")
+        st.caption("Database growth, record counts, recovery metrics, runtime performance, and Supabase sync intelligence.")
+        db_metric_grid([
+            {"label": "Audit Events", "value": stats.get("audit_events", 0), "detail": "Total audit records", "tone": "info"},
+            {"label": "Audit Fills", "value": stats.get("audit_fills", 0), "detail": "Durable trade fills", "tone": "good"},
+            {"label": "Ledger Entries", "value": len(ledger), "detail": "Portfolio ledger rows", "tone": "info"},
+            {"label": "Pipeline Results", "value": len(pipeline_results), "detail": "Pipeline rows", "tone": "info"},
+            {"label": "Open Positions", "value": len(active_positions), "detail": "Active portfolio positions", "tone": "info"},
+            {"label": "Runtime Fills", "value": len(runtime_fills), "detail": "Cached OMS fills", "tone": "neutral"},
+            {"label": "Recovery OK", "value": "YES" if recovery_ok else "NO", "detail": recovery_state, "tone": "good" if recovery_ok else "warning"},
+            {"label": "Bootstrap Status", "value": st.session_state.get("bootstrap_recovery_status", "UNKNOWN"), "detail": "Recovery status", "tone": db_tone(st.session_state.get("bootstrap_recovery_status", "UNKNOWN"))},
+            {"label": "Supabase Sync", "value": supabase_status, "detail": f"Lag {supabase_sync_lag}", "tone": db_tone(supabase_status)},
+            {"label": "Last Supabase Sync", "value": supabase_last_sync, "detail": "Sync timestamp", "tone": "info"},
+        ])
 
     st.subheader("🏛 Commander Data Center")
     st.caption("One-glance system trust report, release gate, reconciliation status, and recommended action.")

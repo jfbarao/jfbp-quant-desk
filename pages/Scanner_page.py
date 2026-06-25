@@ -1,6 +1,6 @@
 # =========================================================
-# 📡 JFBP SCANNER PAGE v86.2
-# TRADING DESK LAYOUT + TRADER PRESETS + INDEX + FUTURES + TRUE FOREX UNIVERSES
+# 📡 JFBP SCANNER PAGE v86.3
+# TRADING DESK LAYOUT + SCANNER MODE PLAYBOOKS + INDEX + FUTURES + TRUE FOREX UNIVERSES
 # RESPONSIVE CLEANUP + CUSTOM BATCH + RESEARCH-MODEL SIGNAL TRUTH
 # ACCOUNT-AWARE EQUAL-WEIGHT POSITION SIZING
 # LIVE MODE USES IBKR BROKER POSITIONS ONLY
@@ -936,6 +936,47 @@ def run_page():
             active_universe = fallback_universe()
 
     st.session_state["universe"] = active_universe
+
+    scanner_mode_guidance = {
+        "JFBP": ("JFBP Core", "Saved Quant Desk universe for the main stock scanner workflow."),
+        "FALLBACK": ("Fallback", "Safe built-in symbol list used when the saved universe is unavailable."),
+        "MOMENTUM": ("🚀 Momentum Playbook", "Find strong institutional leaders with accelerating trends and relative strength."),
+        "SWING TRADING": ("📈 Swing Trading Playbook", "Load liquid names suited for multi-day setups with solid trend quality."),
+        "BREAKOUTS": ("💥 Breakout Playbook", "Scan high-relative-strength names that may be pushing through resistance."),
+        "DEFENSIVE": ("🛡 Defensive Playbook", "Focus on lower-beta defensive names for uncertain or risk-off markets."),
+        "DIVIDEND INCOME": ("💰 Dividend Income Playbook", "Load income and dividend-growth ETFs for long-term cash-flow screens."),
+        "AI LEADERS": ("🤖 AI Leaders Playbook", "Track leading AI, semiconductor, cloud, and data-center companies."),
+        "CANADA": ("🍁 Canada Playbook", "Scan Canadian banks, energy, railways, and large-cap growth leaders."),
+        "EARNINGS WATCH": ("📅 Earnings Watch Playbook", "Monitor large-cap stocks where upcoming earnings may change risk."),
+        "INDEXES": ("📊 Indexes", "Broad market ETFs for benchmark, leadership, and regime confirmation."),
+        "FUTURES DASHBOARD": ("🌍 Futures Dashboard", "One macro screen for E-mini, crude, gold, FX, and rates futures."),
+        "INDEX FUTURES": ("📉 Index Futures", "ES, NQ, YM, and RTY futures for equity-index market tone."),
+        "COMMODITY FUTURES": ("🛢 Commodity Futures", "Crude, Brent, gold, silver, gas, and copper futures."),
+        "FX FUTURES": ("💹 FX Futures", "Euro, yen, pound, Canadian dollar, and dollar-index futures."),
+        "RATES FUTURES": ("🏛 Rates Futures", "2Y, 5Y, 10Y, and 30Y Treasury futures for rate-sensitive macro context."),
+        "OIL PULSE": ("🛢 Oil Pulse", "Oil and energy scanner mode. Best used after opening Oil Pulse first."),
+        "GOLD PULSE": ("🥇 Gold Pulse", "Gold, miners, and precious-metal scanner mode. Best used after opening Gold Pulse first."),
+        "CRYPTO PULSE": ("₿ Crypto Pulse", "Bitcoin ETFs, crypto proxies, and miners. Best used after opening Crypto Pulse first."),
+        "FOREX PULSE": ("💱 Forex Pulse", "Major FX pairs and crosses. Best used after opening Forex Pulse first."),
+        "CURRENCY ETFs": ("🏦 Currency ETFs", "UUP, FXE, FXB, FXY, FXC, and CYB as macro currency proxies."),
+        "MAG 7": ("Magnificent 7", "Mega-cap technology leadership universe."),
+        "SEMICONDUCTORS": ("Semiconductors", "AI chips, equipment, foundries, and semiconductor ETFs."),
+        "AI & DATA CENTERS": ("AI & Data Centers", "AI infrastructure, cloud, servers, networking, and power names."),
+        "FINANCIALS": ("Financials", "Banks, brokers, alternative managers, and financial-sector ETFs."),
+        "ENERGY": ("Energy", "Oil majors, E&P, services, and energy ETFs."),
+        "HEALTHCARE": ("Healthcare", "Pharma, medtech, managed care, and healthcare ETF leaders."),
+        "INDUSTRIALS": ("Industrials", "Machinery, aerospace, rails, electrification, and industrial ETFs."),
+        "DIVIDENDS": ("Dividends", "Dividend ETF and Canadian income universe."),
+        "ETF MOMENTUM": ("ETF Momentum", "Major sector and index ETFs ranked by scanner strength."),
+        "HIGH BETA": ("High Beta", "Aggressive, high-volatility names for tactical traders."),
+        "CUSTOM BATCH": ("Custom Batch", "Paste your own ticker list and run the scanner against it."),
+    }
+
+    def scanner_mode_label(mode: str) -> str:
+        return scanner_mode_guidance.get(str(mode or ""), (str(mode or "Scanner Mode"), ""))[0]
+
+    def scanner_mode_note(mode: str) -> str:
+        return scanner_mode_guidance.get(str(mode or ""), ("", "Select a scanner mode, run the scanner, then review the ranked opportunities."))[1]
 
     # =====================================================
     # LOCAL HELPERS
@@ -4501,13 +4542,13 @@ def run_page():
 
     st.title("📡 Scanner")
     st.caption(
-        "Research-model opportunity scanner with trader presets, index/futures universes, responsive layout, and optional custom batch symbols."
+        "Research-model opportunity scanner with one Scanner Mode selector, index/futures universes, responsive layout, and optional custom batch symbols."
     )
 
     scanner_help_expander(
         "How to use this page",
         """
-        **1. Pick a universe or Trader Preset.** Use **INDEXES** for broad market ETFs, **FUTURES DASHBOARD** or the Futures universes for E-mini, commodity, FX, and rates futures, **Trader Presets** for Momentum / Swing Trading / Breakouts / Defensive / Dividend Income / AI Leaders / Canada / Earnings Watch, **Pulse universes** for Oil/Gold/Crypto/Forex, **CURRENCY ETFs** for macro currency ETF proxies, **JFBP** for the saved app universe, **FALLBACK** for the safe built-in list, or **CUSTOM BATCH** to paste your own symbols.
+        **1. Pick a Scanner Mode.** The single **Scanner Mode** selector replaces the old separate universe + preset workflow. Use **Momentum / Swing Trading / Breakouts / Defensive / Dividend Income / AI Leaders / Canada / Earnings Watch** as trading playbooks, **INDEXES** for broad market ETFs, **FUTURES DASHBOARD** or the Futures universes for E-mini, commodity, FX, and rates futures, **Pulse universes** for Oil/Gold/Crypto/Forex, **CURRENCY ETFs** for macro currency ETF proxies, **JFBP** for the saved app universe, **FALLBACK** for the safe built-in list, or **CUSTOM BATCH** to paste your own symbols.
 
         **2. For Gold / Oil / Forex / Crypto, open the matching Pulse page first.** The Pulse page reads the asset-class regime, stress, breadth, execution bias, and best opportunity. Then return to **Scanner**, select the matching universe, and run the scan.
 
@@ -4570,7 +4611,7 @@ def run_page():
 
         with strip_cols[0]:
             selected_universe_mode = st.selectbox(
-                "Universe",
+                "Scanner Mode",
                 universe_options,
                 index=universe_options.index(universe_mode),
                 key="scanner_universe_mode_selector",
@@ -4582,7 +4623,7 @@ def run_page():
                 st.rerun()
 
             st.caption(
-                f"{universe_mode} • {len(active_universe)} symbols"
+                f"{scanner_mode_label(universe_mode)} • {len(active_universe)} symbols"
             )
 
         with strip_cols[1]:
@@ -4856,41 +4897,12 @@ def run_page():
                             "risk but does not change trades."
                         )
 
-    with st.expander("🎯 Trader Presets", expanded=False):
-        preset_cols = responsive_columns(3)
-        preset_groups = [
-            ("Momentum", "Fastest relative-strength names", "MOMENTUM"),
-            ("Swing Trading", "Liquid names for multi-day setups", "SWING TRADING"),
-            ("Breakouts", "High-RS breakout candidates", "BREAKOUTS"),
-            ("Defensive", "Lower-beta defensive watchlist", "DEFENSIVE"),
-            ("Dividend Income", "Income and dividend-growth ETFs", "DIVIDEND INCOME"),
-            ("AI Leaders", "AI and data-center leaders", "AI LEADERS"),
-            ("Canada", "Canadian banks, energy, rails, growth", "CANADA"),
-            ("Earnings Watch", "Large caps to monitor around earnings", "EARNINGS WATCH"),
-            ("Indexes", "SPY, QQQ, IWM, RSP, VTI, global ETFs", "INDEXES"),
-            ("Futures Dashboard", "E-mini, crude, gold, FX, and rates futures", "FUTURES DASHBOARD"),
-            ("Index Futures", "ES, NQ, YM, RTY E-mini contracts", "INDEX FUTURES"),
-            ("Commodity Futures", "Crude, Brent, gold, silver, gas, copper", "COMMODITY FUTURES"),
-            ("Forex Pulse", "EUR/USD, GBP/USD, USD/JPY and major FX crosses", "FOREX PULSE"),
-            ("Currency ETFs", "UUP, FXE, FXB, FXY, FXC, CYB macro proxies", "CURRENCY ETFs"),
-            ("FX Futures", "Euro, yen, pound, CAD, dollar index", "FX FUTURES"),
-            ("Rates Futures", "2Y, 5Y, 10Y, 30Y Treasury futures", "RATES FUTURES"),
-        ]
-
-        for i, (label, note, preset_key) in enumerate(preset_groups):
-            with preset_cols[i % 3]:
-                st.markdown(f"**{label}**")
-                st.caption(note)
-                if st.button(
-                    f"Load {label}",
-                    width="stretch",
-                    key=f"scanner_load_preset_{preset_key.lower().replace(' ', '_')}_v86",
-                ):
-                    st.session_state["scanner_universe_mode"] = preset_key
-                    st.session_state["scanner_universe_mode_selector"] = preset_key
-                    st.session_state["universe"] = scanner_preset_universe(preset_key)
-                    st.session_state["scanner_last_status"] = "REFRESHED"
-                    st.rerun()
+    with st.container(border=True):
+        st.markdown(f"#### {scanner_mode_label(universe_mode)}")
+        st.caption(scanner_mode_note(universe_mode))
+        st.info(
+            "Workflow: choose one Scanner Mode → click Run Scanner → review the ranked opportunities → build the risk-aware plan only after review."
+        )
 
     if selected_universe_mode == "CUSTOM BATCH":
         with st.expander("Custom Batch Symbols", expanded=True):
