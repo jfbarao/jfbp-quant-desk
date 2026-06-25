@@ -10,3 +10,9 @@ __pycache__/
 runtime_state/
 _db_hold/
 signal_log.csv
+# ==========================================
+# Signal Watcher
+# ==========================================
+data/signal_watcher_*.log
+data/signal_watcher_*.csv
+data/signal_watcher_*.json
