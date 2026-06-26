@@ -206,16 +206,16 @@ def inject_journal_css() -> None:
             }
 
             h1 {
-                font-size: clamp(1.9rem, 4vw, 2.55rem) !important;
+                font-size: var(--jfbp-type-h1, clamp(1.75rem, 3.6vw, 2.45rem)) !important;
                 font-weight: 850 !important;
                 line-height: 1.12 !important;
                 color: #1f2937 !important;
             }
 
             h2, h3 {
-                font-size: clamp(1.15rem, 2.4vw, 1.55rem) !important;
+                font-size: var(--jfbp-type-h2, clamp(1.08rem, 2.2vw, 1.45rem)) !important;
                 font-weight: 850 !important;
-                line-height: 1.2 !important;
+                line-height: 1.18 !important;
                 color: #1f2937 !important;
             }
 
@@ -248,23 +248,23 @@ def inject_journal_css() -> None:
             .journal-flow {
                 background: #eff6ff;
                 border: 1px solid #bfdbfe;
-                border-radius: 14px;
-                padding: 1rem;
-                margin: 0.75rem 0 1rem 0;
+                border-radius: 12px;
+                padding: 0.72rem 0.82rem;
+                margin: 0.50rem 0 0.78rem 0;
                 overflow-wrap: break-word;
             }
 
             .journal-card {
                 border-radius: 14px;
-                padding: 0.85rem 0.95rem;
-                min-height: 104px;
-                margin-bottom: 0.65rem;
+                padding: 0.82rem 0.92rem;
+                min-height: 96px;
+                margin-bottom: 0.55rem;
                 overflow-wrap: break-word;
                 word-break: normal;
             }
 
             .journal-card-label {
-                font-size: 0.72rem;
+                font-size: var(--jfbp-type-card-label, 0.72rem);
                 text-transform: uppercase;
                 letter-spacing: 0.04em;
                 color: #64748b;
@@ -273,16 +273,16 @@ def inject_journal_css() -> None:
             }
 
             .journal-card-value {
-                font-size: clamp(1.12rem, 2.2vw, 1.45rem);
+                font-size: var(--jfbp-type-card-value, clamp(1.05rem, 2.2vw, 1.35rem));
                 line-height: 1.15;
-                font-weight: 900;
+                font-weight: 880;
                 overflow-wrap: break-word;
                 word-break: normal;
             }
 
             .journal-card-detail {
                 color: #64748b;
-                font-size: 0.78rem;
+                font-size: var(--jfbp-type-caption, 0.82rem);
                 line-height: 1.35;
                 margin-top: 0.35rem;
             }
@@ -290,9 +290,9 @@ def inject_journal_css() -> None:
             .journal-section-card {
                 background: #ffffff;
                 border: 1px solid #e5e7eb;
-                border-radius: 16px;
-                padding: 1rem;
-                margin: 0.7rem 0 1rem 0;
+                border-radius: 14px;
+                padding: 0.88rem 0.94rem;
+                margin: 0.55rem 0 0.82rem 0;
                 box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
             }
 
@@ -453,10 +453,10 @@ def inject_journal_commander_css() -> None:
             .journal-commander-hero {
                 border: 1px solid #bfdbfe;
                 background: #eff6ff;
-                border-radius: 20px;
-                padding: 1.15rem 1.25rem;
-                margin: 1.0rem 0 1.0rem 0;
-                box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+                border-radius: 18px;
+                padding: 0.88rem 0.92rem;
+                margin: 0.60rem 0 0.82rem 0;
+                box-shadow: 0 2px 10px rgba(15, 23, 42, 0.05);
             }
             .journal-commander-hero.good {
                 border-color: #bbf7d0;
@@ -471,37 +471,38 @@ def inject_journal_commander_css() -> None:
                 background: #fef2f2;
             }
             .journal-commander-kicker {
-                font-size: 0.72rem;
-                letter-spacing: 0.08em;
+                font-size: var(--jfbp-type-card-label, 0.72rem);
+                letter-spacing: 0.055em;
                 text-transform: uppercase;
                 color: #64748b;
-                font-weight: 950;
-                margin-bottom: 0.25rem;
+                font-weight: 850;
+                margin-bottom: 0.24rem;
             }
             .journal-commander-title {
-                font-size: clamp(1.8rem, 4vw, 3.0rem);
-                line-height: 1.02;
-                font-weight: 950;
+                font-size: clamp(1.22rem, 2.35vw, 1.62rem);
+                line-height: 1.14;
+                font-weight: 880;
                 color: #1d4ed8;
-                margin-bottom: 0.45rem;
+                margin-bottom: 0.30rem;
             }
             .journal-commander-hero.good .journal-commander-title { color: #166534; }
             .journal-commander-hero.warning .journal-commander-title { color: #92400e; }
             .journal-commander-hero.risk .journal-commander-title { color: #991b1b; }
             .journal-commander-summary {
-                font-size: clamp(0.88rem, 1.6vw, 1.02rem);
+                font-size: var(--jfbp-type-body, 0.94rem);
                 color: #1f2937;
-                font-weight: 850;
-                line-height: 1.45;
+                font-weight: 700;
+                line-height: 1.38;
             }
             .journal-commander-action {
-                margin-top: 0.75rem;
+                margin-top: 0.36rem;
                 background: #ffffff;
                 border: 1px solid #dbe3ef;
                 border-radius: 12px;
-                padding: 0.75rem 0.85rem;
+                padding: 0.60rem 0.78rem;
                 color: #111827;
-                font-weight: 850;
+                font-size: var(--jfbp-type-body, 0.94rem);
+                font-weight: 820;
                 line-height: 1.35;
             }
             .journal-quality-row {

@@ -223,15 +223,15 @@ def inject_sidebar_workflow_css() -> None:
 
             .jfbp-sidebar-footer {
                 margin-top: auto;
-                padding-top: 0.95rem;
-                padding-bottom: 0.65rem;
+                padding-top: 0.72rem;
+                padding-bottom: 0.52rem;
                 background: #f8fafc;
                 border-top: 1px solid #d6dbe5;
             }
 
             .jfbp-sidebar-footer-email {
                 margin-top: 0.35rem;
-                font-size: 0.76rem;
+                font-size: 0.74rem;
                 color: #64748b;
                 line-height: 1.25;
                 overflow-wrap: anywhere;
@@ -241,8 +241,8 @@ def inject_sidebar_workflow_css() -> None:
             section[data-testid="stSidebar"] details {
                 background: #f8fafc !important;
                 border: 1px solid #d6dbe5 !important;
-                border-radius: 14px !important;
-                margin: 0.60rem 0 !important;
+                border-radius: 12px !important;
+                margin: 0.42rem 0 !important;
                 padding: 0 !important;
                 overflow: hidden !important;
                 box-shadow: none !important;
@@ -253,15 +253,15 @@ def inject_sidebar_workflow_css() -> None:
             }
 
             section[data-testid="stSidebar"] details > summary {
-                min-height: 2.35rem !important;
-                padding: 0.55rem 0.70rem !important;
+                min-height: 2.10rem !important;
+                padding: 0.46rem 0.72rem !important;
                 border: none !important;
                 border-bottom: 0 !important;
-                font-weight: 900 !important;
-                letter-spacing: 0.035em;
-                text-transform: uppercase;
+                font-weight: 640 !important;
+                letter-spacing: 0.01em;
+                text-transform: none;
                 color: #334155 !important;
-                font-size: 0.74rem !important;
+                font-size: 0.96rem !important;
                 background: #f8fafc !important;
                 box-shadow: none !important;
             }
@@ -271,7 +271,7 @@ def inject_sidebar_workflow_css() -> None:
             }
 
             section[data-testid="stSidebar"] details > div {
-                padding: 0.55rem 0.70rem 0.65rem 0.70rem !important;
+                padding: 0.36rem 0.64rem 0.44rem 0.64rem !important;
             }
 
             section[data-testid="stSidebar"] details::before,
@@ -283,24 +283,26 @@ def inject_sidebar_workflow_css() -> None:
             }
 
             .jfbp-sidebar-caption {
-                margin-top: -0.05rem;
-                margin-bottom: 0.38rem;
-                font-size: 0.72rem;
+                margin-top: 0;
+                margin-bottom: 0.26rem;
+                font-size: 0.76rem;
                 color: #64748b;
-                line-height: 1.25;
+                line-height: 1.35;
             }
 
             section[data-testid="stSidebar"] .stButton > button {
                 width: 100%;
                 justify-content: flex-start;
                 text-align: left;
-                min-height: 1.95rem;
-                border-radius: 10px;
-                font-weight: 700;
-                padding-left: 0.60rem;
-                padding-right: 0.60rem;
-                margin-bottom: 0.16rem;
+                min-height: 2.50rem;
+                border-radius: 9px;
+                font-weight: 620;
+                font-size: 0.90rem;
+                padding-left: 0.64rem;
+                padding-right: 0.64rem;
+                margin-bottom: 0.14rem;
                 white-space: normal;
+                line-height: 1.25;
             }
 
             section[data-testid="stSidebar"] .stButton > button[kind="primary"] {
@@ -315,8 +317,8 @@ def inject_sidebar_workflow_css() -> None:
                 }
 
                 section[data-testid="stSidebar"] .stButton > button {
-                    min-height: 2.35rem;
-                    font-size: 0.92rem;
+                    min-height: 2.40rem;
+                    font-size: 0.88rem;
                 }
             }
         </style>

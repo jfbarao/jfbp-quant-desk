@@ -14,6 +14,9 @@ from typing import Any, Dict, List, Optional
 
 import streamlit as st
 
+from core.responsive import inject_responsive_css
+from core.ui_cards import inject_card_css
+
 try:
     import stripe
 except Exception:  # pragma: no cover
@@ -917,15 +920,19 @@ def inject_saas_css() -> None:
     st.markdown(
         """
         <style>
-            .saas-hero {border:1px solid #bfdbfe;background:linear-gradient(135deg,#eff6ff,#ffffff);border-radius:22px;padding:1.25rem 1.35rem;margin:0.75rem 0 1rem 0;}
-            .saas-kicker {font-size:0.72rem;text-transform:uppercase;letter-spacing:0.08em;color:#64748b;font-weight:950;margin-bottom:0.3rem;}
-            .saas-title {font-size:clamp(1.8rem,4vw,2.8rem);line-height:1.04;font-weight:1000;color:#0f172a;margin-bottom:0.55rem;}
-            .saas-text {font-size:1rem;line-height:1.45;color:#334155;font-weight:750;}
+            .saas-hero {border:1px solid #dbeafe;background:#eff6ff;border-radius:18px;padding:0.82rem 0.9rem;margin:0.50rem auto 0.72rem auto;max-width:760px;}
+            .saas-kicker {font-size:var(--jfbp-type-card-label);text-transform:uppercase;letter-spacing:0.055em;color:#475569;font-weight:850;margin-bottom:0.22rem;}
+            .saas-title {font-size:clamp(1.22rem,2.35vw,1.62rem);line-height:1.14;font-weight:880;color:#0f172a;margin-bottom:0.30rem;}
+            .saas-text {font-size:var(--jfbp-type-body);line-height:1.38;color:#334155;font-weight:700;margin-bottom:0;}
+            .saas-auth-form {max-width:420px;margin:0 auto;}
+            div[data-testid="stForm"] {max-width:420px;margin-left:auto;margin-right:auto;}
+            div[data-testid="stTextInput"] input {min-height:40px;padding:0.66rem 0.80rem;border-radius:10px;}
+            .stButton>button {min-height:40px;border-radius:11px;font-size:0.92rem;}
             .saas-card-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr));gap:0.85rem;margin:0.7rem 0 1rem 0;}
             .saas-card {border:1px solid #dbe3ef;border-radius:16px;background:#f8fafc;padding:0.9rem 1rem;min-height:105px;}
-            .saas-label {font-size:0.72rem;color:#64748b;letter-spacing:0.05em;text-transform:uppercase;font-weight:900;margin-bottom:0.35rem;}
-            .saas-value {font-size:1.35rem;line-height:1.12;color:#111827;font-weight:950;overflow-wrap:anywhere;}
-            .saas-detail {margin-top:0.35rem;color:#475569;font-size:0.82rem;line-height:1.35;}
+            .saas-label {font-size:var(--jfbp-type-card-label);color:#64748b;letter-spacing:0.05em;text-transform:uppercase;font-weight:850;margin-bottom:0.30rem;}
+            .saas-value {font-size:var(--jfbp-type-card-value);line-height:1.14;color:#111827;font-weight:880;overflow-wrap:anywhere;}
+            .saas-detail {margin-top:0.30rem;color:#475569;font-size:var(--jfbp-type-caption);line-height:1.35;}
             .saas-lock {border:1px solid #fecaca;background:#fef2f2;border-radius:18px;padding:1rem;margin:1rem 0;}
             .saas-upgrade {border:1px solid #fde68a;background:#fffbeb;border-radius:18px;padding:1rem;margin:1rem 0;}
             .saas-ok {border:1px solid #bbf7d0;background:#ecfdf5;border-radius:18px;padding:0.85rem 1rem;margin:0.75rem 0;color:#166534;font-weight:850;}
@@ -938,10 +945,10 @@ def inject_saas_css() -> None:
 
 def card(label: str, value: str, detail: str = "") -> str:
     return (
-        '<div class="saas-card">'
-        f'<div class="saas-label">{label}</div>'
-        f'<div class="saas-value">{value}</div>'
-        f'<div class="saas-detail">{detail}</div>'
+        '<div class="jfbp-card">'
+        f'<div class="jfbp-card-label">{label}</div>'
+        f'<div class="jfbp-card-value">{value}</div>'
+        f'<div class="jfbp-card-detail">{detail}</div>'
         '</div>'
     )
 
@@ -1156,79 +1163,88 @@ def render_upgrade_required(user: SaaSUser, page_name: str) -> None:
 
 
 def render_auth_status() -> None:
-    ready, message = supabase_ready()
-    css = "saas-ok" if ready else "saas-warn"
-    label = "Supabase Ready" if ready else "Supabase Not Ready"
-    st.markdown(f'<div class="{css}"><strong>{label}</strong><br>{message}</div>', unsafe_allow_html=True)
+    ready, _ = supabase_ready()
+    if ready:
+        return
+
+    message = "Sign-in service is temporarily unavailable. Please refresh or contact support."
+    st.markdown(
+        f'<div class="saas-warn"><strong>Authentication unavailable.</strong><br>{message}</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def render_auth_panel() -> None:
-    st.subheader("🔐 Supabase Authentication")
-    st.caption("Real account creation and login. Subscription status is still local until Stripe wiring.")
-    render_auth_status()
+    left, center, right = st.columns([1, 0.5, 1], gap="large")
+    with center:
+        st.subheader("🔐 Secure Access")
+        st.caption("Sign in to JFBP Quant Desk to access your workspace and tools.")
+        render_auth_status()
 
-    mode = st.radio("Choose action", ["Login", "Create Account", "Reset Password"], horizontal=True)
+        mode = st.radio("Choose access action", ["Login", "Create Account", "Reset Password"], horizontal=True)
 
-    if mode == "Login":
-        with st.form("saas_login_form"):
-            email = st.text_input("Email", value="")
-            password = st.text_input("Password", type="password")
-            submitted = st.form_submit_button("Login", use_container_width=True)
+        st.markdown('<div class="saas-auth-form">', unsafe_allow_html=True)
+        if mode == "Login":
+            with st.form("saas_login_form"):
+                email = st.text_input("Email", value="")
+                password = st.text_input("Password", type="password")
+                submitted = st.form_submit_button("Login", use_container_width=True)
 
-        if submitted:
-            ok, message = supabase_login(email=email, password=password)
-            if ok:
-                st.success(message)
-                st.rerun()
-            else:
-                st.error(message)
-
-    elif mode == "Create Account":
-        with st.form("saas_signup_form"):
-            email = st.text_input("Email", value="")
-            full_name = st.text_input("Full Name", value="")
-            password = st.text_input("Password", type="password")
-            password_confirm = st.text_input("Confirm Password", type="password")
-            plan = st.selectbox(
-                "Plan",
-                options=[PLAN_MARKET_PULSE, PLAN_PRO, PLAN_ELITE],
-                format_func=lambda p: f"{PLAN_LABELS[p]} — {PLAN_PRICES[p]}",
-                index=0,
-            )
-            st.success("🚀 Start your 30-Day Free Trial today. No credit card required.")
-
-            submitted = st.form_submit_button("Create Free Account & Start Trial", use_container_width=True)
-
-        if submitted:
-            if not email or "@" not in email:
-                st.error("Enter a valid email.")
-            elif len(password or "") < 8:
-                st.error("Password must be at least 8 characters.")
-            elif password != password_confirm:
-                st.error("Passwords do not match.")
-            else:
-                ok, message = supabase_sign_up(email=email, password=password, full_name=full_name, plan=plan)
+            if submitted:
+                ok, message = supabase_login(email=email, password=password)
                 if ok:
                     st.success(message)
-                    if st.session_state.get("saas_logged_in", False):
-                        st.rerun()
+                    st.rerun()
                 else:
                     st.error(message)
 
-    else:
-        with st.form("saas_reset_form"):
-            email = st.text_input("Email", value="")
-            submitted = st.form_submit_button("Send Password Reset Email", use_container_width=True)
+        elif mode == "Create Account":
+            with st.form("saas_signup_form"):
+                email = st.text_input("Email", value="")
+                full_name = st.text_input("Full Name", value="")
+                password = st.text_input("Password", type="password")
+                password_confirm = st.text_input("Confirm Password", type="password")
+                plan = st.selectbox(
+                    "Plan",
+                    options=[PLAN_MARKET_PULSE, PLAN_PRO, PLAN_ELITE],
+                    format_func=lambda p: f"{PLAN_LABELS[p]} — {PLAN_PRICES[p]}",
+                    index=0,
+                )
+                st.success("🚀 Start your 30-day trial today. No credit card required.")
 
-        if submitted:
-            if not email or "@" not in email:
-                st.error("Enter a valid email.")
-            else:
-                ok, message = supabase_reset_password(email=email)
-                if ok:
-                    st.success(message)
+                submitted = st.form_submit_button("Create Account & Start Trial", use_container_width=True)
+
+            if submitted:
+                if not email or "@" not in email:
+                    st.error("Enter a valid email.")
+                elif len(password or "") < 8:
+                    st.error("Password must be at least 8 characters.")
+                elif password != password_confirm:
+                    st.error("Passwords do not match.")
                 else:
-                    st.error(message)
+                    ok, message = supabase_sign_up(email=email, password=password, full_name=full_name, plan=plan)
+                    if ok:
+                        st.success(message)
+                        if st.session_state.get("saas_logged_in", False):
+                            st.rerun()
+                    else:
+                        st.error(message)
+
+        else:
+            with st.form("saas_reset_form"):
+                email = st.text_input("Email", value="")
+                submitted = st.form_submit_button("Send Password Reset Email", use_container_width=True)
+
+            if submitted:
+                if not email or "@" not in email:
+                    st.error("Enter a valid email.")
+                else:
+                    ok, message = supabase_reset_password(email=email)
+                    if ok:
+                        st.success(message)
+                    else:
+                        st.error(message)
+        st.markdown('</div>', unsafe_allow_html=True)
 
 
 def render_user_status(user: SaaSUser) -> None:
@@ -1241,7 +1257,7 @@ def render_user_status(user: SaaSUser) -> None:
         card("Account Status", user.account_status, "Lifetime admin access" if is_admin_user(user) else f"Trial days remaining: {days_left}"),
         card("Trading Mode", PLAN_TRADING_MODE.get(user.plan, "N/A"), "Controlled by subscription plan"),
     ]
-    st.markdown('<div class="saas-card-grid">' + "".join(cards) + "</div>", unsafe_allow_html=True)
+    st.markdown('<div class="jfbp-grid-card-wrap">' + "".join(cards) + "</div>", unsafe_allow_html=True)
 
 
 def render_permissions_matrix(user: SaaSUser) -> None:
@@ -1249,20 +1265,28 @@ def render_permissions_matrix(user: SaaSUser) -> None:
     all_pages = sorted(set().union(*PLAN_PAGES.values()))
     rows: List[Dict[str, str]] = []
     for page in all_pages:
-        rows.append({"Page": page, "Allowed": "YES" if can_access_page(user, page) else "NO", "Current Plan": PLAN_LABELS.get(user.plan, user.plan)})
+        rows.append(
+            {
+                "Page": page,
+                "Page Access": "Allowed" if can_access_page(user, page) else "Blocked",
+                "Current Plan": PLAN_LABELS.get(user.plan, user.plan),
+            }
+        )
     st.dataframe(rows, use_container_width=True, hide_index=True)
 
 
 def render_saas_core_dashboard() -> None:
     init_saas_state()
+    inject_responsive_css()
+    inject_card_css()
     inject_saas_css()
 
     st.markdown(
         """
-        <div class="saas-hero">
-            <div class="saas-kicker">JFBP Quant Desk · SaaS Core v1.4.5</div>
-            <div class="saas-title">Supabase Auth & User Workspace Control</div>
-            <div class="saas-text">Real authentication foundation for user sign up, login, password reset, trial control, plan permissions, and private-user access rules.</div>
+        <div class="jfbp-hero">
+            <div class="jfbp-hero-kicker">JFBP Quant Desk · Secure Access</div>
+            <div class="jfbp-hero-title">Secure Login & Workspace Access</div>
+            <div class="jfbp-hero-text">Sign in, create your trial account, or recover access to your JFBP workspace and plan-enabled tools.</div>
         </div>
         """,
         unsafe_allow_html=True,

@@ -39,6 +39,7 @@ def inject_responsive_css(max_width: int = 1500) -> None:
                 line-height: 1.12 !important;
                 font-weight: 850 !important;
                 color: #1f2937 !important;
+                margin: 0 0 0.26rem 0 !important;
             }}
 
             h2, h3 {{
@@ -46,6 +47,17 @@ def inject_responsive_css(max_width: int = 1500) -> None:
                 line-height: 1.18 !important;
                 font-weight: 850 !important;
                 color: #1f2937 !important;
+                margin: 0.72rem 0 0.28rem 0 !important;
+            }}
+
+            div[data-testid="stHeadingWithActionElements"] {{
+                margin: 0.10rem 0 0.12rem 0 !important;
+            }}
+
+            div[data-testid="stHeadingWithActionElements"] h1,
+            div[data-testid="stHeadingWithActionElements"] h2,
+            div[data-testid="stHeadingWithActionElements"] h3 {{
+                margin: 0 !important;
             }}
 
             div[data-testid="stHorizontalBlock"] {{

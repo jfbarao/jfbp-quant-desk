@@ -14,6 +14,8 @@ import html
 import streamlit as st
 
 from core.bootstrap import init_core
+from core.responsive import inject_responsive_css
+from core.ui_cards import inject_card_css
 
 
 # =========================================================
@@ -22,6 +24,9 @@ from core.bootstrap import init_core
 
 def inject_live_ibkr_responsive_css() -> None:
     """Visual-only responsive guardrails for Live IBKR."""
+
+    inject_responsive_css(max_width=1500)
+    inject_card_css()
 
     st.markdown(
         """
@@ -35,16 +40,16 @@ def inject_live_ibkr_responsive_css() -> None:
             }
 
             h1 {
-                font-size: clamp(1.9rem, 4vw, 2.55rem) !important;
+                font-size: var(--jfbp-type-h1, clamp(1.75rem, 3.6vw, 2.45rem)) !important;
                 font-weight: 850 !important;
                 line-height: 1.12 !important;
                 color: #1f2937 !important;
             }
 
             h2, h3 {
-                font-size: clamp(1.15rem, 2.4vw, 1.55rem) !important;
+                font-size: var(--jfbp-type-h2, clamp(1.08rem, 2.2vw, 1.45rem)) !important;
                 font-weight: 850 !important;
-                line-height: 1.2 !important;
+                line-height: 1.18 !important;
                 color: #1f2937 !important;
             }
 
@@ -105,60 +110,72 @@ def inject_live_ibkr_responsive_css() -> None:
                 overflow-wrap: anywhere;
             }
 
+            .ibkr-flow {
+                background: #eff6ff;
+                border: 1px solid #bfdbfe;
+                border-radius: 12px;
+                padding: 0.72rem 0.82rem;
+                margin: 0.50rem 0 0.78rem 0;
+                color: #1e3a8a;
+                font-weight: 750;
+                line-height: 1.4;
+            }
+
             .ibkr-pill {
                 display: inline-flex;
                 align-items: center;
                 gap: 0.45rem;
-                padding: 0.35rem 0.75rem;
+                padding: 0.28rem 0.62rem;
                 border-radius: 999px;
                 background: #eef6ff;
                 border: 1px solid #bfdbfe;
                 color: #1d4ed8;
-                font-weight: 850;
-                margin: 0.25rem 0 0.7rem 0;
+                font-weight: 780;
+                font-size: 0.84rem;
+                margin: 0.20rem 0 0.60rem 0;
             }
 
             .ibkr-hero {
                 border: 1px solid;
-                border-radius: 20px;
-                padding: 1.05rem 1.15rem;
-                margin: 0.75rem 0 1rem 0;
-                box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+                border-radius: 18px;
+                padding: 0.88rem 0.92rem;
+                margin: 0.60rem 0 0.82rem 0;
+                box-shadow: 0 2px 10px rgba(15, 23, 42, 0.05);
                 overflow-wrap: anywhere;
             }
 
             .ibkr-hero-kicker {
-                font-size: 0.72rem;
-                font-weight: 950;
-                letter-spacing: 0.075em;
+                font-size: var(--jfbp-type-card-label, 0.72rem);
+                font-weight: 850;
+                letter-spacing: 0.055em;
                 text-transform: uppercase;
                 color: #64748b;
-                margin-bottom: 0.32rem;
+                margin-bottom: 0.24rem;
             }
 
             .ibkr-hero-title {
-                font-size: clamp(1.65rem, 3.8vw, 2.75rem);
-                font-weight: 1000;
-                line-height: 1.05;
-                margin-bottom: 0.45rem;
+                font-size: clamp(1.22rem, 2.35vw, 1.62rem);
+                font-weight: 880;
+                line-height: 1.14;
+                margin-bottom: 0.30rem;
             }
 
             .ibkr-hero-text {
-                font-size: clamp(0.92rem, 1.6vw, 1.08rem);
-                font-weight: 760;
+                font-size: var(--jfbp-type-body, 0.94rem);
+                font-weight: 700;
                 color: #334155;
-                line-height: 1.45;
-                margin-bottom: 0.55rem;
+                line-height: 1.38;
+                margin-bottom: 0.36rem;
             }
 
             .ibkr-hero-action {
-                border-radius: 14px;
-                padding: 0.72rem 0.9rem;
+                border-radius: 12px;
+                padding: 0.60rem 0.78rem;
                 background: rgba(255,255,255,0.75);
                 border: 1px solid rgba(148, 163, 184, 0.35);
                 color: #111827;
-                font-size: 0.92rem;
-                font-weight: 900;
+                font-size: var(--jfbp-type-body, 0.94rem);
+                font-weight: 820;
             }
 
             .ibkr-check-row {
@@ -256,7 +273,7 @@ def ibkr_metric_card(label: str, value, detail: str = "", tone: str = "neutral")
     detail_text = html.escape(str(detail))
 
     detail_html = (
-        f'<div style="font-size:0.78rem;color:#64748b;margin-top:0.35rem;line-height:1.25;">{detail_text}</div>'
+        f'<div style="font-size:var(--jfbp-type-caption,0.82rem);color:#64748b;margin-top:0.35rem;line-height:1.35;">{detail_text}</div>'
         if detail_text
         else ""
     )
@@ -264,10 +281,10 @@ def ibkr_metric_card(label: str, value, detail: str = "", tone: str = "neutral")
     st.markdown(
         f"""
         <div class="ibkr-card" style="background:{background};border:1px solid {border};">
-            <div style="font-size:0.70rem;text-transform:uppercase;letter-spacing:0.04em;color:#64748b;font-weight:800;margin-bottom:0.25rem;">
+            <div style="font-size:var(--jfbp-type-card-label,0.72rem);text-transform:uppercase;letter-spacing:0.04em;color:#64748b;font-weight:850;margin-bottom:0.25rem;">
                 {label_text}
             </div>
-            <div style="font-size:1.18rem;line-height:1.15;font-weight:850;color:{value_color};">
+            <div style="font-size:var(--jfbp-type-card-value,clamp(1.05rem,2.2vw,1.35rem));line-height:1.15;font-weight:880;color:{value_color};">
                 {value_text}
             </div>
             {detail_html}
@@ -872,9 +889,13 @@ def page():
     st.title("📡 Live IBKR")
     st.caption("Live IBKR v25.1 Institutional Edition — Broker Operations Center, OMS readiness, account command brief, recovery center, Telegram ops, and safety controls.")
 
-    st.info(
-        "🚀 LIVE Workflow: OMS Execution → Live IBKR → Pull Snapshot → "
-        "Verify Account → Trade → Portfolio → Journal"
+    st.markdown(
+        """
+        <div class="ibkr-flow">
+            🚀 LIVE Workflow: OMS Execution → Live IBKR → Pull Snapshot → Verify Account → Trade → Portfolio → Journal
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
     render_ibkr_hero(

@@ -1134,9 +1134,16 @@ def run_page() -> None:
             "USD direction, breadth support, and directional clarity."
         )
 
+        # determine top score for UI-grade mapping
+        top_score_global = 0.0
         if opportunity_df.empty:
             st.info("No opportunity scores available yet.")
         else:
+            try:
+                top_score_global = safe_float(opportunity_df.iloc[0].get("Opportunity Score"), 0.0)
+            except Exception:
+                top_score_global = 0.0
+        
             top_opportunities = opportunity_df.head(8).copy()
             display_cols = [
                 "Rank",
@@ -1159,11 +1166,24 @@ def run_page() -> None:
             top_score = safe_float(best_opportunity.get("Opportunity Score"), 0.0)
             top_recommendation = str(best_opportunity.get("Recommendation", "AVOID"))
 
+            # UI-only: if research says AVOID but market/regime allows trading, present as Pending Confirmation
+            display_recommendation = top_recommendation
+            try:
+                if str(top_recommendation).strip().upper() == "AVOID" and regime.get("trade_allowed"):
+                    display_recommendation = "Pending Confirmation"
+            except Exception:
+                display_recommendation = top_recommendation
+
+            # Compute an institutional grade for the top opportunity (UI-only mapping)
+            institutional_grade = "BLOCKED"
+            if regime.get("trade_allowed"):
+                institutional_grade = "READY" if top_score >= 65 else "PENDING CONFIRMATION"
+
             if top_score >= 65:
                 st.success(
                     f"Best Opportunity: {best_opportunity.get('Name')} ({best_opportunity.get('Symbol')}) — "
                     f"Bias {best_opportunity.get('Directional Bias')} — "
-                    f"Score {top_score:.1f}/100 — {top_recommendation}"
+                    f"Score {top_score:.1f}/100 — {display_recommendation}"
                 )
             else:
                 st.warning(
@@ -1181,6 +1201,12 @@ def run_page() -> None:
         st.subheader("🎯 Forex Decision Center")
         st.caption("What it means: Converts FX conditions into practical trading guidance.")
 
+        # Institutional Grade derived from regime permission + top opportunity score (UI-only)
+        if regime["trade_allowed"]:
+            institutional_grade = "READY" if top_score_global >= 65 else "PENDING CONFIRMATION"
+        else:
+            institutional_grade = "BLOCKED"
+
         metric_grid([
             {"label": "Regime", "value": f"{regime_icon(regime['regime'])} {regime['regime']}", "detail": regime["playbook"], "tone": regime_tone(regime["regime"])},
             {"label": "USD Strength", "value": usd["state"], "detail": f"{usd['score']}/100", "tone": usd["tone"]},
@@ -1188,6 +1214,7 @@ def run_page() -> None:
             {"label": "USD/JPY 24H", "value": format_pct(regime["usd_jpy_24h"]), "detail": "Dollar-yen / rates pulse.", "tone": "good" if regime["usd_jpy_24h"] > 0 else "risk" if regime["usd_jpy_24h"] < -0.5 else "warning"},
             {"label": "Carry Avg 24H", "value": format_pct(regime["carry_avg_24h"]), "detail": "AUDJPY + CADJPY.", "tone": "good" if regime["carry_avg_24h"] > 0 else "risk" if regime["carry_avg_24h"] < -0.5 else "warning"},
             {"label": "Trade Allowed", "value": "YES" if regime["trade_allowed"] else "NO", "detail": "Forex scanner permission.", "tone": "good" if regime["trade_allowed"] else "risk"},
+            {"label": "Institutional Grade", "value": institutional_grade, "detail": "UI grade: readiness for capital deployment.", "tone": "good" if institutional_grade == "READY" else "warning" if "PENDING" in institutional_grade else "risk"},
             {"label": "Market Cycle", "value": f"{market_cycle['icon']} {market_cycle['cycle']}", "detail": market_cycle["note"], "tone": market_cycle["tone"]},
             {"label": "Liquidity Proxy", "value": liquidity["state"], "detail": f"{liquidity['score']}/100", "tone": liquidity["tone"]},
         ])
@@ -1196,6 +1223,12 @@ def run_page() -> None:
             st.info(regime["playbook"])
         else:
             st.error(regime["playbook"])
+
+        # Show more: concise rationale and conditional change triggers (UI-only explanatory text)
+        with st.expander("Show more", expanded=False):
+            st.markdown(f"**Why:** {regime['playbook']} — Stress {stress_score}/100, Breadth {breadth['score']:.1f}/100.")
+            st.markdown(f"**What to do:** { 'Follow desk action plan and confirm setups' if institutional_grade == 'READY' else 'Wait for qualified setups or confirmation from Scanner/Research' }.")
+            st.markdown(f"**What would change this recommendation:** A qualified opportunity with score >= 65 or a change in regime/trade permission would move Institutional Grade to READY.")
 
         if regime["regime"] == "RISK-OFF":
             action_tone = "risk"

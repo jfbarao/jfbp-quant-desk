@@ -51,14 +51,59 @@ def inject_card_css() -> None:
     st.markdown(
         """
         <style>
+            :root {
+                --jfbp-type-h1: clamp(1.75rem, 3.6vw, 2.45rem);
+                --jfbp-type-h2: clamp(1.08rem, 2.2vw, 1.45rem);
+                --jfbp-type-section: clamp(1.02rem, 1.9vw, 1.22rem);
+                --jfbp-type-card-label: 0.72rem;
+                --jfbp-type-card-value: clamp(1.05rem, 2.2vw, 1.35rem);
+                --jfbp-type-body: 0.94rem;
+                --jfbp-type-caption: 0.82rem;
+            }
+
+            .jfbp-h1 {
+                font-size: var(--jfbp-type-h1);
+                line-height: 1.12;
+                font-weight: 850;
+                color: #1f2937;
+                margin: 0;
+            }
+
+            .jfbp-h2,
+            .jfbp-section-title {
+                font-size: var(--jfbp-type-h2);
+                line-height: 1.18;
+                font-weight: 850;
+                color: #1f2937;
+                margin: 0;
+            }
+
+            .jfbp-section-title {
+                font-size: var(--jfbp-type-section);
+            }
+
+            .jfbp-body {
+                font-size: var(--jfbp-type-body);
+                line-height: 1.45;
+                font-weight: 700;
+                color: #334155;
+            }
+
+            .jfbp-caption {
+                font-size: var(--jfbp-type-caption);
+                line-height: 1.35;
+                color: #64748b;
+            }
+
             .jfbp-card {
                 background: #ffffff;
                 border: 1px solid #e5e7eb;
                 border-radius: 16px;
-                padding: 0.95rem 1.05rem;
-                margin-bottom: 0.75rem;
+                padding: 0.88rem 0.96rem;
+                margin-bottom: 0.72rem;
                 box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-                min-height: 92px;
+                min-height: 88px;
+                box-sizing: border-box;
                 overflow: hidden;
                 overflow-wrap: anywhere;
             }
@@ -70,16 +115,25 @@ def inject_card_css() -> None:
             .jfbp-card.risk { background: #fef2f2; border-color: #fecaca; }
 
             .jfbp-card-label {
-                font-size: 0.72rem;
+                font-size: var(--jfbp-type-card-label);
                 text-transform: uppercase;
                 letter-spacing: 0.045em;
                 color: #64748b;
                 font-weight: 850;
-                margin-bottom: 0.30rem;
+                margin-bottom: 0.28rem;
+                line-height: 1.28;
+            }
+
+            .jfbp-card-title {
+                font-size: 0.98rem;
+                font-weight: 900;
+                color: #111827;
+                line-height: 1.20;
+                margin-bottom: 0.28rem;
             }
 
             .jfbp-card-value {
-                font-size: clamp(1.08rem, 2.4vw, 1.45rem);
+                font-size: var(--jfbp-type-card-value);
                 line-height: 1.16;
                 font-weight: 900;
                 color: #111827;
@@ -102,10 +156,10 @@ def inject_card_css() -> None:
             .jfbp-hero {
                 border: 1px solid #bfdbfe;
                 background: #eff6ff;
-                border-radius: 20px;
-                padding: 1.10rem 1.20rem;
-                margin: 0.85rem 0 1.0rem 0;
-                box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+                border-radius: 18px;
+                padding: 0.88rem 0.92rem;
+                margin: 0.60rem 0 0.82rem 0;
+                box-shadow: 0 2px 10px rgba(15, 23, 42, 0.05);
                 overflow-wrap: anywhere;
             }
 
@@ -114,19 +168,19 @@ def inject_card_css() -> None:
             .jfbp-hero.risk { border-color: #fecaca; background: #fef2f2; }
 
             .jfbp-hero-kicker {
-                font-size: 0.72rem;
-                font-weight: 950;
-                letter-spacing: 0.075em;
+                font-size: var(--jfbp-type-card-label);
+                font-weight: 850;
+                letter-spacing: 0.055em;
                 text-transform: uppercase;
                 color: #64748b;
-                margin-bottom: 0.35rem;
+                margin-bottom: 0.24rem;
             }
 
             .jfbp-hero-title {
-                font-size: clamp(1.65rem, 3.7vw, 2.85rem);
-                font-weight: 1000;
-                line-height: 1.04;
-                margin-bottom: 0.50rem;
+                font-size: clamp(1.22rem, 2.35vw, 1.62rem);
+                font-weight: 880;
+                line-height: 1.14;
+                margin-bottom: 0.30rem;
                 color: #1d4ed8;
             }
 
@@ -135,22 +189,29 @@ def inject_card_css() -> None:
             .jfbp-hero.risk .jfbp-hero-title { color: #991b1b; }
 
             .jfbp-hero-text {
-                font-size: clamp(0.90rem, 1.55vw, 1.06rem);
-                font-weight: 760;
+                font-size: var(--jfbp-type-body);
+                font-weight: 700;
                 color: #334155;
-                line-height: 1.45;
-                margin-bottom: 0.55rem;
+                line-height: 1.38;
+                margin-bottom: 0.36rem;
             }
 
             .jfbp-hero-action {
-                border-radius: 14px;
-                padding: 0.72rem 0.90rem;
+                border-radius: 12px;
+                padding: 0.60rem 0.78rem;
                 background: rgba(255,255,255,0.76);
                 border: 1px solid rgba(148,163,184,0.35);
                 color: #111827;
-                font-size: 0.92rem;
-                font-weight: 900;
+                font-size: var(--jfbp-type-body);
+                font-weight: 820;
                 line-height: 1.35;
+            }
+
+            .jfbp-grid-card-wrap {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+                gap: 0.75rem;
+                margin: 0.35rem 0 1.0rem 0;
             }
 
             .jfbp-row-card {

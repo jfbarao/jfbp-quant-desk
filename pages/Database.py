@@ -29,6 +29,10 @@ except Exception:  # pragma: no cover
 # =========================================================
 
 def inject_database_css() -> None:
+    if inject_responsive_css is not None:
+        inject_responsive_css(max_width=1500)
+    if inject_card_css is not None:
+        inject_card_css()
     st.markdown(
         """
         <style>
@@ -41,8 +45,8 @@ def inject_database_css() -> None:
                 margin-left: auto !important;
                 margin-right: auto !important;
             }
-            h1 {font-size: clamp(1.85rem, 3.8vw, 2.55rem) !important;font-weight: 850 !important;line-height: 1.12 !important;color: #1f2937 !important;}
-            h2, h3 {font-size: clamp(1.12rem, 2.4vw, 1.55rem) !important;font-weight: 850 !important;line-height: 1.2 !important;color: #1f2937 !important;}
+            h1 {font-size: var(--jfbp-type-h1, clamp(1.75rem, 3.6vw, 2.45rem)) !important;font-weight: 850 !important;line-height: 1.12 !important;color: #1f2937 !important;}
+            h2, h3 {font-size: var(--jfbp-type-h2, clamp(1.08rem, 2.2vw, 1.45rem)) !important;font-weight: 850 !important;line-height: 1.18 !important;color: #1f2937 !important;}
             div[data-testid="stHorizontalBlock"] {gap: 0.85rem !important;align-items: stretch !important;}
             div[data-testid="stHorizontalBlock"] > div, div[data-testid="column"] {min-width: 0 !important;}
             div[data-testid="stDataFrame"] {width: 100% !important;max-width: 100% !important;overflow-x: auto !important;border-radius: 12px !important;}
@@ -51,16 +55,16 @@ def inject_database_css() -> None:
             .stButton > button {border-radius: 10px !important;min-height: 38px !important;font-weight: 750 !important;border: 1px solid #d7e3f5 !important;}
             .database-card-grid {display: grid;grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));gap: 0.85rem;margin: 0.55rem 0 0.85rem 0;width: 100%;}
             .database-card {border-radius: 14px;padding: 0.82rem 0.92rem;border: 1px solid #dbe3ef;background: #f8fafc;min-width: 0;max-width:100%;overflow:hidden;box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);}
-            .database-card-label {font-size: 0.72rem;text-transform: uppercase;letter-spacing: 0.045em;color: #64748b;font-weight: 850;margin-bottom: 0.28rem;line-height: 1.25;}
-            .database-card-value {font-size: clamp(0.95rem, 1.7vw, 1.28rem);line-height: 1.15;font-weight: 900;color: #111827;overflow-wrap:anywhere;word-break:break-word;white-space:normal;max-width:100%;}
-            .database-card-detail {font-size: 0.78rem;line-height: 1.35;color: #64748b;margin-top: 0.35rem;overflow-wrap:anywhere;word-break:break-word;white-space:normal;}
-            .database-flow {background: #eff6ff;border: 1px solid #bfdbfe;border-radius: 14px;padding: 1rem;margin: 0.75rem 0 0.85rem 0;color: #1e3a8a;}
-            .database-warning-panel {background: #fffbeb;border: 1px solid #fde68a;border-radius: 14px;padding: 1rem;margin: 0.75rem 0;}
-            .database-hero {border-radius: 18px;padding: 1.05rem 1.1rem;margin: 0.65rem 0 0.9rem 0;border: 1px solid #dbe3ef;overflow:hidden;}
-            .database-hero-kicker {font-size:0.72rem;text-transform:uppercase;letter-spacing:0.08em;font-weight:900;color:#64748b;margin-bottom:0.35rem;}
-            .database-hero-title {font-size:clamp(1.55rem,3.4vw,2.45rem);line-height:1.05;font-weight:950;overflow-wrap:anywhere;word-break:break-word;}
-            .database-hero-subtitle {font-weight:850;margin-top:0.45rem;line-height:1.35;overflow-wrap:anywhere;word-break:break-word;}
-            .database-hero-action {background:#ffffff;border:1px solid #dbe3ef;border-radius:12px;padding:0.75rem;margin-top:0.85rem;font-weight:850;line-height:1.35;overflow-wrap:anywhere;word-break:break-word;}
+            .database-card-label {font-size: var(--jfbp-type-card-label, 0.72rem);text-transform: uppercase;letter-spacing: 0.045em;color: #64748b;font-weight: 850;margin-bottom: 0.28rem;line-height: 1.25;}
+            .database-card-value {font-size: var(--jfbp-type-card-value, clamp(1.05rem, 2.2vw, 1.35rem));line-height: 1.15;font-weight: 880;color: #111827;overflow-wrap:anywhere;word-break:break-word;white-space:normal;max-width:100%;}
+            .database-card-detail {font-size: var(--jfbp-type-caption, 0.82rem);line-height: 1.35;color: #64748b;margin-top: 0.35rem;overflow-wrap:anywhere;word-break:break-word;white-space:normal;}
+            .database-flow {background: #eff6ff;border: 1px solid #bfdbfe;border-radius: 12px;padding: 0.72rem 0.82rem;margin: 0.50rem 0 0.78rem 0;color: #1e3a8a;}
+            .database-warning-panel {background: #fffbeb;border: 1px solid #fde68a;border-radius: 12px;padding: 0.76rem 0.86rem;margin: 0.52rem 0 0.78rem 0;}
+            .database-hero {border-radius: 18px;padding: 0.88rem 0.92rem;margin: 0.60rem 0 0.82rem 0;border: 1px solid #dbe3ef;overflow:hidden;box-shadow: 0 2px 10px rgba(15, 23, 42, 0.05);}
+            .database-hero-kicker {font-size:var(--jfbp-type-card-label, 0.72rem);text-transform:uppercase;letter-spacing:0.055em;font-weight:850;color:#64748b;margin-bottom:0.24rem;}
+            .database-hero-title {font-size:clamp(1.22rem,2.35vw,1.62rem);line-height:1.14;font-weight:880;overflow-wrap:anywhere;word-break:break-word;}
+            .database-hero-subtitle {font-size:var(--jfbp-type-body, 0.94rem);font-weight:700;margin-top:0.30rem;line-height:1.38;overflow-wrap:anywhere;word-break:break-word;}
+            .database-hero-action {background:#ffffff;border:1px solid #dbe3ef;border-radius:12px;padding:0.60rem 0.78rem;margin-top:0.36rem;font-size:var(--jfbp-type-body, 0.94rem);font-weight:820;line-height:1.35;overflow-wrap:anywhere;word-break:break-word;}
             @media (max-width: 1180px) {.block-container {padding-left: 1.25rem !important;padding-right: 1.25rem !important;} div[data-testid="stHorizontalBlock"] {flex-wrap: wrap !important;} div[data-testid="stHorizontalBlock"] > div, div[data-testid="column"] {flex: 1 1 100% !important;width: 100% !important;min-width: 100% !important;} .database-card-grid {grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));}}
             @media (max-width: 760px) {.block-container {padding-left: 0.9rem !important;padding-right: 0.9rem !important;} .database-card-grid {grid-template-columns: 1fr;}}
         </style>
@@ -1105,26 +1109,95 @@ def run_page():
 
     with st.container():
         st.subheader("📊 Executive Dashboard")
-        st.caption("Top-level readiness metrics for database, recovery, journal, Supabase, portfolio, and freeze status.")
-        st.divider()
-        exec_cols = st.columns(6)
-        exec_cols[0].metric("Database Health", "ONLINE" if audit_store else "MISSING")
-        exec_cols[1].metric("Recovery Status", recovery_state)
-        exec_cols[2].metric("Journal Status", journal_status)
-        exec_cols[3].metric("Supabase Status", supabase_status)
-        exec_cols[4].metric("Portfolio Status", portfolio_status)
-        exec_cols[5].metric("Freeze Readiness", freeze_status)
-        st.divider()
+        st.caption("Top-level operational state across database, recovery, journal, Supabase, portfolio, and freeze readiness.")
+        db_metric_grid([
+            {
+                "label": "Database",
+                "value": "ONLINE" if audit_store else "MISSING",
+                "detail": "Healthy" if audit_store else "Unavailable",
+                "tone": "good" if audit_store else "risk",
+            },
+            {
+                "label": "Recovery",
+                "value": str(recovery_state),
+                "detail": "Recovered" if recovery_ok else "Pending",
+                "tone": "good" if recovery_ok else "warning",
+            },
+            {
+                "label": "Journal",
+                "value": str(journal_status),
+                "detail": "Connected" if str(journal_status).upper() in ("ONLINE", "READY", "OK") else "Awaiting",
+                "tone": db_tone(journal_status),
+            },
+            {
+                "label": "Supabase",
+                "value": str(supabase_status),
+                "detail": "Connected" if str(supabase_status).upper() in ("ONLINE", "READY", "CONNECTED", "OK") else f"Lag {supabase_sync_lag}",
+                "tone": db_tone(supabase_status),
+            },
+            {
+                "label": "Portfolio",
+                "value": str(portfolio_status),
+                "detail": "Synced" if str(portfolio_status).upper() == "ONLINE" else "Unavailable",
+                "tone": db_tone(portfolio_status),
+            },
+            {
+                "label": "Freeze",
+                "value": str(freeze_status),
+                "detail": "Release gate" if freeze_ready else "Blocked",
+                "tone": "good" if freeze_ready else "risk",
+            },
+        ])
 
     with st.container():
         st.subheader("🏅 Commander Assessment")
-        st.caption("Executive grade, top strengths, top risks, and recommended next action for the system.")
-        assessment_cols = st.columns(4)
-        assessment_cols[0].markdown(f"**Overall Grade**\n\n# {grade}\n{database_score}/100")
-        assessment_cols[1].markdown(f"**Top Strength**\n{top_strength}")
-        assessment_cols[2].markdown(f"**Top Risk**\n{top_weakness}")
-        assessment_cols[3].markdown(f"**Recommended Action**\n{recommended_action}")
-        st.divider()
+        st.caption("Executive decision brief: overall grade, strongest signal, blocking risk, and required next action.")
+        db_metric_grid([
+            {
+                "label": "Overall Grade",
+                "value": f"{grade} · {database_score}/100",
+                "detail": "Composite release readiness score",
+                "tone": grade_tone,
+            },
+            {
+                "label": "Top Strength",
+                "value": top_strength,
+                "detail": "Primary positive signal",
+                "tone": "good",
+            },
+            {
+                "label": "Top Risk",
+                "value": top_weakness,
+                "detail": "Primary release blocker",
+                "tone": "risk" if not freeze_ready else "warning",
+            },
+            {
+                "label": "Commander Action",
+                "value": recommended_action,
+                "detail": "Immediate operational instruction",
+                "tone": "info",
+            },
+        ])
+
+        summary_highlights = [
+            f"Database: {'operational' if audit_store else 'unavailable'}",
+            f"Recovery: {'confirmed' if recovery_ok else 'incomplete'} ({recovery_state})",
+            f"Journal: {journal_status}",
+            f"Freeze validation: {'ready' if freeze_ready else 'blocked'}",
+        ]
+
+        st.markdown("#### 🏅 Commander Summary")
+        st.caption("Fast release-readiness brief for operations decisions.")
+        with st.container(border=True):
+            st.write(
+                "System integrity is "
+                + ("ready for freeze review." if freeze_ready else "incomplete and requires reconciliation before release.")
+            )
+            st.markdown("**Highlights**")
+            for item in summary_highlights:
+                st.write(f"• {item}")
+            st.markdown("**Next Action**")
+            st.write(f"→ {recommended_action}")
 
     with st.expander("📈 Business Intelligence", expanded=False):
         st.subheader("Business Intelligence")

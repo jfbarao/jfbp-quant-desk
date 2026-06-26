@@ -567,14 +567,14 @@ def inject_portfolio_responsive_css() -> None:
             }
 
             h1 {
-                font-size: clamp(1.85rem, 3.5vw, 2.45rem) !important;
+                font-size: var(--jfbp-type-h1) !important;
                 font-weight: 850 !important;
                 color: #1f2937 !important;
                 line-height: 1.12 !important;
             }
 
             h2, h3 {
-                font-size: clamp(1.12rem, 2.2vw, 1.45rem) !important;
+                font-size: var(--jfbp-type-h2) !important;
                 font-weight: 850 !important;
                 color: #1f2937 !important;
                 line-height: 1.18 !important;
@@ -617,10 +617,10 @@ def inject_portfolio_responsive_css() -> None:
                 background: #ffffff;
                 border: 1px solid #e5e7eb;
                 border-radius: 16px;
-                padding: 0.95rem 1.05rem;
+                padding: 0.88rem 0.96rem;
                 margin-bottom: 0.72rem;
                 box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-                min-height: 96px;
+                min-height: 90px;
                 overflow-wrap: anywhere;
             }
 
@@ -645,7 +645,7 @@ def inject_portfolio_responsive_css() -> None:
             }
 
             .jfbp-portfolio-label {
-                font-size: 0.72rem;
+                font-size: var(--jfbp-type-card-label);
                 text-transform: uppercase;
                 letter-spacing: 0.045em;
                 color: #64748b;
@@ -654,8 +654,8 @@ def inject_portfolio_responsive_css() -> None:
             }
 
             .jfbp-portfolio-value {
-                font-size: clamp(1.15rem, 2.8vw, 1.45rem);
-                line-height: 1.15;
+                font-size: var(--jfbp-type-card-value);
+                line-height: 1.16;
                 font-weight: 900;
                 color: #111827;
             }
@@ -666,7 +666,7 @@ def inject_portfolio_responsive_css() -> None:
             .jfbp-portfolio-card.info .jfbp-portfolio-value { color: #1d4ed8; }
 
             .jfbp-portfolio-detail {
-                font-size: 0.80rem;
+                font-size: var(--jfbp-type-caption);
                 color: #64748b;
                 margin-top: 0.35rem;
                 line-height: 1.35;
@@ -680,10 +680,10 @@ def inject_portfolio_responsive_css() -> None:
                 border: 1px solid #bfdbfe;
                 color: #1d4ed8;
                 border-radius: 999px;
-                padding: 0.34rem 0.72rem;
-                font-weight: 850;
-                font-size: 0.88rem;
-                margin: 0.25rem 0 0.75rem 0;
+                padding: 0.28rem 0.62rem;
+                font-weight: 780;
+                font-size: 0.84rem;
+                margin: 0.20rem 0 0.60rem 0;
             }
 
 
@@ -691,8 +691,8 @@ def inject_portfolio_responsive_css() -> None:
             .jfbp-portfolio-hero {
                 border: 1px solid;
                 border-radius: 20px;
-                padding: 1.10rem 1.20rem;
-                margin: 0.85rem 0 1.0rem 0;
+                padding: 1rem 1rem;
+                margin: 0.75rem 0 0.95rem 0;
                 box-shadow: 0 4px 14px rgba(15,23,42,0.06);
                 overflow-wrap: anywhere;
             }
@@ -707,18 +707,18 @@ def inject_portfolio_responsive_css() -> None:
             }
 
             .jfbp-portfolio-hero-title {
-                font-size: clamp(1.75rem, 3.8vw, 2.85rem);
+                font-size: clamp(1.65rem, 3.4vw, 2.25rem);
                 font-weight: 1000;
-                line-height: 1.04;
-                margin-bottom: 0.50rem;
+                line-height: 1.06;
+                margin-bottom: 0.42rem;
             }
 
             .jfbp-portfolio-hero-text {
-                font-size: clamp(0.92rem, 1.55vw, 1.08rem);
+                font-size: clamp(0.90rem, 1.45vw, 1.04rem);
                 font-weight: 760;
                 color: #334155;
-                line-height: 1.45;
-                margin-bottom: 0.55rem;
+                line-height: 1.44;
+                margin-bottom: 0.45rem;
             }
 
             .jfbp-portfolio-hero-action {

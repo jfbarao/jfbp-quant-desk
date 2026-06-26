@@ -15,6 +15,9 @@ from typing import Any, Dict, List
 import pandas as pd
 import streamlit as st
 
+from core.responsive import inject_responsive_css
+from core.ui_cards import inject_card_css
+
 
 # =========================================================
 # HELPERS
@@ -49,6 +52,19 @@ def fmt_score(value: Any) -> str:
 
 def fmt_multiplier(value: Any) -> str:
     return f"{safe_float(value, 1.0):.2f}x"
+
+
+def grade_from_score(score: Any) -> str:
+    s = safe_float(score, 0.0)
+    if s >= 90:
+        return "A"
+    if s >= 80:
+        return "B"
+    if s >= 70:
+        return "C"
+    if s >= 60:
+        return "D"
+    return "F"
 
 
 def short_time(value: Any) -> str:
@@ -100,16 +116,16 @@ def pulse_allowed_reason(row: Dict[str, Any]) -> str:
 
     if allowed:
         if regime in {"SELECTIVE", "CAUTIOUS"}:
-            return "Allowed, but reduced-size/selective only"
-        return "Allowed by Pulse risk rules"
+            return "Allowed with selectivity"
+        return "Allowed"
 
     if stress >= 70:
-        return "Blocked: stress is too high"
+        return "Blocked due to elevated stress"
     if breadth < 30:
-        return "Blocked: breadth is too weak"
+        return "Blocked due to weak breadth"
     if "BREAKDOWN" in regime or "RISK-OFF" in regime or regime == "RISK_OFF":
-        return f"Blocked: {regime} regime"
-    return "Blocked by Pulse risk rules"
+        return "Blocked by regime"
+    return "Blocked"
 
 
 def navigate_to(page_key: str) -> None:
@@ -241,8 +257,8 @@ def opportunity_grade(score: Any, rating: Any = "", signal: Any = "") -> tuple[s
     if s >= 85 or (s >= 75 and r in {"A+", "A", "A-"}):
         return "🟢 TRADEABLE", "good", "High-quality candidate worth considering."
     if s >= 60:
-        return "🟡 DEVELOPING", "warning", "Candidate is forming but still needs confirmation."
-    return "⚪ MONITOR", "neutral", "Watch only until the opportunity improves."
+        return "🟡 PENDING CONFIRMATION", "warning", "Candidate is forming and requires further confirmation before execution."
+    return "⚪ WATCHLIST", "neutral", "Watch only until the opportunity improves."
 
 
 def institutional_grade(status: Any, score: Any = 0, executable: bool = False, blocked: bool = False) -> tuple[str, str, str]:
@@ -269,17 +285,11 @@ def grade_explainer() -> str:
 
 
 def inject_css() -> None:
+    inject_responsive_css(max_width=1500)
+    inject_card_css()
     st.markdown(
         """
         <style>
-            .block-container {
-                padding-top: 1.4rem !important;
-                padding-bottom: 2.5rem !important;
-                max-width: 1700px !important;
-                padding-left: 3rem !important;
-                padding-right: 3rem !important;
-            }
-
             div[data-testid="stDataFrame"] {
                 width: 100% !important;
                 max-width: 100% !important;
@@ -297,75 +307,84 @@ def inject_css() -> None:
 
             .oc-grid {
                 display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr));
-                gap: 0.85rem;
-                margin: 0.45rem 0 0.85rem 0;
+                grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+                gap: 0.65rem;
+                margin: 0.35rem 0 0.65rem 0;
                 width: 100%;
             }
 
             .oc-card {
                 border: 1px solid;
-                border-radius: 16px;
-                padding: 0.95rem 1.0rem;
+                border-radius: 14px;
+                padding: 0.72rem 0.82rem;
                 min-width: 0;
-                min-height: 132px;
+                min-height: 124px;
                 box-sizing: border-box;
                 overflow: hidden;
+                background: #ffffff;
+                box-shadow: none;
             }
 
             .oc-card-title {
-                font-size: 0.76rem;
-                font-weight: 900;
+                font-size: var(--jfbp-type-card-label);
+                font-weight: 800;
                 text-transform: uppercase;
-                letter-spacing: 0.05em;
+                letter-spacing: 0.04em;
                 color: #64748b;
-                margin-bottom: 0.34rem;
-                line-height: 1.2;
+                margin-bottom: 0.28rem;
+                line-height: 1.25;
             }
 
             .oc-card-value {
-                font-size: clamp(1.25rem, 2.5vw, 1.75rem);
-                font-weight: 900;
-                line-height: 1.08;
-                margin-bottom: 0.35rem;
-                overflow-wrap: anywhere;
+                font-size: var(--jfbp-type-card-value);
+                font-weight: 850;
+                line-height: 1.15;
+                margin-bottom: 0.30rem;
+                overflow-wrap: normal;
+                word-break: normal;
+                white-space: normal;
             }
 
             .oc-card-detail {
-                color: #475569;
-                font-size: 0.88rem;
+                color: #64748b;
+                font-size: var(--jfbp-type-caption);
+                margin-top: 0.35rem;
                 line-height: 1.35;
-                overflow-wrap: anywhere;
+                overflow-wrap: normal;
+                word-break: normal;
+                white-space: normal;
             }
 
             .oc-mini-grid {
                 display: grid;
                 grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
                 gap: 0.65rem;
-                margin: 0.45rem 0 0.85rem 0;
+                margin: 0.35rem 0 0.65rem 0;
             }
 
             .oc-mini {
                 background: #f8fafc;
                 border: 1px solid #dbe3ef;
                 border-radius: 14px;
-                padding: 0.75rem 0.82rem;
+                padding: 0.72rem 0.82rem;
             }
 
             .oc-mini-label {
-                font-size: 0.70rem;
-                font-weight: 850;
+                font-size: var(--jfbp-type-card-label);
+                font-weight: 800;
                 color: #64748b;
                 text-transform: uppercase;
                 letter-spacing: 0.04em;
-                margin-bottom: 0.25rem;
+                margin-bottom: 0.28rem;
+                line-height: 1.25;
             }
 
             .oc-mini-value {
-                font-size: 1.0rem;
+                font-size: var(--jfbp-type-card-value);
                 font-weight: 850;
                 color: #111827;
-                overflow-wrap: anywhere;
+                overflow-wrap: normal;
+                word-break: normal;
             }
 
             .oc-table-wrap {
@@ -439,47 +458,50 @@ def inject_css() -> None:
 
             .oc-hero {
                 border: 1px solid;
-                border-radius: 20px;
-                padding: 1.15rem 1.25rem;
-                margin: 0.75rem 0 1rem 0;
-                box-shadow: 0 4px 14px rgba(15,23,42,0.06);
+                border-radius: 18px;
+                padding: 0.88rem 0.92rem;
+                margin: 0.60rem 0 0.82rem 0;
+                box-shadow: 0 2px 10px rgba(15, 23, 42, 0.05);
             }
 
             .oc-hero-kicker {
-                font-size: 0.72rem;
-                font-weight: 950;
-                letter-spacing: 0.08em;
+                font-size: var(--jfbp-type-card-label);
+                font-weight: 850;
+                letter-spacing: 0.055em;
                 text-transform: uppercase;
                 color: #64748b;
-                margin-bottom: 0.35rem;
+                margin-bottom: 0.24rem;
             }
 
             .oc-hero-title {
-                font-size: clamp(1.85rem, 4vw, 3rem);
-                font-weight: 1000;
-                line-height: 1.02;
-                margin: 0.1rem 0 0.55rem 0;
-                overflow-wrap: anywhere;
+                font-size: clamp(1.22rem, 2.35vw, 1.62rem);
+                font-weight: 880;
+                line-height: 1.14;
+                margin: 0 0 0.30rem 0;
+                overflow-wrap: normal;
+                word-break: normal;
             }
 
             .oc-hero-text {
-                font-size: clamp(0.95rem, 1.6vw, 1.12rem);
-                font-weight: 750;
+                font-size: var(--jfbp-type-body);
+                font-weight: 700;
                 color: #334155;
-                line-height: 1.45;
-                margin-bottom: 0.55rem;
-                overflow-wrap: anywhere;
+                line-height: 1.38;
+                margin-bottom: 0.36rem;
+                overflow-wrap: normal;
+                word-break: normal;
             }
 
             .oc-hero-action {
-                border-radius: 14px;
-                padding: 0.75rem 0.9rem;
-                background: rgba(255,255,255,0.72);
+                border-radius: 12px;
+                padding: 0.60rem 0.78rem;
+                background: rgba(255,255,255,0.76);
                 border: 1px solid rgba(148,163,184,0.35);
-                font-size: 0.94rem;
-                font-weight: 900;
+                font-size: var(--jfbp-type-body);
+                font-weight: 820;
                 color: #111827;
-                overflow-wrap: anywhere;
+                overflow-wrap: normal;
+                word-break: normal;
             }
 
             @media (max-width: 1180px) {
@@ -508,10 +530,6 @@ def inject_css() -> None:
                 .oc-grid,
                 .oc-mini-grid {
                     grid-template-columns: 1fr;
-                }
-
-                h1 {
-                    font-size: 1.7rem !important;
                 }
             }
         </style>
@@ -685,18 +703,38 @@ def pulse_card(asset_key: str, label: str, icon: str) -> Dict[str, Any]:
     reason = pulse_allowed_reason(row)
     fresh, fresh_tone = freshness_label(row.get("timestamp"))
 
-    card_tone = tone_for_regime(regime)
-    if allowed == "Blocked":
+    # Determine opportunity quality and final card tone
+    score_num = safe_float(score, 0.0)
+    opp_label, opp_tone, opp_reason = opportunity_grade(score_num, "", row.get("regime"))
+
+    # Default card tone based on regime, but only promote to 'good' when opportunity is qualified
+    if not allowed:
         card_tone = "risk"
-    elif fresh_tone == "risk":
+    else:
+        # If opportunity grade is good (tradeable), show good; if pending, show warning; otherwise neutral
+        if opp_tone == "good":
+            card_tone = "good"
+        elif opp_tone == "warning":
+            card_tone = "warning"
+        else:
+            # Regime may be risk-on but scanner doesn't have a qualified opportunity
+            card_tone = "neutral"
+    # If freshness is bad, escalate tone to warning when appropriate
+    if fresh_tone == "risk" and card_tone != "risk":
         card_tone = "warning"
+
+    # If allowed by regime but not qualified, add concise summary wording
+    if allowed and opp_tone != "good":
+        extra_detail = "No qualified setup available."
+    else:
+        extra_detail = ""
 
     return {
         "title": f"{icon} {label}",
         "value": best_symbol,
         "detail": (
-            f"{best_name} | Regime: {regime} | Score: {fmt_score(score)} | "
-            f"{allowed}: {reason} | Size: {multiplier} | {fresh}"
+            f"{best_name} | Regime: {regime} | Score: {fmt_score(score_num)} | "
+            f"Execution: {allowed} | {reason} | Size: {multiplier} | {fresh} {(' | ' + extra_detail) if extra_detail else ''}"
         ),
         "tone": card_tone,
     }
@@ -722,7 +760,7 @@ def pulse_table() -> pd.DataFrame:
                     "Breadth": "",
                     "Best": "",
                     "Score": "",
-                    "Allowed": "",
+                    "Execution": "",
                     "Reason": "",
                     "Size": "",
                     "Freshness": "",
@@ -739,7 +777,7 @@ def pulse_table() -> pd.DataFrame:
                 "Breadth": row.get("breadth_score", ""),
                 "Best": row.get("best_symbol", ""),
                 "Score": row.get("best_score", ""),
-                "Allowed": "YES" if row.get("trade_allowed", True) else "NO",
+                "Execution": "Allowed" if row.get("trade_allowed", True) else "Blocked",
                 "Reason": pulse_allowed_reason(row),
                 "Size": fmt_multiplier(row.get("execution_multiplier", 1.0)),
                 "Freshness": freshness_label(row.get("timestamp", ""))[0],
@@ -935,7 +973,8 @@ def option_strategy_for_row(row: Dict[str, Any], market: Dict[str, Any]) -> tupl
         return "Bear Put Spread", "Defined-risk bearish options expression.", score >= 60, "risk"
     if signal == "WATCH" and score >= 65:
         return "Cash-Secured Put", "Watchlist income/entry structure; confirm willingness to own shares.", True, "warning"
-    return "No Options Trade", "Wait for stronger scanner confirmation.", False, "neutral"
+    return "No Options Trade", "PENDING CONFIRMATION — wait for stronger scanner confirmation.", False, "neutral"
+    
 
 
 def build_global_opportunity_rows(scanner: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1061,6 +1100,16 @@ def build_global_opportunity_rows(scanner: Dict[str, Any]) -> List[Dict[str, Any
 
         opp_label, _, _ = opportunity_grade(adjusted_score, "", row.get("regime"))
         inst_label, _, _ = institutional_grade("Allowed" if allowed else "Blocked", adjusted_score, executable=allowed, blocked=not allowed)
+
+        # Only mark Allowed as green when the opportunity grade is actually TRADEABLE
+        if allowed:
+            if "TRADEABLE" in str(opp_label).upper() or "🟢" in str(opp_label):
+                status_text = "🟢 Allowed"
+            else:
+                status_text = "🟡 Allowed"
+        else:
+            status_text = "🔴 Blocked"
+
         rows.append(
             {
                 "Asset Class": label,
@@ -1068,7 +1117,7 @@ def build_global_opportunity_rows(scanner: Dict[str, Any]) -> List[Dict[str, Any
                 "Opportunity": symbol,
                 "Setup": row.get("regime", "UNKNOWN"),
                 "Score": round(adjusted_score, 1),
-                "Status": "🟢 Allowed" if allowed else "🔴 Blocked",
+                "Status": status_text,
                 "Opportunity Grade": opp_label,
                 "Institutional Grade": inst_label,
                 "Reason": f"{pulse_allowed_reason(row)} | {freshness}",
@@ -1111,7 +1160,7 @@ def opportunity_ranking_table(scanner: Dict[str, Any]) -> pd.DataFrame:
                     "Rank": "—",
                     "Asset Class": "None",
                     "Opportunity": "Run Market Pulse, Pulse pages, Scanner, and Options Center",
-                    "Setup": "Waiting",
+                    "Setup": "PENDING CONFIRMATION",
                     "Score": "",
                     "Status": "Waiting for data",
                     "Opportunity Grade": "—",
@@ -1161,12 +1210,53 @@ def publish_handoff(row: Dict[str, Any], destination: str | None = None) -> None
 
     destination = destination or str(row.get("_page") or row.get("Handoff") or "Trade Command Center")
 
+    handoff_ticket = {
+        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "source": "Opportunity_Center",
+        "destination": destination,
+        "symbol": symbol,
+        "asset_class": row.get("Asset Class"),
+        "opportunity": row.get("Opportunity"),
+        "setup": row.get("Setup"),
+        "score": row.get("Score"),
+        "status": row.get("Status"),
+        "opportunity_grade": row.get("Opportunity Grade"),
+        "institutional_grade": row.get("Institutional Grade"),
+        "reason": row.get("Reason"),
+        "size": row.get("Size"),
+        "rank": row.get("Rank"),
+    }
+
+    # Publish the exact selected row everywhere downstream pages look for it.
+    # This prevents handoff buttons from falling back to the #1 opportunity.
     st.session_state["opportunity_center_selected"] = row
+    st.session_state["opportunity_center_handoff_ticket"] = handoff_ticket
     st.session_state["trade_command_symbol"] = symbol
     st.session_state["options_manual_symbol"] = symbol
     st.session_state["research_symbol"] = symbol
+    st.session_state["research_ticker"] = symbol
     st.session_state["selected_symbol"] = symbol
     st.session_state["oms_order_symbol"] = symbol
+    st.session_state["oms_prepared_ticket"] = handoff_ticket
+
+    if destination == "Options Center":
+        # Options Center builds its own strategy rows. Keep this handoff simple:
+        # publish the selected UNDERLYING symbol through every known symbol key,
+        # but do not overwrite Options Center's internal best-opportunity object.
+        st.session_state["options_handoff_ticket"] = handoff_ticket
+        st.session_state["options_handoff_symbol"] = symbol
+        st.session_state["options_selected_symbol"] = symbol
+        st.session_state["options_symbol"] = symbol
+        st.session_state["options_underlying"] = symbol
+        st.session_state["selected_options_symbol"] = symbol
+        st.session_state["manual_options_symbol"] = symbol
+        st.session_state["options_manual_symbol"] = symbol
+    elif destination == "Trade Command Center":
+        st.session_state["trade_command_handoff_ticket"] = handoff_ticket
+    elif destination == "Research Stock":
+        st.session_state["research_handoff_ticket"] = handoff_ticket
+    elif destination == "OMS Execution":
+        st.session_state["tcc_prepared_oms_ticket"] = handoff_ticket
 
     if destination in {"Trade Command Center", "Options Center", "Research Stock", "OMS Execution", "Market Pulse", "Crypto Pulse", "Forex Pulse", "Gold Pulse", "Oil Pulse"}:
         st.session_state["jfbp_main_navigation"] = destination
@@ -1175,47 +1265,55 @@ def publish_handoff(row: Dict[str, Any], destination: str | None = None) -> None
 
 
 def render_global_handoff_controls(scanner: Dict[str, Any]) -> None:
-    rows = build_global_opportunity_rows(scanner)
+    rows = build_global_opportunity_rows(scanner)[:25]
     if not rows:
         return
 
     labels = [
         f"{row.get('Rank')} · {row.get('Asset Class')} · {row.get('Opportunity')} · {row.get('Score')}"
-        for row in rows[:25]
+        for row in rows
     ]
 
-    selected_label = st.selectbox(
+    selected_index = st.selectbox(
         "Select opportunity for handoff",
-        options=labels,
+        options=list(range(len(rows))),
         index=0,
-        key="opportunity_center_handoff_select",
+        format_func=lambda idx: labels[int(idx)],
+        key="opportunity_center_handoff_index_v2",
     )
 
-    selected_index = labels.index(selected_label) if selected_label in labels else 0
+    try:
+        selected_index = int(selected_index)
+    except Exception:
+        selected_index = 0
+
+    if selected_index < 0 or selected_index >= len(rows):
+        selected_index = 0
+
     selected = rows[selected_index]
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        if st.button("Open Trade Command", width="stretch"):
+        if st.button("Open Trade Command", width="stretch", key="oc_open_trade_command_selected_v2"):
             publish_handoff(selected, "Trade Command Center")
     with c2:
-        if st.button("Open Options Center", width="stretch"):
+        if st.button("Open Options Center", width="stretch", key="oc_open_options_selected_v2"):
             publish_handoff(selected, "Options Center")
     with c3:
-        if st.button("Open Research", width="stretch"):
+        if st.button("Open Research", width="stretch", key="oc_open_research_selected_v2"):
             publish_handoff(selected, "Research Stock")
     with c4:
-        if st.button("Send to OMS", width="stretch"):
+        if st.button("Send to OMS", width="stretch", key="oc_send_oms_selected_v2"):
             publish_handoff(selected, "OMS Execution")
 
 
 def render_commander_opportunity(best_row: Dict[str, Any]) -> None:
     """Render the top-ranked opportunity as a large commander hero."""
     if not best_row:
-        title = "Waiting for data"
+        title = "PENDING CONFIRMATION"
         asset = "Run Market Pulse, Pulse pages, Scanner, and Options Center."
         score = "N/A"
-        status = "Waiting"
+        status = "PENDING CONFIRMATION"
         size = "N/A"
         handoff = "Workflow"
         tone = "neutral"
@@ -1226,7 +1324,7 @@ def render_commander_opportunity(best_row: Dict[str, Any]) -> None:
         title = str(best_row.get("Opportunity", "N/A"))
         asset = str(best_row.get("Asset Class", "N/A"))
         score = str(best_row.get("Score", "N/A"))
-        status = str(best_row.get("Status", "Waiting"))
+        status = str(best_row.get("Status", "PENDING CONFIRMATION"))
         size = str(best_row.get("Size", "N/A"))
         handoff = str(best_row.get("Handoff", "Workflow"))
         reason = str(best_row.get("Reason", ""))
@@ -1258,13 +1356,13 @@ def render_commander_opportunity(best_row: Dict[str, Any]) -> None:
 
 def render_elite_candidates(ranking_rows: List[Dict[str, Any]], max_items: int = 3) -> None:
     """Render the top three opportunity rows as an action strip."""
-    st.subheader("⭐ Elite Candidates")
-    if not ranking_rows:
-        st.info("No elite candidates yet. Run the workflow to populate the opportunity ranking.")
+    st.subheader("⭐ Additional Elite Candidates")
+    if not ranking_rows or len(ranking_rows) <= 1:
+        st.info("No additional elite candidates yet. Run the workflow to populate the opportunity ranking.")
         return
 
     cards = []
-    for idx, row in enumerate(ranking_rows[:max_items], start=1):
+    for idx, row in enumerate(ranking_rows[1:1 + max_items], start=2):
         status = str(row.get("Status", ""))
         tone = "good" if "🟢" in status else "risk" if "🔴" in status else "warning"
         cards.append(
@@ -1290,7 +1388,7 @@ def render_pulse_status_cards() -> None:
     items = []
     for _, row in pulse_df.iterrows():
         asset = str(row.get("Asset", "Pulse"))
-        allowed = str(row.get("Allowed", ""))
+        execution_state = str(row.get("Execution", ""))
         freshness = str(row.get("Freshness", "Not published"))
         best = str(row.get("Best", "") or "N/A")
         score = str(row.get("Score", "") or "N/A")
@@ -1304,11 +1402,11 @@ def render_pulse_status_cards() -> None:
         else:
             freshness_short = "⚪ Not Loaded"
 
-        allowed_short = "YES" if allowed == "YES" else "NO" if allowed == "NO" else "N/A"
+        execution_short = execution_state if execution_state in {"Allowed", "Blocked", "Pending Confirmation"} else "N/A"
         items.append(
             (
                 asset,
-                f"{freshness_short} · Allowed {allowed_short} · {best} · {score}",
+                f"{freshness_short} · Execution {execution_short} · {best} · {score}",
             )
         )
 
@@ -1420,9 +1518,14 @@ def run_page() -> None:
             3. Open **Scanner**, choose the universe, and run the scan.
             4. Return here to rank all available opportunities in one command-desk list.
             5. Send the selected opportunity to **Trade Command**, **Options**, **Research**, or **OMS**.
-            6. Check **Allowed / Blocked**, freshness, risk plan status, and executor readiness before acting.
+            6. Check **TRADEABLE**, **PENDING CONFIRMATION**, or **WATCHLIST** status, freshness, risk plan status, and executor readiness before acting.
 
-            Opportunity Center is a routing and prioritization dashboard. It does not replace Scanner, Research Stock, Trade Command Center, OMS, or the Risk Engine.
+            Terminology:
+            - **TRADEABLE**: Actionable now (meets institutional and Pulse criteria).
+            - **PENDING CONFIRMATION**: Promising but requires additional confirmation or review.
+            - **WATCHLIST**: Monitor only; not currently actionable.
+
+            Opportunity Center ranks and routes ideas; final execution is handled by **OMS / Trade Command** after confirmation.
             """
         )
 
@@ -1449,6 +1552,115 @@ def run_page() -> None:
 
     freshness_panel()
     st.info(grade_explainer())
+
+    # =====================================================
+    # EXECUTIVE OPPORTUNITY DASHBOARD (v6.0)
+    # =====================================================
+    # Compute executive metrics without changing underlying logic
+    tradeable_count = sum(1 for r in ranking_rows if "TRADEABLE" in str(r.get("Opportunity Grade", "")).upper())
+    pending_count = sum(1 for r in ranking_rows if "PENDING" in str(r.get("Institutional Grade", "")).upper() or "PENDING" in str(r.get("Opportunity Grade", "")).upper())
+    watchlist_count = sum(1 for r in ranking_rows if "WATCHLIST" in str(r.get("Opportunity Grade", "")).upper())
+    highest_confidence = max((safe_float(r.get("Score"), 0.0) for r in ranking_rows), default=0.0)
+    best_opportunity = best_row.get("Opportunity") if best_row else "N/A"
+    market_regime = market.get("regime", "UNKNOWN")
+    market_tone = tone_for_regime(market_regime)
+
+    overall_grade = grade_from_score(sum((safe_float(r.get("Score"), 0.0) for r in ranking_rows[:5])) / (min(len(ranking_rows), 5) or 1))
+    regime_context = {
+        "SELECTIVE": "Moderate risk environment. Trade only high-quality opportunities.",
+        "CAUTIOUS": "Reduced deployment advised. Confirm before committing capital.",
+        "NEUTRAL": "Market is balanced. Focus on clearly superior ideas.",
+        "DEFENSIVE": "Risk-off environment. Avoid aggressive entries.",
+        "RISK-ON": "Broad participation expected. Use selective execution.",
+        "RISK_OFF": "Capital preservation mode. Only the best ideas are viable.",
+    }
+    market_status_detail = regime_context.get(str(market_regime).upper().strip(), "Review market condition and risk before acting.")
+
+    # Institutional Market Brief — single coherent briefing for the desk
+    regime_context = {
+        "SELECTIVE": "Moderate risk environment. Trade only high-quality opportunities.",
+        "CAUTIOUS": "Reduced deployment advised. Confirm before committing capital.",
+        "NEUTRAL": "Market is balanced. Focus on clearly superior ideas.",
+        "DEFENSIVE": "Risk-off environment. Avoid aggressive entries.",
+        "RISK-ON": "Broad participation expected. Use selective execution.",
+        "RISK_OFF": "Capital preservation mode. Only the best ideas are viable.",
+    }
+    market_status_detail = regime_context.get(str(market_regime).upper().strip(), "Review market condition and risk before acting.")
+
+    # Research summary — reuse scanner best recommendation where available
+    research_conclusion = scanner.get("best_recommendation") or (best_row.get("trade_recommendation") if best_row else "N/A")
+
+    # Leadership summary for the briefing page; do not repeat the specific trade
+    lead_asset_class = str(best_row.get("Asset Class", "N/A")).upper().strip() if best_row else "N/A"
+    leadership_summary = f"{lead_asset_class} Leading" if lead_asset_class and lead_asset_class != "N/A" else "Leadership unavailable"
+
+    # Institutional grade for top opportunity
+    institutional_grade = best_row.get("Institutional Grade") if best_row else "N/A"
+
+    # Execution decision (UI-only mapping, preserving underlying logic)
+    if executor.get("kill_switch"):
+        execution_decision = "DO NOT TRADE"
+    elif tradeable_count > 0:
+        execution_decision = "EXECUTE"
+    elif pending_count > 0:
+        execution_decision = "WAIT"
+    else:
+        execution_decision = "WAIT"
+
+    # Determine tone for best opportunity based on its opportunity/institutional grade
+    best_tone = "neutral"
+    try:
+        best_opp_label = str(best_row.get("Opportunity Grade", "")).upper()
+        best_inst_label = str(best_row.get("Institutional Grade", "")).upper()
+        if "TRADEABLE" in best_opp_label or "🟢" in best_opp_label:
+            best_tone = "good"
+        elif "PENDING" in best_opp_label or "PENDING" in best_inst_label:
+            best_tone = "warning"
+        else:
+            best_tone = "neutral"
+    except Exception:
+        best_tone = "neutral"
+
+    with st.container():
+        st.subheader("INSTITUTIONAL MARKET BRIEF")
+        st.caption("One coherent briefing: market, trend, asset leadership, research, grade, and execution.")
+        render_card_grid([
+            {"title": "Macro Environment", "value": market_regime, "detail": market_status_detail, "tone": market_tone},
+            {"title": "Trend", "value": market.get("playbook", "N/A"), "detail": "Research-derived trend context.", "tone": "neutral"},
+            {"title": "Opportunity Leadership", "value": leadership_summary, "detail": "Market-level summary of the leading asset class, not the specific trade.", "tone": best_tone},
+            {"title": "Research", "value": research_conclusion, "detail": brief_title or "Research summary for the desk.", "tone": "info"},
+            {"title": "Institutional Grade", "value": institutional_grade, "detail": "Readiness for capital deployment.", "tone": "good" if "READY" in str(institutional_grade).upper() else ("warning" if "PENDING" in str(institutional_grade).upper() else "risk")},
+            {"title": "Execution", "value": execution_decision, "detail": "Immediate action for the desk.", "tone": "good" if execution_decision=="EXECUTE" else ("warning" if execution_decision=="WAIT" else "risk")},
+        ])
+
+    # Commander Assessment card
+    top_strength = "Top-ranked opportunities meet pulse and scanner alignment." if tradeable_count > 0 else "No immediate tradeable leaders; monitoring leadership formation."
+    top_risk = "Execution confirmation required before deployment." if pending_count > 0 else "Market regime or data freshness may be limiting execution."
+    recommended_next = brief_text or "Review elite candidates and confirm in Scanner / Options Center."
+
+    with st.container():
+        st.subheader("Commander Assessment")
+        st.caption("Why the briefing looks this way: strengths, risks, and recommendation.")
+        # Keep the four executive cards, avoid duplicating execution state
+        render_card_grid([
+            {"title": "Overall Grade", "value": overall_grade, "detail": "Aggregate grade from top opportunities.", "tone": "good"},
+            {"title": "Top Strength", "value": top_strength, "detail": "Primary factor supporting current opportunities.", "tone": "good"},
+            {"title": "Primary Risk", "value": top_risk, "detail": "Key risk to monitor before deployment.", "tone": "risk" if pending_count > 0 else "warning"},
+            {"title": "Recommendation", "value": recommended_next, "detail": "Actionable guidance for the desk.", "tone": "info"},
+        ])
+
+    # Business Intelligence (counts and runtime metrics)
+    with st.expander("📈 Business Intelligence", expanded=False):
+        st.subheader("Business Intelligence")
+        st.caption("Record counts, growth signals, recovery and runtime metrics for monitoring.")
+        render_card_grid([
+            {"title": "🔢 Scanner Rows", "value": scanner.get("rows", 0), "detail": "Raw scanner rows", "tone": "info"},
+            {"title": "📋 Ranked Opportunities", "value": len(ranking_rows), "detail": "Global ranking rows", "tone": "info"},
+            {"title": "🧩 Options Setups", "value": len([r for r in ranking_rows if r.get('Asset Class')=='Options']), "detail": "Options rows in ranking", "tone": "info"},
+            {"title": "📡 Pulse Sources", "value": len([k for k,v in get_bus().items() if v]), "detail": "Loaded Pulse asset classes", "tone": "info"},
+            {"title": "⚖️ Open Positions", "value": executor.get("open_positions", 0), "detail": "Executor open positions", "tone": "info"},
+            {"title": "⛔ Kill Switch", "value": "ON" if executor.get("kill_switch") else "OFF", "detail": "Executor kill switch", "tone": "risk" if executor.get("kill_switch") else "good"},
+        ])
 
     # =====================================================
     # COMMANDER OPPORTUNITY HERO
@@ -1492,7 +1704,7 @@ def run_page() -> None:
 
         st.subheader("🌍 Cross-Asset Regime Table")
         st.caption(
-            "Context table showing why each asset class is allowed or blocked and whether the Pulse reading is fresh."
+            "Context table showing execution eligibility and whether the Pulse reading is fresh."
         )
         st.dataframe(
             pulse_table(),
@@ -1502,14 +1714,14 @@ def run_page() -> None:
         )
 
     with right:
-        st.subheader("🚀 Opportunity Launcher")
+        st.subheader("🚀 Execution Console")
         st.caption("Select one opportunity and continue the workflow without retyping symbols.")
         render_global_handoff_controls(scanner)
 
         st.subheader("⚙️ Execution Readiness")
         render_mini_grid(
             [
-                ("Market Buy Allowed", "YES" if bool(market.get("buy_allowed", True)) else "NO"),
+                ("Market Buy Execution", "Allowed" if bool(market.get("buy_allowed", True)) else "Blocked"),
                 ("Market Size", fmt_multiplier(market.get("execution_multiplier", 1.0))),
                 ("Scanner Rows", scanner.get("rows", 0)),
                 ("Executable Trades", scanner.get("executable", 0)),
@@ -1523,14 +1735,24 @@ def run_page() -> None:
         render_pulse_status_cards()
 
     # =====================================================
-    # LOWER TABS
+    # DECISION SUMMARY
     # =====================================================
-    tab_workflow, tab_diag = st.tabs([
-        "🧭 Workflow Notes",
-        "🛠 Diagnostics",
-    ])
+    with st.container():
+        st.subheader("📌 Decision Summary")
+        st.caption("Concise guidance for the trader: what to do, avoid, and monitor next.")
+        do_text = "Focus on TRADEABLE elite candidates and confirm execution details in Trade Command / Options Center." if tradeable_count > 0 else "No immediate TRADEABLE candidates; prioritize monitoring and confirm signals in Scanner."
+        avoid_text = "Avoid deploying large size when Institutional Grade is PENDING CONFIRMATION or market regime is defensive." if pending_count > 0 else "Avoid forcing trades outside allowed Pulse regimes."
+        monitor_text = "Monitor elite candidates, pulse freshness, and execution confirmation; refresh Pulse pages when stale."
+        render_card_grid([
+            {"title": "🟢 Execute", "value": do_text, "detail": "Immediate focus for the desk.", "tone": "good"},
+            {"title": "🟠 Avoid", "value": avoid_text, "detail": "What to hold off on now.", "tone": "warning"},
+            {"title": "🔵 Monitor", "value": monitor_text, "detail": "Keep these signals on watch.", "tone": "info"},
+        ])
 
-    with tab_workflow:
+    # =====================================================
+    # LOWER DETAILS
+    # =====================================================
+    with st.expander("🧭 Opportunity Workflow", expanded=False):
         st.subheader("Opportunity Workflow")
         st.markdown(
             """
@@ -1547,7 +1769,7 @@ def run_page() -> None:
             """
         )
 
-    with tab_diag:
+    with st.expander("🛠 Diagnostics", expanded=False):
         st.write(
             {
                 "Market Snapshot": market,

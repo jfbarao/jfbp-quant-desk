@@ -16,6 +16,8 @@ import pandas as pd
 import streamlit as st
 
 from core.bootstrap import init_core
+from core.responsive import inject_responsive_css
+from core.ui_cards import inject_card_css
 
 
 def now():
@@ -319,6 +321,8 @@ def _cancel_broker_order(gateway, broker_order_id: str) -> bool:
 
 
 def inject_order_ticket_css() -> None:
+    inject_responsive_css(max_width=1500)
+    inject_card_css()
     st.markdown(
         """
         <style>
@@ -331,14 +335,14 @@ def inject_order_ticket_css() -> None:
             }
 
             h1 {
-                font-size: clamp(1.85rem, 3.5vw, 2.45rem) !important;
+                font-size: var(--jfbp-type-h1, clamp(1.75rem, 3.6vw, 2.45rem)) !important;
                 font-weight: 850 !important;
                 color: #1f2937 !important;
                 line-height: 1.12 !important;
             }
 
             h2, h3 {
-                font-size: clamp(1.10rem, 2.2vw, 1.45rem) !important;
+                font-size: var(--jfbp-type-h2, clamp(1.08rem, 2.2vw, 1.45rem)) !important;
                 font-weight: 850 !important;
                 color: #1f2937 !important;
                 line-height: 1.18 !important;
@@ -405,7 +409,7 @@ def inject_order_ticket_css() -> None:
             }
 
             .ticket-card-label {
-                font-size: 0.72rem;
+                font-size: var(--jfbp-type-card-label, 0.72rem);
                 text-transform: uppercase;
                 letter-spacing: 0.04em;
                 color: #64748b;
@@ -415,9 +419,9 @@ def inject_order_ticket_css() -> None:
             }
 
             .ticket-card-value {
-                font-size: clamp(1.05rem, 2vw, 1.35rem);
+                font-size: var(--jfbp-type-card-value, clamp(1.05rem, 2.2vw, 1.35rem));
                 line-height: 1.18;
-                font-weight: 900;
+                font-weight: 880;
                 color: #111827;
                 white-space: normal;
                 overflow-wrap: normal;
@@ -441,7 +445,7 @@ def inject_order_ticket_css() -> None:
             }
 
             .ticket-card-detail {
-                font-size: 0.78rem;
+                font-size: var(--jfbp-type-caption, 0.82rem);
                 color: #64748b;
                 margin-top: 0.34rem;
                 line-height: 1.35;
@@ -451,9 +455,9 @@ def inject_order_ticket_css() -> None:
             .ticket-flow {
                 background: #eff6ff;
                 border: 1px solid #bfdbfe;
-                border-radius: 14px;
-                padding: 0.95rem 1rem;
-                margin: 0.65rem 0 1rem 0;
+                border-radius: 12px;
+                padding: 0.72rem 0.82rem;
+                margin: 0.50rem 0 0.78rem 0;
                 color: #1e3a8a;
                 font-weight: 750;
                 line-height: 1.4;
@@ -461,54 +465,54 @@ def inject_order_ticket_css() -> None:
 
             .ticket-panel {
                 border: 1px solid #e5e7eb;
-                border-radius: 16px;
+                border-radius: 14px;
                 background: #ffffff;
-                padding: 1rem;
-                margin-bottom: 1rem;
+                padding: 0.88rem 0.94rem;
+                margin-bottom: 0.82rem;
                 box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
             }
 
             .ticket-hero {
                 border: 1px solid;
-                border-radius: 20px;
-                padding: 1.05rem 1.15rem;
-                margin: 0.75rem 0 1rem 0;
-                box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+                border-radius: 18px;
+                padding: 0.88rem 0.92rem;
+                margin: 0.60rem 0 0.82rem 0;
+                box-shadow: 0 2px 10px rgba(15, 23, 42, 0.05);
                 overflow-wrap: anywhere;
             }
 
             .ticket-hero-kicker {
-                font-size: 0.72rem;
-                font-weight: 950;
-                letter-spacing: 0.075em;
+                font-size: var(--jfbp-type-card-label, 0.72rem);
+                font-weight: 850;
+                letter-spacing: 0.055em;
                 text-transform: uppercase;
                 color: #64748b;
-                margin-bottom: 0.32rem;
+                margin-bottom: 0.24rem;
             }
 
             .ticket-hero-title {
-                font-size: clamp(1.65rem, 3.8vw, 2.75rem);
-                font-weight: 1000;
-                line-height: 1.05;
-                margin-bottom: 0.45rem;
+                font-size: clamp(1.22rem, 2.35vw, 1.62rem);
+                font-weight: 880;
+                line-height: 1.14;
+                margin-bottom: 0.30rem;
             }
 
             .ticket-hero-text {
-                font-size: clamp(0.92rem, 1.6vw, 1.08rem);
-                font-weight: 760;
+                font-size: var(--jfbp-type-body, 0.94rem);
+                font-weight: 700;
                 color: #334155;
-                line-height: 1.45;
-                margin-bottom: 0.55rem;
+                line-height: 1.38;
+                margin-bottom: 0.36rem;
             }
 
             .ticket-hero-action {
-                border-radius: 14px;
-                padding: 0.72rem 0.9rem;
+                border-radius: 12px;
+                padding: 0.60rem 0.78rem;
                 background: rgba(255,255,255,0.75);
                 border: 1px solid rgba(148, 163, 184, 0.35);
                 color: #111827;
-                font-size: 0.92rem;
-                font-weight: 900;
+                font-size: var(--jfbp-type-body, 0.94rem);
+                font-weight: 820;
             }
 
             .ticket-check-row {

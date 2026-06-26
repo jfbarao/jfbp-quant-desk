@@ -10,6 +10,8 @@ import html
 from typing import Any, Dict, List, Tuple
 
 import streamlit as st
+from core.ui_cards import inject_card_css
+from core.responsive import inject_responsive_css
 
 
 # =========================================================
@@ -17,6 +19,8 @@ import streamlit as st
 # =========================================================
 
 def inject_navigation_guide_css() -> None:
+    inject_responsive_css(max_width=1500)
+    inject_card_css()
     st.markdown(
         """
         <style>
@@ -31,16 +35,16 @@ def inject_navigation_guide_css() -> None:
             }
 
             h1 {
-                font-size: clamp(1.9rem, 4vw, 2.70rem) !important;
-                font-weight: 900 !important;
-                line-height: 1.08 !important;
+                font-size: var(--jfbp-type-h1) !important;
+                font-weight: 850 !important;
+                line-height: 1.12 !important;
                 color: #1f2937 !important;
             }
 
             h2, h3 {
-                font-size: clamp(1.12rem, 2.35vw, 1.55rem) !important;
+                font-size: var(--jfbp-type-h2) !important;
                 font-weight: 850 !important;
-                line-height: 1.2 !important;
+                line-height: 1.18 !important;
                 color: #1f2937 !important;
             }
 
@@ -73,50 +77,12 @@ def inject_navigation_guide_css() -> None:
                 border: 1px solid #d7e3f5 !important;
             }
 
-            .guide-hero {
-                border: 1px solid #bfdbfe;
-                background:
-                    radial-gradient(circle at top left, rgba(37,99,235,0.14), transparent 34%),
-                    linear-gradient(135deg, rgba(239,246,255,0.96), rgba(248,250,252,0.96));
-                border-radius: 22px;
-                padding: 1.25rem 1.35rem;
-                margin: 0.75rem 0 1rem 0;
-                box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
-                overflow: hidden;
-            }
-
-            .guide-hero-kicker {
-                color:#64748b;
-                font-size:0.72rem;
-                font-weight:950;
-                letter-spacing:0.08em;
-                text-transform:uppercase;
-                margin-bottom:0.32rem;
-            }
-
-            .guide-hero-title {
-                color:#1d4ed8;
-                font-size:clamp(1.85rem, 4vw, 3.05rem);
-                font-weight:1000;
-                line-height:1.02;
-                margin-bottom:0.55rem;
-                overflow-wrap:anywhere;
-            }
-
-            .guide-hero-text {
-                color:#334155;
-                font-size:clamp(0.94rem, 1.5vw, 1.10rem);
-                line-height:1.45;
-                font-weight:760;
-                max-width: 1100px;
-            }
-
             .guide-flow {
                 background: #eff6ff;
                 border: 1px solid #bfdbfe;
-                border-radius: 14px;
-                padding: 0.9rem 1rem;
-                margin: 0.65rem 0 1rem 0;
+                border-radius: 12px;
+                padding: 0.72rem 0.82rem;
+                margin: 0.50rem 0 0.78rem 0;
                 overflow-wrap: anywhere;
                 color:#334155;
             }
@@ -124,106 +90,37 @@ def inject_navigation_guide_css() -> None:
             .guide-warning {
                 background: #fffbeb;
                 border: 1px solid #fde68a;
-                border-radius: 14px;
-                padding: 1rem;
-                margin: 0.7rem 0 1rem 0;
+                border-radius: 12px;
+                padding: 0.76rem 0.86rem;
+                margin: 0.52rem 0 0.78rem 0;
                 overflow-wrap: anywhere;
                 color:#334155;
             }
 
-            .guide-card-grid {
-                display:grid;
-                grid-template-columns: repeat(auto-fit, minmax(min(100%, 235px), 1fr));
-                gap:0.82rem;
-                margin:0.55rem 0 1rem 0;
-            }
-
-            .guide-card {
-                border:1px solid #dbe3ef;
-                background:#f8fafc;
-                border-radius:16px;
-                padding:0.9rem 1rem;
-                min-height:112px;
-                overflow:hidden;
-                box-sizing:border-box;
-            }
-
-            .guide-card-title {
-                font-size:0.72rem;
-                text-transform:uppercase;
-                letter-spacing:0.045em;
-                color:#64748b;
-                font-weight:900;
-                margin-bottom:0.32rem;
-                line-height:1.25;
-            }
-
-            .guide-card-value {
-                font-size:clamp(1.05rem, 2vw, 1.35rem);
-                line-height:1.14;
-                font-weight:950;
-                color:#111827;
-                margin-bottom:0.36rem;
-                overflow-wrap:anywhere;
-            }
-
-            .guide-card-detail {
-                font-size:0.84rem;
-                line-height:1.38;
-                color:#475569;
-                overflow-wrap:anywhere;
-            }
-
-            .guide-card.good { background:#ecfdf5; border-color:#bbf7d0; }
-            .guide-card.warning { background:#fffbeb; border-color:#fde68a; }
-            .guide-card.risk { background:#fef2f2; border-color:#fecaca; }
-            .guide-card.info { background:#eff6ff; border-color:#bfdbfe; }
-            .guide-card.dark { background:#111827; border-color:#334155; }
-            .guide-card.dark .guide-card-title { color:#cbd5e1; }
-            .guide-card.dark .guide-card-value { color:#ffffff; }
-            .guide-card.dark .guide-card-detail { color:#e5e7eb; }
-
-            .guide-step-grid {
-                display:grid;
-                grid-template-columns: repeat(auto-fit, minmax(min(100%, 195px), 1fr));
-                gap:0.72rem;
-                margin:0.55rem 0 1rem 0;
-            }
-
-            .guide-step-card {
-                border:1px solid #dbe3ef;
-                background:#ffffff;
-                border-radius:16px;
-                padding:0.85rem 0.92rem;
-                min-height:118px;
-                box-shadow:0 1px 2px rgba(15, 23, 42, 0.04);
-                overflow:hidden;
-            }
-
             .guide-step-num {
                 display:inline-flex;
-                width:1.65rem;
-                height:1.65rem;
+                width:1.5rem;
+                height:1.5rem;
                 align-items:center;
                 justify-content:center;
                 border-radius:999px;
                 background:#dbeafe;
                 color:#1d4ed8;
                 font-weight:950;
-                margin-bottom:0.45rem;
+                margin-bottom:0.38rem;
             }
 
             .guide-step-title {
-                font-size:1.0rem;
-                font-weight:950;
+                font-size:var(--jfbp-type-section);
+                font-weight:900;
                 color:#111827;
-                line-height:1.2;
+                line-height:1.22;
                 margin-bottom:0.28rem;
             }
 
             .guide-step-detail {
                 color:#475569;
-                font-size:0.82rem;
+                font-size:var(--jfbp-type-caption);
                 line-height:1.36;
             }
 
@@ -240,9 +137,95 @@ def inject_navigation_guide_css() -> None:
                 background:#eff6ff;
                 color:#1e3a8a;
                 border-radius:999px;
-                padding:0.38rem 0.72rem;
-                font-weight:900;
-                font-size:0.83rem;
+                padding:0.34rem 0.66rem;
+                font-weight:850;
+                font-size:var(--jfbp-type-caption);
+                white-space:normal;
+                overflow-wrap:anywhere;
+            }
+
+            .guide-arrow {
+                color:#64748b;
+                font-weight:950;
+            }
+
+            .guide-section-card {
+                background:#ffffff;
+                border:1px solid #e5eaf3;
+                border-radius:18px;
+                padding:1rem;
+                margin:0 0 1rem 0;
+            }
+
+            .guide-card.good { background:#ecfdf5; border-color:#bbf7d0; }
+            .guide-card.warning { background:#fffbeb; border-color:#fde68a; }
+            .guide-card.risk { background:#fef2f2; border-color:#fecaca; }
+            .guide-card.info { background:#eff6ff; border-color:#bfdbfe; }
+            .guide-card.dark { background:#111827; border-color:#334155; }
+            .guide-card.dark .guide-card-title { color:#cbd5e1; }
+            .guide-card.dark .guide-card-value { color:#ffffff; }
+            .guide-card.dark .guide-card-detail { color:#e5e7eb; }
+
+            .guide-step-grid {
+                display:grid;
+                grid-template-columns: repeat(auto-fit, minmax(min(100%, 195px), 1fr));
+                gap:0.72rem;
+                margin:0.55rem 0 0.95rem 0;
+            }
+
+            .guide-step-card {
+                border:1px solid #dbe3ef;
+                background:#ffffff;
+                border-radius:14px;
+                padding:0.72rem 0.82rem;
+                min-height:96px;
+                box-shadow:0 1px 2px rgba(15, 23, 42, 0.04);
+                overflow:hidden;
+            }
+
+            .guide-step-num {
+                display:inline-flex;
+                width:1.55rem;
+                height:1.55rem;
+                align-items:center;
+                justify-content:center;
+                border-radius:999px;
+                background:#dbeafe;
+                color:#1d4ed8;
+                font-weight:950;
+                margin-bottom:0.38rem;
+            }
+
+            .guide-step-title {
+                font-size:var(--jfbp-type-section);
+                font-weight:950;
+                color:#111827;
+                line-height:1.22;
+                margin-bottom:0.28rem;
+            }
+
+            .guide-step-detail {
+                color:#475569;
+                font-size:var(--jfbp-type-caption);
+                line-height:1.36;
+            }
+
+            .guide-path {
+                display:flex;
+                flex-wrap:wrap;
+                align-items:center;
+                gap:0.45rem;
+                margin:0.55rem 0 1rem 0;
+            }
+
+            .guide-pill {
+                border:1px solid #bfdbfe;
+                background:#eff6ff;
+                color:#1e3a8a;
+                border-radius:999px;
+                padding:0.34rem 0.66rem;
+                font-weight:850;
+                font-size:var(--jfbp-type-caption);
                 white-space:normal;
                 overflow-wrap:anywhere;
             }
@@ -275,13 +258,14 @@ def inject_navigation_guide_css() -> None:
 
             .guide-check-title {
                 color:#111827;
-                font-weight:900;
+                font-weight:850;
+                font-size:var(--jfbp-type-body);
                 line-height:1.25;
             }
 
             .guide-check-detail {
                 color:#64748b;
-                font-size:0.78rem;
+                font-size:var(--jfbp-type-caption);
                 line-height:1.32;
                 margin-top:0.12rem;
             }
@@ -339,14 +323,14 @@ def guide_card(title: str, value: str, detail: str, tone: str = "neutral") -> No
 
 
 def guide_card_grid(cards: List[Dict[str, str]]) -> None:
-    pieces = ['<div class="guide-card-grid">']
+    pieces = ['<div class="jfbp-grid-card-wrap">']
     for card in cards:
-        tone = _escape(card.get("tone", "neutral"))
+        tone = card.get("tone", "neutral")
         pieces.append(
-            f'<div class="guide-card {tone}">'
-            f'<div class="guide-card-title">{_escape(card.get("title", ""))}</div>'
-            f'<div class="guide-card-value">{_escape(card.get("value", ""))}</div>'
-            f'<div class="guide-card-detail">{_escape(card.get("detail", ""))}</div>'
+            f'<div class="jfbp-card {_escape(tone)}">'
+            f'<div class="jfbp-card-label">{_escape(card.get("title", ""))}</div>'
+            f'<div class="jfbp-card-value">{_escape(card.get("value", ""))}</div>'
+            f'<div class="jfbp-card-detail">{_escape(card.get("detail", ""))}</div>'
             f'</div>'
         )
     pieces.append('</div>')
@@ -354,13 +338,13 @@ def guide_card_grid(cards: List[Dict[str, str]]) -> None:
 
 
 def step_grid(steps: List[Tuple[str, str]]) -> None:
-    pieces = ['<div class="guide-step-grid">']
+    pieces = ['<div class="jfbp-grid-card-wrap">']
     for idx, (title, detail) in enumerate(steps, start=1):
         pieces.append(
-            '<div class="guide-step-card">'
+            '<div class="jfbp-card">'
             f'<div class="guide-step-num">{idx}</div>'
-            f'<div class="guide-step-title">{_escape(title)}</div>'
-            f'<div class="guide-step-detail">{_escape(detail)}</div>'
+            f'<div class="jfbp-card-title">{_escape(title)}</div>'
+            f'<div class="jfbp-card-detail">{_escape(detail)}</div>'
             '</div>'
         )
     pieces.append('</div>')
@@ -412,10 +396,10 @@ def commander_welcome() -> None:
 
     st.markdown(
         """
-        <div class="guide-hero">
-            <div class="guide-hero-kicker">Commander Onboarding · JFBP Quant Desk</div>
-            <div class="guide-hero-title">Welcome aboard the command desk.</div>
-            <div class="guide-hero-text">
+        <div class="jfbp-hero">
+            <div class="jfbp-hero-kicker">Commander Onboarding · JFBP Quant Desk</div>
+            <div class="jfbp-hero-title">Welcome aboard the command desk.</div>
+            <div class="jfbp-hero-text">
                 This page teaches the crew how to use the platform without getting lost at sea.
                 Start with market context, find opportunity, validate the trade, route safely through OMS,
                 manage the position, and review everything in Journal.

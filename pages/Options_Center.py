@@ -427,27 +427,94 @@ def best_scanner_row() -> Dict[str, Any]:
 
 def selected_candidate() -> Dict[str, Any]:
     rows = scanner_rows()
-    default_symbol = ""
-    if rows:
-        default_symbol = best_scanner_row().get("display_symbol") or best_scanner_row().get("symbol") or ""
+
+    def normalize_symbol(value: Any) -> str:
+        return str(value or "").upper().strip().split(" ")[0].strip()
+
+    def symbol_from_ticket(ticket: Any) -> str:
+        if isinstance(ticket, dict):
+            return normalize_symbol(
+                ticket.get("symbol")
+                or ticket.get("underlying")
+                or ticket.get("display_symbol")
+                or ticket.get("Symbol")
+                or ticket.get("Opportunity")
+                or ticket.get("opportunity")
+            )
+        return ""
+
+    # Read the exact handoff published by Opportunity Center first.
+    handoff_symbol = ""
+    for key in (
+        "options_selected_opportunity",
+        "opportunity_center_handoff_ticket",
+        "opportunity_center_selected",
+        "options_handoff_ticket",
+    ):
+        handoff_symbol = symbol_from_ticket(st.session_state.get(key))
+        if handoff_symbol:
+            break
+
+    # Fallback to the shared symbol keys used across the app.
+    if not handoff_symbol:
+        for key in (
+            "options_manual_symbol",
+            "options_symbol",
+            "selected_symbol",
+            "trade_command_symbol",
+            "research_symbol",
+            "research_ticker",
+            "oms_order_symbol",
+        ):
+            handoff_symbol = normalize_symbol(st.session_state.get(key))
+            if handoff_symbol:
+                break
 
     symbols = []
     lookup = {}
+
     for row in rows:
-        symbol = row.get("display_symbol") or row.get("symbol") or ""
-        symbol = str(symbol).upper().strip()
+        symbol = normalize_symbol(row.get("display_symbol") or row.get("symbol"))
         if symbol and symbol not in lookup:
             symbols.append(symbol)
             lookup[symbol] = row
 
     if symbols:
-        chosen = st.selectbox("Options candidate", options=symbols, index=symbols.index(default_symbol) if default_symbol in symbols else 0)
+        if handoff_symbol and handoff_symbol in lookup:
+            default_symbol = handoff_symbol
+        else:
+            best = best_scanner_row()
+            default_symbol = normalize_symbol(best.get("display_symbol") or best.get("symbol"))
+            if default_symbol not in lookup:
+                default_symbol = symbols[0]
+
+        chosen = st.selectbox(
+            "Options candidate",
+            options=symbols,
+            index=symbols.index(default_symbol),
+            key="options_candidate_select_v5_2",
+        )
+
+        chosen = normalize_symbol(chosen)
+        st.session_state["options_manual_symbol"] = chosen
+        st.session_state["options_symbol"] = chosen
+        st.session_state["selected_symbol"] = chosen
+
         return lookup.get(chosen, {})
 
-    manual = st.text_input("Options candidate", value=st.session_state.get("options_manual_symbol", "AAPL"), key="options_manual_symbol")
+    manual = st.text_input(
+        "Options candidate",
+        value=handoff_symbol or st.session_state.get("options_manual_symbol", "AAPL"),
+        key="options_manual_symbol",
+    )
+
+    manual_symbol = normalize_symbol(manual)
+    st.session_state["options_symbol"] = manual_symbol
+    st.session_state["selected_symbol"] = manual_symbol
+
     return {
-        "symbol": manual.upper().strip(),
-        "display_symbol": manual.upper().strip(),
+        "symbol": manual_symbol,
+        "display_symbol": manual_symbol,
         "trade_recommendation": "WATCH",
         "opportunity_score_pct": 0,
         "overall_rating": "N/A",

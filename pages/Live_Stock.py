@@ -47,14 +47,14 @@ def inject_live_stock_responsive_css() -> None:
             }
 
             h1 {
-                font-size: clamp(1.75rem, 3.6vw, 2.35rem) !important;
+                font-size: var(--jfbp-type-h1, clamp(1.75rem, 3.6vw, 2.45rem)) !important;
                 line-height: 1.12 !important;
                 font-weight: 850 !important;
                 color: #1f2937 !important;
             }
 
             h2, h3 {
-                font-size: clamp(1.08rem, 2.2vw, 1.38rem) !important;
+                font-size: var(--jfbp-type-section, clamp(1.02rem, 1.9vw, 1.22rem)) !important;
                 line-height: 1.18 !important;
                 font-weight: 850 !important;
                 color: #1f2937 !important;
@@ -157,13 +157,13 @@ def inject_live_stock_responsive_css() -> None:
                 align-items: center;
                 gap: 0.45rem;
                 border-radius: 999px;
-                padding: 0.32rem 0.72rem;
-                font-weight: 850;
-                font-size: 0.82rem;
+                padding: 0.28rem 0.62rem;
+                font-weight: 780;
+                font-size: 0.84rem;
                 background: #eff6ff;
                 color: #1d4ed8;
                 border: 1px solid #bfdbfe;
-                margin: 0.25rem 0 0.75rem 0;
+                margin: 0.20rem 0 0.60rem 0;
                 overflow-wrap: anywhere;
             }
 
@@ -339,20 +339,20 @@ def inject_live_stock_commander_css() -> None:
                 background: #eff6ff;
                 border: 1px solid #bfdbfe;
                 border-radius: 12px;
-                padding: 0.78rem 0.9rem;
+                padding: 0.72rem 0.82rem;
                 color: #1d4ed8;
-                font-weight: 850;
-                margin: 0.85rem 0 0.85rem 0;
-                line-height: 1.35;
+                font-weight: 750;
+                margin: 0.50rem 0 0.78rem 0;
+                line-height: 1.4;
             }
 
             .jfbp-live-hero {
                 border: 1px solid #bbf7d0;
                 background: #ecfdf5;
-                border-radius: 16px;
-                padding: 0.78rem 0.95rem;
-                margin: 0.70rem 0 0.85rem 0;
-                box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+                border-radius: 18px;
+                padding: 0.88rem 0.92rem;
+                margin: 0.60rem 0 0.82rem 0;
+                box-shadow: 0 2px 10px rgba(15, 23, 42, 0.05);
             }
             .jfbp-live-hero.watch {
                 border-color: #fde68a;
@@ -368,46 +368,46 @@ def inject_live_stock_commander_css() -> None:
             }
 
             .jfbp-live-kicker {
-                font-size: 0.68rem;
-                letter-spacing: 0.075em;
+                font-size: var(--jfbp-type-card-label, 0.72rem);
+                letter-spacing: 0.055em;
                 text-transform: uppercase;
                 color: #64748b;
-                font-weight: 950;
-                margin-bottom: 0.22rem;
+                font-weight: 850;
+                margin-bottom: 0.24rem;
             }
 
             .jfbp-live-hero-title {
-                font-size: clamp(1.32rem, 2.8vw, 2.05rem);
-                line-height: 1.04;
-                font-weight: 950;
+                font-size: clamp(1.22rem, 2.35vw, 1.62rem);
+                line-height: 1.14;
+                font-weight: 880;
                 color: #166534;
-                margin-bottom: 0.28rem;
+                margin-bottom: 0.30rem;
             }
             .jfbp-live-hero.watch .jfbp-live-hero-title { color: #92400e; }
             .jfbp-live-hero.risk .jfbp-live-hero-title { color: #991b1b; }
             .jfbp-live-hero.info .jfbp-live-hero-title { color: #1d4ed8; }
 
             .jfbp-live-summary {
-                font-size: clamp(0.84rem, 1.35vw, 0.96rem);
+                font-size: var(--jfbp-type-body, 0.94rem);
                 color: #1f2937;
-                font-weight: 850;
-                line-height: 1.35;
+                font-weight: 700;
+                line-height: 1.38;
             }
 
             .jfbp-live-action {
-                margin-top: 0.50rem;
+                margin-top: 0.36rem;
                 background: #ffffff;
                 border: 1px solid #dbe3ef;
-                border-radius: 11px;
-                padding: 0.55rem 0.70rem;
+                border-radius: 12px;
+                padding: 0.60rem 0.78rem;
                 color: #111827;
-                font-size: 0.88rem;
-                font-weight: 850;
-                line-height: 1.30;
+                font-size: var(--jfbp-type-body, 0.94rem);
+                font-weight: 820;
+                line-height: 1.35;
             }
 
             .jfbp-live-table-guard {
-                margin-bottom: 1.25rem;
+                margin-bottom: 0.90rem;
             }
 
             @media (max-width: 760px) {
