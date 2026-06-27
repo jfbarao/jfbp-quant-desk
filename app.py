@@ -374,6 +374,15 @@ def _sidebar_group(title: str, caption: str, page_items: list[tuple[str, str]], 
 def workflow_sidebar_navigation() -> str:
     st.session_state.setdefault("jfbp_main_navigation", "Opportunity Center")
     current = st.session_state.get("jfbp_main_navigation", "Opportunity Center")
+    current_user = get_current_user()
+    admin_pages = {"SaaS Core", "Admin Control Center"}
+
+    # Never expose internal admin pages to regular users. If a non-admin
+    # session was previously parked on an admin page, move it back to the
+    # normal workflow start page before rendering the sidebar.
+    if current in admin_pages and not is_admin_user(current_user):
+        current = "Opportunity Center"
+        st.session_state["jfbp_main_navigation"] = current
 
     groups = [
         {
@@ -460,6 +469,9 @@ def workflow_sidebar_navigation() -> str:
     ]
 
     for group in groups:
+        if group["title"] == "🔐 Admin" and not is_admin_user(current_user):
+            continue
+
         page_keys = [page_key for _, page_key in group["items"]]
         expanded = bool(group.get("always_open")) or _section_is_active(current, page_keys)
         _sidebar_group(
@@ -505,10 +517,10 @@ ACCESS_NAME_BY_PAGE = {
     "Admin Control Center": "Admin Control Center",
 }
 
-# Keep the SaaS control room reachable after login while Stripe/admin roles are
-# still being wired. The public front door remains locked for everyone else.
-ALWAYS_ALLOW_AFTER_LOGIN = {"SaaS Core", "Admin Control Center"}
-ADMIN_ONLY_PAGES = {"Admin Control Center"}
+# Internal operating pages must be admin-only. They are hidden from regular
+# users in the sidebar and blocked again here at the router layer.
+ALWAYS_ALLOW_AFTER_LOGIN = set()
+ADMIN_ONLY_PAGES = {"SaaS Core", "Admin Control Center"}
 
 
 def render_front_door() -> None:
