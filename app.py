@@ -130,6 +130,7 @@ try:
         render_auth_panel,
         require_page_access,
         supabase_logout,
+        is_admin_user,
     )
 except Exception as saas_import_error:
     def saas_core_page(_err=saas_import_error):
@@ -161,6 +162,19 @@ except Exception as saas_import_error:
         st.session_state["saas_logged_in"] = False
         st.session_state["saas_user"] = None
         return True, "Logged out."
+
+    def is_admin_user(user):
+        return False
+
+
+try:
+    from pages.Admin_Control_Center import run_page as admin_control_center_page
+except Exception as admin_control_import_error:
+    def admin_control_center_page(_err=admin_control_import_error):
+        st.title("🛡️ Admin Control Center")
+        st.error("Admin Control Center could not be loaded.")
+        st.caption("Make sure Admin_Control_Center.py is saved inside the pages folder.")
+        st.exception(_err)
 
 
 st.set_page_config(
@@ -439,6 +453,7 @@ def workflow_sidebar_navigation() -> str:
             "caption": "SaaS infrastructure and subscription controls.",
             "items": [
                 ("🔐 SaaS Core", "SaaS Core"),
+                ("🛡️ Admin Control Center", "Admin Control Center"),
             ],
             "always_open": False,
         },
@@ -487,11 +502,13 @@ ACCESS_NAME_BY_PAGE = {
     "Gold Pulse": "Gold Pulse",
     "Oil Pulse": "Oil Pulse",
     "SaaS Core": "SaaS Core",
+    "Admin Control Center": "Admin Control Center",
 }
 
 # Keep the SaaS control room reachable after login while Stripe/admin roles are
 # still being wired. The public front door remains locked for everyone else.
-ALWAYS_ALLOW_AFTER_LOGIN = {"SaaS Core"}
+ALWAYS_ALLOW_AFTER_LOGIN = {"SaaS Core", "Admin Control Center"}
+ADMIN_ONLY_PAGES = {"Admin Control Center"}
 
 
 def render_front_door() -> None:
@@ -530,8 +547,13 @@ def enforce_app_login() -> bool:
 
 
 def run_protected_page(page_key: str, runner) -> None:
-    """Run a page only when the logged-in user has plan access."""
+    """Run a page only when the logged-in user has plan or admin access."""
     access_name = ACCESS_NAME_BY_PAGE.get(page_key, page_key)
+    current_user = get_current_user()
+
+    if access_name in ADMIN_ONLY_PAGES and not is_admin_user(current_user):
+        st.error("Admin access required.")
+        return
 
     if access_name not in ALWAYS_ALLOW_AFTER_LOGIN:
         if not require_page_access(access_name):
@@ -656,6 +678,9 @@ def app():
 
     elif page == "SaaS Core":
         run_protected_page(page, saas_core_page)
+
+    elif page == "Admin Control Center":
+        run_protected_page(page, admin_control_center_page)
 
     else:
         empty_page("Unknown Page")
