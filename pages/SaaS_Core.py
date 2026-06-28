@@ -6,12 +6,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
+import requests
 import streamlit as st
 
 from core.responsive import inject_responsive_css
@@ -19,8 +21,10 @@ from core.ui_cards import inject_card_css
 
 try:
     import stripe
-except Exception:  # pragma: no cover
+    STRIPE_IMPORT_ERROR = None
+except ImportError as exc:  # pragma: no cover
     stripe = None
+    STRIPE_IMPORT_ERROR = exc
 
 try:
     from supabase import create_client
@@ -144,6 +148,22 @@ PLAN_TRADING_MODE = {
     PLAN_ELITE: "LIVE ENABLED",
 }
 
+TRIAL_RISK_LOW = "LOW"
+TRIAL_RISK_MEDIUM = "MEDIUM"
+TRIAL_RISK_HIGH = "HIGH"
+
+DISPOSABLE_EMAIL_DOMAINS = {
+    "10minutemail.com",
+    "guerrillamail.com",
+    "mailinator.com",
+    "tempmail.com",
+    "temp-mail.org",
+    "yopmail.com",
+}
+
+# Temporary launch hardening flag for auth/metadata diagnostics.
+AUTH_DEBUG = False
+
 
 # =========================================================
 # DATA MODELS
@@ -248,6 +268,10 @@ def init_saas_state() -> None:
     st.session_state.setdefault("saas_auth_last_message", "")
     st.session_state.setdefault("saas_onboarding_ready", False)
     st.session_state.setdefault("saas_onboarding_debug", {})
+    st.session_state.setdefault("saas_metadata_debug_message", "")
+    st.session_state.setdefault("saas_auth_debug", {})
+    st.session_state.setdefault("saas_trial_warning_message", "")
+    st.session_state.setdefault("saas_trial_protection", {})
 
 
 def clear_stripe_checkout_state() -> None:
@@ -262,6 +286,463 @@ def clear_stripe_checkout_state() -> None:
             del st.session_state[key]
         elif str(key).startswith("stripe_checkout_owner_"):
             del st.session_state[key]
+
+
+def _request_headers() -> Dict[str, str]:
+    ctx = getattr(st, "context", None)
+    headers = getattr(ctx, "headers", None)
+    if headers is None:
+        return {}
+
+    try:
+        return {str(key).lower(): str(value) for key, value in headers.items()}
+    except Exception:
+        return {}
+
+
+def _request_header(headers: Dict[str, str], *names: str) -> str:
+    for name in names:
+        value = str(headers.get(name.lower(), "") or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _client_ip(headers: Dict[str, str]) -> str:
+    raw = _request_header(
+        headers,
+        "x-forwarded-for",
+        "x-real-ip",
+        "cf-connecting-ip",
+        "x-client-ip",
+        "forwarded",
+    )
+    if not raw:
+        return "UNKNOWN"
+
+    if "," in raw:
+        return raw.split(",", 1)[0].strip() or "UNKNOWN"
+    return raw.strip() or "UNKNOWN"
+
+
+def _signup_country(headers: Dict[str, str]) -> str:
+    country = _request_header(
+        headers,
+        "cf-ipcountry",
+        "cloudfront-viewer-country",
+        "x-appengine-country",
+        "x-country-code",
+    )
+    return country.upper() if country else "UNKNOWN"
+
+
+def _signup_city(headers: Dict[str, str]) -> str:
+    city = _request_header(
+        headers,
+        "x-vercel-ip-city",
+        "cloudfront-viewer-city",
+        "x-appengine-city",
+        "cf-ipcity",
+        "x-city",
+    )
+    return city.strip() if city else "UNKNOWN"
+
+
+def _user_agent(headers: Dict[str, str]) -> str:
+    return _request_header(headers, "user-agent") or "UNKNOWN"
+
+
+def _browser_from_user_agent(user_agent: Any) -> str:
+    text = str(user_agent or "").lower()
+    if not text or text == "unknown":
+        return "UNKNOWN"
+    if "edg/" in text:
+        return "Edge"
+    if "chrome/" in text and "edg/" not in text:
+        return "Chrome"
+    if "safari/" in text and "chrome/" not in text:
+        return "Safari"
+    if "firefox/" in text:
+        return "Firefox"
+    if "opr/" in text or "opera" in text:
+        return "Opera"
+    return "Other"
+
+
+def _os_from_user_agent(user_agent: Any) -> str:
+    text = str(user_agent or "").lower()
+    if not text or text == "unknown":
+        return "UNKNOWN"
+    if "windows" in text:
+        return "Windows"
+    if "iphone" in text or "ipad" in text or "ios" in text:
+        return "iOS"
+    if "android" in text:
+        return "Android"
+    if "macintosh" in text or "mac os" in text:
+        return "macOS"
+    if "linux" in text:
+        return "Linux"
+    return "Other"
+
+
+def _device_id(headers: Dict[str, str]) -> str:
+    fingerprint_parts = [
+        _request_header(headers, "user-agent"),
+        _request_header(headers, "accept-language"),
+        _request_header(headers, "sec-ch-ua"),
+        _request_header(headers, "sec-ch-ua-platform"),
+        _request_header(headers, "accept-encoding"),
+    ]
+    normalized = "|".join(part.strip() for part in fingerprint_parts if str(part or "").strip())
+    if not normalized:
+        return "fallback:unknown-device"
+    return "fallback:" + hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:20]
+
+
+def _proxy_or_vpn_signal(headers: Dict[str, str]) -> bool:
+    via_header = _request_header(headers, "via")
+    forwarded_for = _request_header(headers, "x-forwarded-for")
+    forwarded = _request_header(headers, "forwarded")
+    return bool(via_header or forwarded or (forwarded_for and "," in forwarded_for))
+
+
+def _parse_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(float(value))
+    except Exception:
+        return default
+
+
+def _signup_fingerprint() -> Dict[str, Any]:
+    headers = _request_headers()
+    now = _utc_now()
+    user_agent = _user_agent(headers)
+    device_fingerprint = _device_id(headers)
+    return {
+        "signup_ip": _client_ip(headers),
+        "signup_country": _signup_country(headers),
+        "signup_city": _signup_city(headers),
+        "city": _signup_city(headers),
+        "device_id": device_fingerprint,
+        "device_fingerprint": device_fingerprint,
+        "user_agent": user_agent,
+        "browser": _browser_from_user_agent(user_agent),
+        "operating_system": _os_from_user_agent(user_agent),
+        "trial_started_at": now.isoformat(),
+        "last_ip_activity": now.isoformat(),
+        "vpn_or_proxy": _proxy_or_vpn_signal(headers),
+        "captured_at": now.isoformat(),
+    }
+
+
+def _login_metadata() -> Dict[str, Any]:
+    headers = _request_headers()
+    now = _utc_now()
+    user_agent = _user_agent(headers)
+    country = _signup_country(headers)
+    city = _signup_city(headers)
+    login_ip = _client_ip(headers)
+    device_fingerprint = _device_id(headers)
+    return {
+        "last_login_ip": login_ip,
+        "last_login_country": country,
+        "last_login_city": city,
+        "user_agent": user_agent,
+        "browser": _browser_from_user_agent(user_agent),
+        "operating_system": _os_from_user_agent(user_agent),
+        "device_id": device_fingerprint,
+        "device_fingerprint": device_fingerprint,
+        "last_login_at": now.isoformat(),
+        "last_ip_activity": now.isoformat(),
+    }
+
+
+def _collect_login_metadata() -> Dict[str, Any]:
+    """Collect request/session metadata only; no database writes here."""
+    metadata = _login_metadata()
+    metadata["timestamp"] = str(metadata.get("last_login_at") or _utc_now().isoformat())
+    return metadata
+
+
+def _merge_profile_metadata(base_profile: Dict[str, Any], runtime_metadata: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(runtime_metadata)
+    merged["signup_ip"] = str(base_profile.get("signup_ip") or runtime_metadata.get("signup_ip") or "UNKNOWN")
+    merged["signup_country"] = str(base_profile.get("signup_country") or runtime_metadata.get("signup_country") or "UNKNOWN")
+    merged["signup_city"] = str(base_profile.get("signup_city") or base_profile.get("city") or runtime_metadata.get("signup_city") or runtime_metadata.get("last_login_city") or "UNKNOWN")
+    merged["city"] = str(base_profile.get("city") or merged["signup_city"] or "UNKNOWN")
+    merged["user_agent"] = str(runtime_metadata.get("user_agent") or base_profile.get("user_agent") or "UNKNOWN")
+    merged["browser"] = str(runtime_metadata.get("browser") or base_profile.get("browser") or _browser_from_user_agent(merged["user_agent"]))
+    merged["operating_system"] = str(runtime_metadata.get("operating_system") or base_profile.get("operating_system") or _os_from_user_agent(merged["user_agent"]))
+    merged["device_id"] = str(runtime_metadata.get("device_id") or base_profile.get("device_id") or "fallback:unknown-device")
+    merged["device_fingerprint"] = str(runtime_metadata.get("device_fingerprint") or base_profile.get("device_fingerprint") or merged["device_id"])
+    return merged
+
+
+def _prefer_known(collected: Any, existing: Any, fallback: str = "UNKNOWN") -> str:
+    collected_text = str(collected or "").strip()
+    existing_text = str(existing or "").strip()
+    if collected_text and collected_text.upper() != "UNKNOWN":
+        return collected_text
+    if existing_text:
+        return existing_text
+    return fallback
+
+
+def _save_login_metadata(
+    client: Any,
+    user_id: str,
+    profile_row: Dict[str, Any],
+    login_metadata: Dict[str, Any],
+) -> tuple[bool, str, Dict[str, Any], Any]:
+    """Persist login metadata to user_profiles with minimal, non-destructive updates."""
+    if client is None or not user_id:
+        return False, "Missing client or user_id", {}, None
+
+    now_iso = str(login_metadata.get("timestamp") or login_metadata.get("last_login_at") or _utc_now().isoformat())
+    current_total = _safe_int(profile_row.get("total_logins"), 0)
+    payload: Dict[str, Any] = {}
+
+    target_last_login = {
+        "last_login_ip": _prefer_known(login_metadata.get("last_login_ip"), profile_row.get("last_login_ip")),
+        "last_login_country": _prefer_known(login_metadata.get("last_login_country"), profile_row.get("last_login_country")),
+        "last_login_city": _prefer_known(login_metadata.get("last_login_city"), profile_row.get("last_login_city")),
+        "browser": _prefer_known(login_metadata.get("browser"), profile_row.get("browser")),
+        "operating_system": _prefer_known(login_metadata.get("operating_system"), profile_row.get("operating_system")),
+        "user_agent": _prefer_known(login_metadata.get("user_agent"), profile_row.get("user_agent")),
+        "device_id": _prefer_known(login_metadata.get("device_id"), profile_row.get("device_id"), "fallback:unknown-device"),
+        "device_fingerprint": _prefer_known(
+            login_metadata.get("device_fingerprint") or login_metadata.get("device_id"),
+            profile_row.get("device_fingerprint") or profile_row.get("device_id"),
+            "fallback:unknown-device",
+        ),
+    }
+
+    for key, target_value in target_last_login.items():
+        existing = str(profile_row.get(key) or "").strip()
+        if target_value != existing:
+            payload[key] = target_value
+
+    payload["last_login_at"] = now_iso
+    payload["last_ip_activity"] = now_iso
+    payload["total_logins"] = current_total + 1
+
+    if not str(profile_row.get("first_login_at") or "").strip():
+        payload["first_login_at"] = now_iso
+
+    if not str(profile_row.get("signup_ip") or "").strip():
+        payload["signup_ip"] = _prefer_known(login_metadata.get("last_login_ip"), None)
+    if not str(profile_row.get("signup_country") or "").strip():
+        payload["signup_country"] = _prefer_known(login_metadata.get("last_login_country"), None)
+    if not str(profile_row.get("signup_city") or profile_row.get("city") or "").strip():
+        signup_city = _prefer_known(login_metadata.get("last_login_city"), None)
+        payload["signup_city"] = signup_city
+        payload["city"] = signup_city
+
+    try:
+        response = client.table("user_profiles").update(payload).eq("user_id", user_id).execute()
+        return True, "Login metadata updated.", payload, response
+    except Exception as exc:
+        return False, str(exc), payload, None
+
+
+def _update_login_metadata(client: Any, user_id: str, profile_row: Dict[str, Any], login_metadata: Dict[str, Any]) -> tuple[bool, str]:
+    ok, message, _, _ = _save_login_metadata(client, user_id, profile_row, login_metadata)
+    return ok, message
+
+
+def _record_metadata_debug(success: bool, message: str, payload: Optional[Dict[str, Any]] = None) -> None:
+    debug_payload = dict(st.session_state.get("saas_onboarding_debug", {}))
+    debug_payload["metadata_write"] = {
+        "ok": bool(success),
+        "message": str(message or ""),
+        "payload": payload or {},
+    }
+    st.session_state["saas_onboarding_debug"] = debug_payload
+
+
+def _set_auth_debug(stage: str, data: Dict[str, Any]) -> None:
+    if not AUTH_DEBUG:
+        return
+    debug_state = dict(st.session_state.get("saas_auth_debug", {}))
+    debug_state[str(stage)] = data
+    st.session_state["saas_auth_debug"] = debug_state
+
+
+def _reset_auth_debug() -> None:
+    if AUTH_DEBUG:
+        st.session_state["saas_auth_debug"] = {}
+
+
+def _service_role_rest_config() -> tuple[str, str]:
+    url = _secret_value("SUPABASE_URL").rstrip("/")
+    key = _secret_value("SUPABASE_SERVICE_ROLE_KEY") or _secret_value("SUPABASE_ANON_KEY")
+    return url, key
+
+
+def _service_role_headers() -> Dict[str, str]:
+    _, key = _service_role_rest_config()
+    return {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+
+
+def _trial_profile_snapshot() -> List[Dict[str, Any]]:
+    url, key = _service_role_rest_config()
+    if not url or not key:
+        return []
+
+    endpoint = f"{url}/rest/v1/user_profiles"
+    params = {
+        "select": (
+            "user_id,email,signup_ip,signup_country,device_id,user_agent,"
+            "trial_started_at,trial_attempts,risk_score,trial_whitelisted,"
+            "trial_ignored,trial_blocked,last_ip_activity,created_at"
+        ),
+        "trial_started_at": "not.is.null",
+        "limit": "5000",
+        "order": "trial_started_at.desc",
+    }
+
+    try:
+        response = requests.get(
+            endpoint,
+            headers=_service_role_headers(),
+            params=params,
+            timeout=20,
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _risk_level(score: int) -> str:
+    if score > 60:
+        return TRIAL_RISK_HIGH
+    if score >= 30:
+        return TRIAL_RISK_MEDIUM
+    return TRIAL_RISK_LOW
+
+
+def _email_domain(email: str) -> str:
+    parts = str(email or "").strip().lower().split("@")
+    return parts[-1] if len(parts) == 2 else ""
+
+
+def _is_disposable_email(email: str) -> bool:
+    return _email_domain(email) in DISPOSABLE_EMAIL_DOMAINS
+
+
+def evaluate_trial_protection(email: str, signup_context: Dict[str, Any]) -> Dict[str, Any]:
+    clean_email = str(email or "").strip().lower()
+    now = _utc_now()
+    profiles = _trial_profile_snapshot()
+
+    signup_ip = str(signup_context.get("signup_ip") or "UNKNOWN")
+    device_id = str(signup_context.get("device_id") or "UNKNOWN")
+
+    eligible_rows = [
+        row for row in profiles
+        if not _parse_bool(row.get("trial_ignored")) and not _parse_bool(row.get("trial_whitelisted"))
+    ]
+
+    same_ip_rows_30d = []
+    same_ip_rows_24h = []
+    same_device_rows = []
+    email_rows = []
+    same_device_other_email_rows = []
+
+    for row in eligible_rows:
+        trial_started_at = _parse_dt(row.get("trial_started_at"), fallback=None)
+        row_ip = str(row.get("signup_ip") or "").strip()
+        row_device = str(row.get("device_id") or "").strip()
+        row_email = str(row.get("email") or "").strip().lower()
+
+        if clean_email and row_email == clean_email:
+            email_rows.append(row)
+
+        if signup_ip != "UNKNOWN" and row_ip == signup_ip and trial_started_at is not None:
+            if now - trial_started_at <= timedelta(days=30):
+                same_ip_rows_30d.append(row)
+            if now - trial_started_at <= timedelta(hours=24):
+                same_ip_rows_24h.append(row)
+
+        if device_id != "UNKNOWN" and row_device == device_id:
+            same_device_rows.append(row)
+            if row_email and row_email != clean_email:
+                same_device_other_email_rows.append(row)
+
+    blocked_existing = any(_parse_bool(row.get("trial_blocked")) for row in profiles if str(row.get("email") or "").strip().lower() == clean_email)
+    if not blocked_existing and signup_ip != "UNKNOWN":
+        blocked_existing = any(_parse_bool(row.get("trial_blocked")) for row in profiles if str(row.get("signup_ip") or "").strip() == signup_ip)
+    if not blocked_existing and device_id != "UNKNOWN":
+        blocked_existing = any(_parse_bool(row.get("trial_blocked")) for row in profiles if str(row.get("device_id") or "").strip() == device_id)
+
+    score = 0
+    fraud_flags: List[str] = []
+    if same_device_other_email_rows:
+        score += 30
+        fraud_flags.append("REPEAT_DEVICE")
+    if same_ip_rows_30d:
+        score += 20
+        fraud_flags.append("REPEAT_IP")
+    if bool(signup_context.get("vpn_or_proxy")):
+        score += 25
+        fraud_flags.append("VPN_PROXY")
+    if _is_disposable_email(clean_email):
+        score += 15
+        fraud_flags.append("DISPOSABLE_EMAIL")
+
+    risk = _risk_level(score)
+    prior_attempts = max(len(same_device_rows), len(same_ip_rows_30d), len(email_rows), 0)
+    trial_attempts = prior_attempts + 1
+    last_ip_activity = same_ip_rows_30d[0].get("last_ip_activity") if same_ip_rows_30d else signup_context.get("last_ip_activity")
+
+    blocked = blocked_existing or score > 80
+    warning = not blocked and score > 60
+    allow = not blocked
+
+    if score > 60 and "HIGH_RISK" not in fraud_flags:
+        fraud_flags.append("HIGH_RISK")
+    if blocked and "BLOCK_TRIAL" not in fraud_flags:
+        fraud_flags.append("BLOCK_TRIAL")
+
+    message = ""
+    if blocked:
+        message = "The free trial has already been used. Please subscribe or contact support if you believe this is an error."
+    elif warning:
+        message = "It looks like a trial has already been used from this network."
+
+    result = {
+        "allow": allow,
+        "blocked": blocked,
+        "warning": warning,
+        "risk": risk,
+        "risk_score": score,
+        "trial_attempts": trial_attempts,
+        "repeat_ips": len(same_ip_rows_30d),
+        "repeat_devices": len(same_device_other_email_rows),
+        "same_ip_trials_30d": len(same_ip_rows_30d),
+        "same_ip_trials_24h": len(same_ip_rows_24h),
+        "same_device_trials": len(same_device_rows),
+        "disposable_email": _is_disposable_email(clean_email),
+        "vpn_or_proxy": bool(signup_context.get("vpn_or_proxy")),
+        "fraud_flags": ",".join(fraud_flags),
+        "last_ip_activity": last_ip_activity,
+        "message": message,
+    }
+    st.session_state["saas_trial_protection"] = result
+    return result
 
 
 # =========================================================
@@ -423,22 +904,55 @@ def _create_profile_record(
     account_status: str,
     trial_start: datetime,
     trial_end: datetime,
+    trial_metadata: Optional[Dict[str, Any]] = None,
 ) -> list:
     existing = _verified_user_row(client, "user_profiles", user_id)
     if existing:
         return existing
 
-    client.table("user_profiles").insert(
-        {
-            "user_id": user_id,
-            "email": email.strip().lower(),
-            "full_name": full_name.strip() or "JFBP User",
-            "plan": plan,
-            "account_status": account_status,
-            "trial_start": trial_start.isoformat(),
-            "trial_end": trial_end.isoformat(),
-        }
-    ).execute()
+    payload = {
+        "user_id": user_id,
+        "email": email.strip().lower(),
+        "full_name": full_name.strip() or "JFBP User",
+        "plan": plan,
+        "account_status": account_status,
+        "trial_start": trial_start.isoformat(),
+        "trial_end": trial_end.isoformat(),
+    }
+
+    if trial_metadata:
+        payload.update(
+            {
+                "signup_ip": trial_metadata.get("signup_ip"),
+                "signup_country": trial_metadata.get("signup_country"),
+                "signup_city": trial_metadata.get("signup_city"),
+                "city": trial_metadata.get("city"),
+                "device_id": trial_metadata.get("device_id"),
+                "device_fingerprint": trial_metadata.get("device_fingerprint"),
+                "user_agent": trial_metadata.get("user_agent"),
+                "browser": trial_metadata.get("browser", "UNKNOWN"),
+                "operating_system": trial_metadata.get("operating_system", "UNKNOWN"),
+                "trial_started_at": trial_metadata.get("trial_started_at") or trial_start.isoformat(),
+                "trial_attempts": trial_metadata.get("trial_attempts", 1),
+                "repeat_ips": trial_metadata.get("repeat_ips", 0),
+                "repeat_devices": trial_metadata.get("repeat_devices", 0),
+                "risk_score": trial_metadata.get("risk_score", 0),
+                "fraud_flags": trial_metadata.get("fraud_flags", ""),
+                "last_ip_activity": trial_metadata.get("last_ip_activity") or trial_start.isoformat(),
+                "first_login_at": trial_metadata.get("first_login_at"),
+                "last_login_at": trial_metadata.get("last_login_at"),
+                "last_login_ip": trial_metadata.get("last_login_ip"),
+                "last_login_country": trial_metadata.get("last_login_country"),
+                "last_login_city": trial_metadata.get("last_login_city"),
+                "total_logins": trial_metadata.get("total_logins", 0),
+                "trial_whitelisted": trial_metadata.get("trial_whitelisted", False),
+                "trial_ignored": trial_metadata.get("trial_ignored", False),
+                "trial_blocked": trial_metadata.get("trial_blocked", False),
+                "trial_notes": trial_metadata.get("trial_notes", ""),
+            }
+        )
+
+    client.table("user_profiles").insert(payload).execute()
 
     return _verified_user_row(client, "user_profiles", user_id)
 
@@ -522,11 +1036,43 @@ def ensure_user_workspace_records(
     account_status = str(meta.get("account_status") or ACCOUNT_TRIAL)
     trial_start = _parse_dt(meta.get("trial_start"), fallback=now)
     trial_end = _parse_dt(meta.get("trial_end"), fallback=trial_start + timedelta(days=30))
+    login_metadata = _login_metadata()
+    merged_metadata = _merge_profile_metadata(meta, login_metadata)
+    trial_metadata = {
+        "signup_ip": merged_metadata.get("signup_ip"),
+        "signup_country": merged_metadata.get("signup_country"),
+        "signup_city": merged_metadata.get("signup_city"),
+        "city": merged_metadata.get("city"),
+        "device_id": merged_metadata.get("device_id"),
+        "device_fingerprint": merged_metadata.get("device_fingerprint"),
+        "user_agent": merged_metadata.get("user_agent"),
+        "browser": merged_metadata.get("browser"),
+        "operating_system": merged_metadata.get("operating_system"),
+        "trial_started_at": meta.get("trial_started_at") or trial_start.isoformat(),
+        "trial_attempts": _safe_int(meta.get("trial_attempts"), 1),
+        "repeat_ips": _safe_int(meta.get("repeat_ips"), 0),
+        "repeat_devices": _safe_int(meta.get("repeat_devices"), 0),
+        "risk_score": _safe_int(meta.get("risk_score"), 0),
+        "fraud_flags": str(meta.get("fraud_flags") or ""),
+        "last_ip_activity": meta.get("last_ip_activity") or trial_start.isoformat(),
+        "first_login_at": meta.get("first_login_at"),
+        "last_login_at": meta.get("last_login_at"),
+        "last_login_ip": meta.get("last_login_ip"),
+        "last_login_country": meta.get("last_login_country"),
+        "last_login_city": meta.get("last_login_city"),
+        "total_logins": _safe_int(meta.get("total_logins"), 0),
+        "trial_whitelisted": _parse_bool(meta.get("trial_whitelisted")),
+        "trial_ignored": _parse_bool(meta.get("trial_ignored")),
+        "trial_blocked": _parse_bool(meta.get("trial_blocked")),
+        "trial_notes": str(meta.get("trial_notes") or ""),
+    }
 
     debug.update(
         {
             "plan": plan,
             "account_status": account_status,
+            "trial_attempts": trial_metadata.get("trial_attempts", 1),
+            "risk_score": trial_metadata.get("risk_score", 0),
         }
     )
 
@@ -540,6 +1086,7 @@ def ensure_user_workspace_records(
             account_status=account_status,
             trial_start=trial_start,
             trial_end=trial_end,
+            trial_metadata=trial_metadata,
         )
         subscription_rows = _create_subscription_record(
             client=client,
@@ -665,6 +1212,125 @@ def build_saas_user_from_auth(auth_user: Any, selected_plan: str | None = None) 
     )
 
 
+def authenticate_user(auth_response: Any) -> tuple[Any, Any, str]:
+    user = _auth_response_user(auth_response)
+    session = _auth_response_session(auth_response)
+    access_token, _ = _get_session_tokens(session)
+    _set_auth_debug(
+        "authenticate_user",
+        {
+            "has_user": user is not None,
+            "has_session": session is not None,
+            "has_access_token": bool(access_token),
+            "user_id": _auth_user_id(user) if user is not None else "",
+        },
+    )
+    return user, session, access_token
+
+
+def initialize_session(user: Any, session: Any, selected_plan: str | None = None) -> Any:
+    new_user_id = _auth_user_id(user)
+    old_user = st.session_state.get("saas_user")
+    old_user_id = str(getattr(old_user, "user_id", "") or "")
+    if old_user_id and old_user_id != new_user_id:
+        clear_stripe_checkout_state()
+
+    client = get_supabase_client()
+    session_applied = False
+    if client is not None:
+        session_applied = _apply_auth_session_to_client(client, session)
+
+    st.session_state["saas_auth_session"] = session
+    st.session_state["saas_user"] = build_saas_user_from_auth(user, selected_plan=selected_plan)
+    st.session_state["saas_logged_in"] = True
+
+    _set_auth_debug(
+        "initialize_session",
+        {
+            "old_user_id": old_user_id,
+            "new_user_id": new_user_id,
+            "session_applied_to_client": session_applied,
+        },
+    )
+    return client
+
+
+def ensure_user_profile(user: Any, selected_plan: str | None, session: Any, client: Any) -> tuple[bool, str, Dict[str, Any]]:
+    onboarding_ok, onboarding_message = ensure_user_workspace_records(
+        user,
+        selected_plan=selected_plan,
+        auth_session=session,
+    )
+    refreshed_profile = (
+        _profile_row_for_auth_user(client, _auth_user_id(user), _auth_user_email(user))
+        if client is not None
+        else {}
+    )
+    _set_auth_debug(
+        "ensure_user_profile",
+        {
+            "onboarding_ok": onboarding_ok,
+            "onboarding_message": onboarding_message,
+            "profile_found": bool(refreshed_profile),
+        },
+    )
+    return onboarding_ok, onboarding_message, refreshed_profile
+
+
+def capture_login_metadata() -> Dict[str, Any]:
+    metadata = _collect_login_metadata()
+    _set_auth_debug(
+        "capture_login_metadata",
+        {
+            "last_login_ip": metadata.get("last_login_ip"),
+            "last_login_country": metadata.get("last_login_country"),
+            "last_login_city": metadata.get("last_login_city"),
+            "device_fingerprint": metadata.get("device_fingerprint"),
+        },
+    )
+    return metadata
+
+
+def persist_login_metadata(client: Any, user: Any, profile_row: Dict[str, Any], login_metadata: Dict[str, Any]) -> tuple[bool, str]:
+    user_id = _auth_user_id(user)
+    login_ok, login_message, payload, _ = _save_login_metadata(
+        client=client,
+        user_id=user_id,
+        profile_row=profile_row,
+        login_metadata=login_metadata,
+    )
+    _record_metadata_debug(login_ok, login_message, login_metadata)
+
+    if login_ok:
+        st.session_state["saas_metadata_debug_message"] = "✓ Metadata write successful"
+    else:
+        st.session_state["saas_metadata_debug_message"] = f"✗ Metadata write failed:\n{login_message}"
+
+    _set_auth_debug(
+        "persist_login_metadata",
+        {
+            "ok": login_ok,
+            "message": login_message,
+            "payload_keys": sorted(list(payload.keys())),
+            "user_id": user_id,
+        },
+    )
+    return login_ok, login_message
+
+
+def finalize_login(user: Any, selected_plan: str | None, onboarding_ok: bool, onboarding_message: str) -> None:
+    st.session_state["saas_user"] = build_saas_user_from_auth(user, selected_plan=selected_plan)
+    st.session_state["saas_auth_last_message"] = onboarding_message
+    st.session_state["saas_onboarding_ready"] = onboarding_ok
+    _set_auth_debug(
+        "finalize_login",
+        {
+            "onboarding_ok": onboarding_ok,
+            "onboarding_message": onboarding_message,
+        },
+    )
+
+
 def set_authenticated_session(auth_response: Any, selected_plan: str | None = None) -> bool:
     """Store a real logged-in session and run onboarding.
 
@@ -673,13 +1339,12 @@ def set_authenticated_session(auth_response: Any, selected_plan: str | None = No
     in and must NOT attempt RLS-protected inserts.
     """
     try:
-        session = _auth_response_session(auth_response)
-        user = _auth_response_user(auth_response)
+        _reset_auth_debug()
+        user, session, access_token = authenticate_user(auth_response)
 
         if user is None:
             return False
 
-        access_token, _ = _get_session_tokens(session)
         if not access_token:
             clear_stripe_checkout_state()
             st.session_state["saas_logged_in"] = False
@@ -696,31 +1361,42 @@ def set_authenticated_session(auth_response: Any, selected_plan: str | None = No
                 "session_applied_to_client": False,
                 "error": "no_session_returned_by_supabase",
             }
+            _set_auth_debug(
+                "missing_session",
+                {
+                    "user_id": _auth_user_id(user),
+                    "email": _auth_user_email(user),
+                },
+            )
             return False
 
-        new_user_id = _auth_user_id(user)
-        old_user = st.session_state.get("saas_user")
-        old_user_id = str(getattr(old_user, "user_id", "") or "")
-        if old_user_id and old_user_id != new_user_id:
-            clear_stripe_checkout_state()
-
-        # Attach the JWT before building SaaSUser so RLS-protected profile
-        # reads can see public.user_profiles for the logged-in user.
-        client = get_supabase_client()
-        if client is not None:
-            _apply_auth_session_to_client(client, session)
-
-        st.session_state["saas_auth_session"] = session
-        st.session_state["saas_user"] = build_saas_user_from_auth(user, selected_plan=selected_plan)
-        st.session_state["saas_logged_in"] = True
-
-        onboarding_ok, onboarding_message = ensure_user_workspace_records(
-            user,
+        client = initialize_session(user, session, selected_plan=selected_plan)
+        onboarding_ok, onboarding_message, refreshed_profile = ensure_user_profile(
+            user=user,
             selected_plan=selected_plan,
-            auth_session=session,
+            session=session,
+            client=client,
         )
-        st.session_state["saas_auth_last_message"] = onboarding_message
-        st.session_state["saas_onboarding_ready"] = onboarding_ok
+
+        if client is not None and refreshed_profile:
+            runtime_metadata = capture_login_metadata()
+            persist_login_metadata(
+                client=client,
+                user=user,
+                profile_row=refreshed_profile,
+                login_metadata=runtime_metadata,
+            )
+        else:
+            profile_error = "Profile row unavailable for metadata update."
+            _record_metadata_debug(False, profile_error)
+            st.session_state["saas_metadata_debug_message"] = f"✗ Metadata write failed:\n{profile_error}"
+
+        finalize_login(
+            user=user,
+            selected_plan=selected_plan,
+            onboarding_ok=onboarding_ok,
+            onboarding_message=onboarding_message,
+        )
         return True
 
     except Exception as exc:
@@ -735,6 +1411,8 @@ def clear_authenticated_session() -> None:
     st.session_state["saas_auth_session"] = None
     st.session_state["saas_onboarding_ready"] = False
     st.session_state["saas_onboarding_debug"] = {}
+    st.session_state["saas_auth_debug"] = {}
+    st.session_state["saas_metadata_debug_message"] = ""
 
 
 # =========================================================
@@ -750,6 +1428,18 @@ def supabase_sign_up(email: str, password: str, full_name: str, plan: str) -> tu
     now = _utc_now()
     trial_end = now + timedelta(days=30)
     clean_email = email.strip().lower()
+    st.session_state["saas_trial_warning_message"] = ""
+
+    signup_context = _signup_fingerprint()
+    trial_protection = evaluate_trial_protection(clean_email, signup_context)
+    if blocked := bool(trial_protection.get("blocked")):
+        st.session_state["saas_trial_warning_message"] = ""
+        return False, str(trial_protection.get("message") or "The free trial has already been used. Please subscribe or contact support if you believe this is an error.")
+
+    if bool(trial_protection.get("warning")):
+        st.session_state["saas_trial_warning_message"] = str(
+            trial_protection.get("message") or "It looks like a trial has already been used from this network."
+        )
 
     try:
         response = client.auth.sign_up(
@@ -763,6 +1453,32 @@ def supabase_sign_up(email: str, password: str, full_name: str, plan: str) -> tu
                         "account_status": ACCOUNT_TRIAL,
                         "trial_start": now.isoformat(),
                         "trial_end": trial_end.isoformat(),
+                        "signup_ip": signup_context.get("signup_ip", "UNKNOWN"),
+                        "signup_country": signup_context.get("signup_country", "UNKNOWN"),
+                        "signup_city": signup_context.get("signup_city", "UNKNOWN"),
+                        "city": signup_context.get("city", "UNKNOWN"),
+                        "device_id": signup_context.get("device_id", "UNKNOWN"),
+                        "device_fingerprint": signup_context.get("device_fingerprint", "UNKNOWN"),
+                        "user_agent": signup_context.get("user_agent", "UNKNOWN"),
+                        "browser": signup_context.get("browser", "UNKNOWN"),
+                        "operating_system": signup_context.get("operating_system", "UNKNOWN"),
+                        "trial_started_at": signup_context.get("trial_started_at", now.isoformat()),
+                        "trial_attempts": trial_protection.get("trial_attempts", 1),
+                        "repeat_ips": trial_protection.get("repeat_ips", 0),
+                        "repeat_devices": trial_protection.get("repeat_devices", 0),
+                        "risk_score": trial_protection.get("risk_score", 0),
+                        "fraud_flags": trial_protection.get("fraud_flags", ""),
+                        "last_ip_activity": trial_protection.get("last_ip_activity", now.isoformat()),
+                        "first_login_at": None,
+                        "last_login_at": None,
+                        "last_login_ip": None,
+                        "last_login_country": None,
+                        "last_login_city": None,
+                        "total_logins": 0,
+                        "trial_whitelisted": False,
+                        "trial_ignored": False,
+                        "trial_blocked": blocked,
+                        "trial_notes": "",
                     }
                 },
             }
@@ -924,9 +1640,11 @@ def inject_saas_css() -> None:
             .saas-kicker {font-size:var(--jfbp-type-card-label);text-transform:uppercase;letter-spacing:0.055em;color:#475569;font-weight:850;margin-bottom:0.22rem;}
             .saas-title {font-size:clamp(1.22rem,2.35vw,1.62rem);line-height:1.14;font-weight:880;color:#0f172a;margin-bottom:0.30rem;}
             .saas-text {font-size:var(--jfbp-type-body);line-height:1.38;color:#334155;font-weight:700;margin-bottom:0;}
-            .saas-auth-form {max-width:420px;margin:0 auto;}
-            div[data-testid="stForm"] {max-width:420px;margin-left:auto;margin-right:auto;}
-            div[data-testid="stTextInput"] input {min-height:40px;padding:0.66rem 0.80rem;border-radius:10px;}
+            .saas-auth-form {max-width:580px;margin:0 auto;}
+            .saas-auth-shell {max-width:580px;margin:0 auto;}
+            .saas-auth-shell div[data-testid="stForm"] {max-width:580px;margin-left:auto;margin-right:auto;}
+            .saas-auth-shell div[data-testid="stTextInput"] input {min-height:40px;padding:0.66rem 0.96rem;border-radius:10px;}
+            .saas-auth-shell div[data-testid="stFormSubmitButton"] button {width:100%;}
             .stButton>button {min-height:40px;border-radius:11px;font-size:0.92rem;}
             .saas-card-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr));gap:0.85rem;margin:0.7rem 0 1rem 0;}
             .saas-card {border:1px solid #dbe3ef;border-radius:16px;background:#f8fafc;padding:0.9rem 1rem;min-height:105px;}
@@ -937,6 +1655,10 @@ def inject_saas_css() -> None:
             .saas-upgrade {border:1px solid #fde68a;background:#fffbeb;border-radius:18px;padding:1rem;margin:1rem 0;}
             .saas-ok {border:1px solid #bbf7d0;background:#ecfdf5;border-radius:18px;padding:0.85rem 1rem;margin:0.75rem 0;color:#166534;font-weight:850;}
             .saas-warn {border:1px solid #fde68a;background:#fffbeb;border-radius:18px;padding:0.85rem 1rem;margin:0.75rem 0;color:#92400e;font-weight:850;}
+            @media (max-width: 820px) {
+                .saas-auth-form, .saas-auth-shell {max-width:100%;}
+                .saas-auth-shell div[data-testid="stForm"] {max-width:100%;}
+            }
         </style>
         """,
         unsafe_allow_html=True,
@@ -961,18 +1683,33 @@ def get_stripe_price_id(plan: str) -> str:
     return _secret_value(secret_name)
 
 
-def stripe_checkout_config_ready(plan: str) -> tuple[bool, str]:
+def stripe_runtime_status(plan: str | None = None) -> tuple[bool, str]:
+    """Return Stripe runtime readiness with accurate failure diagnostics."""
     if stripe is None:
-        return False, "Stripe package is not installed. Add `stripe` to requirements.txt."
+        base = "Stripe SDK is not installed in this environment."
+        if STRIPE_IMPORT_ERROR:
+            return False, f"{base} Import error: {STRIPE_IMPORT_ERROR}"
+        return False, base
 
     if not _secret_value("STRIPE_SECRET_KEY"):
-        return False, f"Missing STRIPE_SECRET_KEY in Streamlit Secrets. Safe check: {_secret_status('STRIPE_SECRET_KEY')}."
+        return False, "Missing STRIPE_SECRET_KEY."
 
-    if not get_stripe_price_id(plan):
+    if plan:
         secret_name = STRIPE_PRICE_SECRET_KEYS.get(plan, "PRICE_ID")
-        return False, f"Missing {secret_name} in Streamlit Secrets."
+        if not get_stripe_price_id(plan):
+            return False, f"Missing {secret_name}."
+
+    try:
+        # Validate the SDK accepts API key assignment in this runtime.
+        stripe.api_key = _secret_value("STRIPE_SECRET_KEY")
+    except Exception as exc:
+        return False, f"Stripe SDK initialization failed: {exc}"
 
     return True, "Stripe checkout ready."
+
+
+def stripe_checkout_config_ready(plan: str) -> tuple[bool, str]:
+    return stripe_runtime_status(plan=plan)
 
 
 def create_stripe_checkout_session(user: SaaSUser, target_plan: str) -> tuple[bool, str]:
@@ -1114,13 +1851,11 @@ def render_upgrade_required(user: SaaSUser, page_name: str) -> None:
             st.caption(f"{PLAN_PRICES[PLAN_ELITE]} · {PLAN_TRADING_MODE[PLAN_ELITE]}")
             st.markdown(
                 """
-                ✅ Everything in Pro  
-                ✅ Quant Executor  
-                ✅ OMS Execution  
-                ✅ Live IBKR  
-                ✅ Automation Control Center  
-                ✅ Crypto / Forex / Gold / Oil Pulse  
-                ✅ Telegram Alerts + Signal Watcher  
+                ✓ Everything in Pro + live execution suite  
+                ✓ Quant Executor, OMS Execution, Live IBKR  
+                ✓ Automation Control Center  
+                ✓ Crypto, Forex, Gold, and Oil Pulse  
+                ✓ Telegram Alerts + Signal Watcher  
                 """
             )
             render_checkout_button(user, PLAN_ELITE, "👑 Upgrade to Elite", "stripe_upgrade_elite_only")
@@ -1133,14 +1868,11 @@ def render_upgrade_required(user: SaaSUser, page_name: str) -> None:
         st.caption(f"{PLAN_PRICES[PLAN_PRO]} · {PLAN_TRADING_MODE[PLAN_PRO]}")
         st.markdown(
             """
-            ✅ Everything in Market Pulse  
-            ✅ Portfolio Tools  
-            ✅ Private Portfolio  
-            ✅ Position Command Center  
-            ✅ Journal  
-            ✅ Database  
-            ✅ Trade Command Center  
-            ✅ Options Center  
+            ✓ Everything in Market Pulse  
+            ✓ Portfolio tools + Private Portfolio  
+            ✓ Position Command Center + Journal  
+            ✓ Database + Trade Command Center  
+            ✓ Options Center  
             """
         )
         render_checkout_button(user, PLAN_PRO, "🚀 Upgrade to Pro", "stripe_upgrade_pro")
@@ -1150,13 +1882,11 @@ def render_upgrade_required(user: SaaSUser, page_name: str) -> None:
         st.caption(f"{PLAN_PRICES[PLAN_ELITE]} · {PLAN_TRADING_MODE[PLAN_ELITE]}")
         st.markdown(
             """
-            ✅ Everything in Pro  
-            ✅ Quant Executor  
-            ✅ OMS Execution  
-            ✅ Live IBKR  
-            ✅ Automation Control Center  
-            ✅ Crypto / Forex / Gold / Oil Pulse  
-            ✅ Telegram Alerts + Signal Watcher  
+            ✓ Everything in Pro + live execution suite  
+            ✓ Quant Executor, OMS Execution, Live IBKR  
+            ✓ Automation Control Center  
+            ✓ Crypto, Forex, Gold, and Oil Pulse  
+            ✓ Telegram Alerts + Signal Watcher  
             """
         )
         render_checkout_button(user, PLAN_ELITE, "👑 Upgrade to Elite", "stripe_upgrade_elite")
@@ -1175,11 +1905,16 @@ def render_auth_status() -> None:
 
 
 def render_auth_panel() -> None:
-    left, center, right = st.columns([1, 0.5, 1], gap="large")
+    left, center, right = st.columns([0.75, 1.2, 0.75], gap="large")
     with center:
+        st.markdown('<div class="saas-auth-shell">', unsafe_allow_html=True)
         st.subheader("🔐 Secure Access")
         st.caption("Sign in to JFBP Quant Desk to access your workspace and tools.")
         render_auth_status()
+
+        trial_warning_message = str(st.session_state.get("saas_trial_warning_message", "") or "")
+        if trial_warning_message:
+            st.warning(trial_warning_message)
 
         mode = st.radio("Choose access action", ["Login", "Create Account", "Reset Password"], horizontal=True)
 
@@ -1245,6 +1980,7 @@ def render_auth_panel() -> None:
                     else:
                         st.error(message)
         st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
 
 def render_user_status(user: SaaSUser) -> None:
@@ -1297,6 +2033,11 @@ def render_saas_core_dashboard() -> None:
         render_auth_panel()
         return
 
+    metadata_debug_message = str(st.session_state.get("saas_metadata_debug_message", "") or "").strip()
+    if metadata_debug_message:
+        st.text(metadata_debug_message)
+        st.session_state["saas_metadata_debug_message"] = ""
+
     top_left, top_right = st.columns([0.72, 0.28], gap="large")
     with top_left:
         render_user_status(user)
@@ -1325,6 +2066,7 @@ def render_saas_core_dashboard() -> None:
     with tabs[2]:
         st.subheader("🔐 Auth Session Snapshot")
         st.caption("Safe operational view. Secret tokens are not displayed.")
+        metadata_write = st.session_state.get("saas_onboarding_debug", {}).get("metadata_write", {})
         st.json(
             {
                 "logged_in": bool(st.session_state.get("saas_logged_in")),
@@ -1339,6 +2081,9 @@ def render_saas_core_dashboard() -> None:
                 "trial_end": user.trial_end.isoformat(),
                 "onboarding_records_ready": bool(st.session_state.get("saas_onboarding_ready", False)),
                 "onboarding_message": st.session_state.get("saas_auth_last_message", ""),
+                "metadata_write_ok": bool(metadata_write.get("ok", False)),
+                "metadata_write_message": str(metadata_write.get("message", "")),
+                "metadata_payload": metadata_write.get("payload", {}),
                 "onboarding_debug": st.session_state.get("saas_onboarding_debug", {}),
             }
         )

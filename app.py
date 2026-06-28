@@ -133,6 +133,8 @@ try:
         is_admin_user,
     )
 except Exception as saas_import_error:
+    _saas_import_error = saas_import_error
+
     def saas_core_page(_err=saas_import_error):
         st.title("🔐 SaaS Core")
         st.error("SaaS Core could not be loaded.")
@@ -149,13 +151,15 @@ except Exception as saas_import_error:
     def inject_saas_css():
         return None
 
-    def render_auth_panel():
+    def render_auth_panel(_err=_saas_import_error):
         st.error("SaaS Core could not be loaded, so login is unavailable.")
-        st.exception(saas_import_error)
+        if _err is not None:
+            st.exception(_err)
 
-    def require_page_access(page_name: str) -> bool:
+    def require_page_access(page_name: str, _err=_saas_import_error) -> bool:
         st.error("SaaS Core could not be loaded, so access control is unavailable.")
-        st.exception(saas_import_error)
+        if _err is not None:
+            st.exception(_err)
         return False
 
     def supabase_logout():

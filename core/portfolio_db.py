@@ -3,8 +3,23 @@
 from pages.SaaS_Core import get_supabase_client
 
 
-def load_positions(user_id):
+def _clean_user_id(user_id):
+    return str(user_id or "").strip()
+
+
+def _require_client():
     supabase = get_supabase_client()
+    if supabase is None:
+        raise RuntimeError("Supabase client unavailable")
+    return supabase
+
+
+def load_positions(user_id):
+    user_id = _clean_user_id(user_id)
+    if not user_id:
+        return []
+
+    supabase = _require_client()
 
     result = (
         supabase.table("portfolio_positions")
@@ -25,7 +40,15 @@ def upsert_position(
     avg_price,
     realized_pnl,
 ):
-    supabase = get_supabase_client()
+    user_id = _clean_user_id(user_id)
+    if not user_id:
+        raise ValueError("user_id is required")
+
+    symbol = str(symbol or "").upper().strip()
+    if not symbol:
+        raise ValueError("symbol is required")
+
+    supabase = _require_client()
 
     payload = {
         "user_id": user_id,
@@ -48,7 +71,15 @@ def upsert_position(
 
 
 def delete_position(user_id, symbol):
-    supabase = get_supabase_client()
+    user_id = _clean_user_id(user_id)
+    if not user_id:
+        raise ValueError("user_id is required")
+
+    symbol = str(symbol or "").upper().strip()
+    if not symbol:
+        raise ValueError("symbol is required")
+
+    supabase = _require_client()
 
     return (
         supabase.table("portfolio_positions")
@@ -63,7 +94,11 @@ def delete_position(user_id, symbol):
 # =====================================================
 
 def load_journal_entries(user_id):
-    supabase = get_supabase_client()
+    user_id = _clean_user_id(user_id)
+    if not user_id:
+        return []
+
+    supabase = _require_client()
 
     result = (
         supabase.table("journal_entries")
@@ -77,7 +112,7 @@ def load_journal_entries(user_id):
 
 
 def insert_journal_entry(payload):
-    supabase = get_supabase_client()
+    supabase = _require_client()
 
     return (
         supabase.table("journal_entries")
@@ -91,7 +126,11 @@ def insert_journal_entry(payload):
 # =====================================================
 
 def load_journal_reviews(user_id):
-    supabase = get_supabase_client()
+    user_id = _clean_user_id(user_id)
+    if not user_id:
+        return []
+
+    supabase = _require_client()
 
     result = (
         supabase.table("journal_reviews")
@@ -104,8 +143,43 @@ def load_journal_reviews(user_id):
     return result.data or []
 
 
-def insert_journal_review(payload):
-    supabase = get_supabase_client()
+def insert_journal_review(payload, dedupe: bool = True):
+    supabase = _require_client()
+
+    payload = dict(payload or {})
+    user_id = _clean_user_id(payload.get("user_id"))
+    if not user_id:
+        raise ValueError("user_id is required")
+
+    payload["user_id"] = user_id
+    payload["symbol"] = str(payload.get("symbol") or "N/A").upper().strip() or "N/A"
+    payload["setup_grade"] = str(payload.get("setup_grade") or "C").upper().strip() or "C"
+    payload["execution_grade"] = str(payload.get("execution_grade") or "C").upper().strip() or "C"
+    payload["tag"] = str(payload.get("tag") or "Process Review").strip() or "Process Review"
+    payload["notes"] = str(payload.get("notes") or "").strip()
+    payload["source"] = str(payload.get("source") or "Manual Trade Review").strip() or "Manual Trade Review"
+
+    if dedupe and payload["notes"]:
+        recent = (
+            supabase.table("journal_reviews")
+            .select("id,user_id,symbol,setup_grade,execution_grade,tag,notes,source,created_at")
+            .eq("user_id", user_id)
+            .eq("symbol", payload["symbol"])
+            .eq("setup_grade", payload["setup_grade"])
+            .eq("execution_grade", payload["execution_grade"])
+            .eq("tag", payload["tag"])
+            .eq("notes", payload["notes"])
+            .eq("source", payload["source"])
+            .limit(1)
+            .execute()
+        )
+        existing = getattr(recent, "data", None) or []
+        if existing:
+            return {
+                "status": "DUPLICATE_SKIPPED",
+                "duplicate": True,
+                "row": existing[0],
+            }
 
     return (
         supabase.table("journal_reviews")

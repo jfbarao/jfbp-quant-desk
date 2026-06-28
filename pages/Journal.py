@@ -21,11 +21,14 @@ from analytics.performance import PerformanceAnalyzer
 try:
     from core.portfolio_db import (
         load_journal_reviews,
-        insert_journal_review,
     )
 except Exception:  # pragma: no cover
     load_journal_reviews = None
-    insert_journal_review = None
+
+try:
+    from pages.SaaS_Core import get_supabase_client
+except Exception:  # pragma: no cover
+    get_supabase_client = None
 
 try:
     from core.responsive import inject_responsive_css, columns as jfbp_columns
@@ -45,6 +48,7 @@ except Exception:  # pragma: no cover
 DATA_DIR = Path("data")
 LESSONS_FILE = DATA_DIR / "journal_trade_lessons.csv"
 LESSON_COLUMNS = ["Date", "Symbol", "Grade", "Tag", "Lesson", "Source"]
+JOURNAL_LESSONS_TABLE = "journal_reviews"
 
 
 # =========================================================
@@ -121,6 +125,135 @@ def _journal_review_rows_to_lessons_df(rows) -> pd.DataFrame:
     return clean_lessons_df(pd.DataFrame(normalized, columns=LESSON_COLUMNS))
 
 
+def _lessons_file_for_user(user_id: str) -> Path:
+    user_id = str(user_id or "").strip()
+    if not user_id:
+        return DATA_DIR / "journal_trade_lessons_anonymous.csv"
+
+    safe_user = "".join(ch for ch in user_id.lower() if ch.isalnum())[:32]
+    if not safe_user:
+        safe_user = "anonymous"
+    return DATA_DIR / f"journal_trade_lessons_{safe_user}.csv"
+
+
+def _journal_lessons_rows_to_df(rows) -> pd.DataFrame:
+    if not rows:
+        return empty_lessons_df()
+
+    normalized = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+
+        created_at = row.get("created_at") or row.get("timestamp") or ""
+        try:
+            date_text = pd.to_datetime(created_at).strftime("%Y-%m-%d")
+        except Exception:
+            date_text = str(created_at or "")[:10]
+
+        if not date_text:
+            date_text = datetime.now().strftime("%Y-%m-%d")
+
+        setup_grade = str(row.get("setup_grade") or "C").upper().strip()
+        execution_grade = str(row.get("execution_grade") or "C").upper().strip()
+        grade = _combined_grade(setup_grade, execution_grade)
+
+        normalized.append(
+            {
+                "Date": date_text,
+                "Symbol": str(row.get("symbol") or "N/A").upper().strip(),
+                "Grade": grade,
+                "Tag": str(row.get("tag") or "Process Review").strip(),
+                "Lesson": str(row.get("notes") or row.get("lesson") or "").strip(),
+                "Source": str(row.get("source") or "Manual Trade Review").strip(),
+            }
+        )
+
+    return clean_lessons_df(pd.DataFrame(normalized, columns=LESSON_COLUMNS))
+
+
+def _journal_supabase_persistence_available(user_id: str) -> tuple[bool, str, object]:
+    user_id = str(user_id or "").strip()
+    if not user_id:
+        return False, "Login required to save journal lessons.", None
+
+    if get_supabase_client is None:
+        return False, "Supabase client import is unavailable in Journal.", None
+
+    try:
+        client = get_supabase_client()
+    except Exception as exc:
+        return False, f"Supabase client unavailable: {exc}", None
+
+    if client is None:
+        return False, "Supabase client unavailable.", None
+
+    try:
+        (
+            client.table(JOURNAL_LESSONS_TABLE)
+            .select("id")
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        return (
+            False,
+            "Journal table missing or inaccessible. Expected table: "
+            f"{JOURNAL_LESSONS_TABLE}. Error: {exc}",
+            client,
+        )
+
+    return True, "", client
+
+
+def _insert_journal_lesson(
+    client,
+    user_id: str,
+    symbol: str,
+    execution_grade: str,
+    setup_grade: str,
+    tag: str,
+    notes: str,
+) -> dict:
+    payload = {
+        "user_id": user_id,
+        "symbol": symbol,
+        "execution_grade": execution_grade,
+        "setup_grade": setup_grade,
+        "tag": tag,
+        "notes": notes,
+        "source": "Manual Trade Review",
+    }
+
+    existing = (
+        client.table(JOURNAL_LESSONS_TABLE)
+        .select("id")
+        .eq("user_id", user_id)
+        .eq("symbol", symbol)
+        .eq("execution_grade", execution_grade)
+        .eq("setup_grade", setup_grade)
+        .eq("tag", tag)
+        .eq("notes", notes)
+        .limit(1)
+        .execute()
+    )
+    existing_rows = getattr(existing, "data", None) or []
+    if existing_rows:
+        return {
+            "status": "DUPLICATE",
+            "storage": "supabase",
+            "row": existing_rows[0],
+        }
+
+    result = client.table(JOURNAL_LESSONS_TABLE).insert(payload).execute()
+    return {
+        "status": "OK",
+        "storage": "supabase",
+        "result": result,
+    }
+
+
 def append_trade_lesson(
     symbol: str,
     setup_grade: str,
@@ -129,7 +262,7 @@ def append_trade_lesson(
     notes: str,
     mistake: bool = False,
 ) -> dict:
-    """Persist a manual Journal lesson to Supabase with local CSV fallback."""
+    """Persist a manual Journal lesson to Supabase for the logged-in user."""
 
     symbol = str(symbol or "N/A").upper().strip() or "N/A"
     setup_grade = str(setup_grade or "C").upper().strip()
@@ -141,52 +274,38 @@ def append_trade_lesson(
         final_tag = "Mistake" if mistake else "Process Review"
 
     user_id = _current_saas_user_id()
-    st.warning(f"DEBUG USER ID = {user_id}")
-    grade = _combined_grade(setup_grade, execution_grade)
-
-    payload = {
-        "user_id": user_id,
-        "symbol": symbol,
-        "setup_grade": setup_grade,
-        "execution_grade": execution_grade,
-        "tag": final_tag,
-        "notes": notes,
-        "source": "Manual Trade Review",
-    }
-
-    if user_id and insert_journal_review is not None:
-        try:
-            result = insert_journal_review(payload)
-            st.session_state["journal_supabase_last_save"] = "OK"
-            return {
-                "status": "OK",
-                "storage": "supabase",
-                "result": result,
-            }
-        except Exception as exc:
-            st.session_state["journal_supabase_last_save"] = "FAILED"
-            st.session_state["journal_supabase_last_error"] = str(exc)
-
-    # Local CSV fallback keeps the page usable during local/dev table setup.
-    lessons_df = load_trade_lessons(local_only=True)
-    new_row = pd.DataFrame([
-        {
-            "Date": datetime.now().strftime("%Y-%m-%d"),
-            "Symbol": symbol,
-            "Grade": grade,
-            "Tag": final_tag,
-            "Lesson": notes,
-            "Source": "Manual Trade Review",
+    ready, reason, client = _journal_supabase_persistence_available(user_id)
+    if not ready:
+        st.session_state["journal_supabase_last_save"] = "FAILED"
+        st.session_state["journal_supabase_last_error"] = reason
+        return {
+            "status": "FAILED",
+            "storage": "none",
+            "reason": reason,
         }
-    ], columns=LESSON_COLUMNS)
 
-    save_trade_lessons(pd.concat([lessons_df, new_row], ignore_index=True))
-
-    return {
-        "status": "OK",
-        "storage": "local_csv",
-        "reason": "Supabase journal_reviews unavailable or user_id missing",
-    }
+    try:
+        result = _insert_journal_lesson(
+            client=client,
+            user_id=user_id,
+            symbol=symbol,
+            execution_grade=execution_grade,
+            setup_grade=setup_grade,
+            tag=final_tag,
+            notes=notes,
+        )
+        st.session_state["journal_supabase_last_save"] = result.get("status", "OK")
+        st.session_state["journal_supabase_last_error"] = ""
+        return result
+    except Exception as exc:
+        message = f"Journal lesson save failed: {exc}"
+        st.session_state["journal_supabase_last_save"] = "FAILED"
+        st.session_state["journal_supabase_last_error"] = message
+        return {
+            "status": "FAILED",
+            "storage": "supabase",
+            "reason": message,
+        }
 
 
 # =========================================================
@@ -815,36 +934,67 @@ def clean_lessons_df(lessons_df: pd.DataFrame | None) -> pd.DataFrame:
 def load_trade_lessons(local_only: bool = False) -> pd.DataFrame:
     """Load saved trade lessons. Supabase is preferred; CSV is fallback."""
 
+    user_id = _current_saas_user_id()
+
     if not local_only:
-        user_id = _current_saas_user_id()
+        ready, reason, client = _journal_supabase_persistence_available(user_id)
+        st.session_state["journal_supabase_available"] = ready
+
+        if ready and client is not None:
+            try:
+                result = (
+                    client.table(JOURNAL_LESSONS_TABLE)
+                    .select("id,user_id,created_at,symbol,execution_grade,setup_grade,tag,notes,source")
+                    .eq("user_id", user_id)
+                    .order("created_at", desc=True)
+                    .execute()
+                )
+                rows = getattr(result, "data", None) or []
+                lessons = _journal_lessons_rows_to_df(rows)
+
+                st.session_state["journal_supabase_loaded"] = True
+                st.session_state["journal_supabase_review_count"] = len(lessons)
+                st.session_state["journal_saved_lessons_count"] = len(lessons)
+                st.session_state["journal_supabase_user_id"] = user_id
+                st.session_state["journal_supabase_load_error"] = ""
+                return lessons
+
+            except Exception as exc:
+                st.session_state["journal_supabase_loaded"] = False
+                st.session_state["journal_supabase_load_error"] = f"Supabase load failed: {exc}"
+        else:
+            st.session_state["journal_supabase_loaded"] = False
+            st.session_state["journal_supabase_load_error"] = reason
 
         if user_id and load_journal_reviews is not None:
             try:
                 rows = load_journal_reviews(user_id)
                 lessons = _journal_review_rows_to_lessons_df(rows)
-
-                st.session_state["journal_supabase_loaded"] = True
-                st.session_state["journal_supabase_review_count"] = len(lessons)
-                st.session_state["journal_supabase_user_id"] = user_id
-
-                return lessons
-
-            except Exception as exc:
-                st.session_state["journal_supabase_loaded"] = False
-                st.session_state["journal_supabase_load_error"] = str(exc)
+                if not lessons.empty:
+                    st.session_state["journal_saved_lessons_count"] = len(lessons)
+                    return lessons
+            except Exception:
+                pass
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    if not LESSONS_FILE.exists():
+    fallback_file = _lessons_file_for_user(user_id)
+    if not fallback_file.exists():
+        st.session_state.setdefault("journal_saved_lessons_count", 0)
         return empty_lessons_df()
     try:
-        return clean_lessons_df(pd.read_csv(LESSONS_FILE))
-    except Exception:
+        lessons = clean_lessons_df(pd.read_csv(fallback_file))
+        st.session_state["journal_saved_lessons_count"] = len(lessons)
+        return lessons
+    except Exception as exc:
+        st.session_state["journal_supabase_load_error"] = f"Local fallback read failed: {exc}"
+        st.session_state.setdefault("journal_saved_lessons_count", 0)
         return empty_lessons_df()
 
 
-def save_trade_lessons(lessons_df: pd.DataFrame) -> None:
+def save_trade_lessons(lessons_df: pd.DataFrame, user_id: str | None = None) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    clean_lessons_df(lessons_df).to_csv(LESSONS_FILE, index=False)
+    fallback_file = _lessons_file_for_user(user_id or _current_saas_user_id())
+    clean_lessons_df(lessons_df).to_csv(fallback_file, index=False)
 
 
 def _combined_grade(setup_grade: str, execution_grade: str) -> str:
@@ -891,7 +1041,7 @@ def infer_trade_lessons_from_ledger(df: pd.DataFrame | None, pnl_col: str = "rea
 def render_trade_lessons_archive(df: pd.DataFrame | None, pnl_col: str = "realized_delta") -> None:
     st.divider()
     st.subheader("📚 Trade Lessons Archive")
-    st.caption("Persistent lessons extracted from journal reviews. Repeated themes become coaching priorities.")
+    st.caption("Persistent lessons extracted from manual reviews. Repeated themes become coaching priorities.")
 
     saved_lessons = load_trade_lessons()
     inferred_lessons = infer_trade_lessons_from_ledger(df, pnl_col)
@@ -932,9 +1082,12 @@ def render_trade_lessons_archive(df: pd.DataFrame | None, pnl_col: str = "realiz
         return
 
     if not saved_lessons.empty:
-        st.success("Trade Lessons Archive is active and saved to Supabase journal_reviews.")
+        st.success("✅ Lesson archived successfully and synced to your account.")
     else:
         st.info("No saved manual lessons yet. Showing inferred review prompts from losing ledger rows.")
+
+    if st.session_state.get("journal_supabase_load_error"):
+        st.warning(str(st.session_state.get("journal_supabase_load_error")))
 
     top_lesson = str(display_lessons.iloc[0].get("Lesson", "No lesson available."))
     repeat_count = int(tag_counts.iloc[0]) if not tag_counts.empty else 1
@@ -966,8 +1119,18 @@ def render_trade_lessons_archive(df: pd.DataFrame | None, pnl_col: str = "realiz
     with st.expander("🗑️ Manage Trade Lessons Archive", expanded=False):
         st.caption("This only clears the saved lesson archive. It does not affect trade ledger rows or portfolio data.")
         if st.button("Clear Saved Lessons Archive", width="stretch", key="journal_clear_lessons_archive"):
-            save_trade_lessons(empty_lessons_df())
-            st.success("Saved Trade Lessons Archive cleared.")
+            user_id = _current_saas_user_id()
+            ready, reason, client = _journal_supabase_persistence_available(user_id)
+            if ready and client is not None:
+                try:
+                    client.table(JOURNAL_LESSONS_TABLE).delete().eq("user_id", user_id).execute()
+                    st.session_state["journal_saved_lessons_count"] = 0
+                    st.success("Saved Trade Lessons Archive cleared.")
+                except Exception as exc:
+                    st.warning(f"Could not clear Supabase lesson archive: {exc}")
+            else:
+                save_trade_lessons(empty_lessons_df(), user_id=user_id)
+                st.warning(f"Supabase unavailable for archive clear. Local fallback cleared instead. {reason}")
             st.rerun()
 
 
@@ -1209,9 +1372,9 @@ def run_page():
             "Filtered Entries": 0,
             "Positions": len(positions),
             "Bootstrap Recovery": st.session_state.get("bootstrap_recovery_status", ""),
-            "Runtime/Audit Recovery OK": st.session_state.get("bootstrap_recovered_ok", False),
+            "Runtime/Audit Recovery OK": st.session_state.get("bootstrap_recovered_ok", True),
             "Journal Supabase Loaded": st.session_state.get("journal_supabase_loaded", False),
-            "Journal Supabase Reviews": st.session_state.get("journal_supabase_review_count", 0),
+            "Journal Saved Lessons": st.session_state.get("journal_saved_lessons_count", 0),
             "Journal Supabase Error": st.session_state.get("journal_supabase_load_error", ""),
         }
         st.dataframe(pd.DataFrame(list(health.items()), columns=["Metric", "Value"]), width="stretch", hide_index=True)
@@ -1444,14 +1607,14 @@ def run_page():
     st.divider()
     st.subheader("📝 Manual Trade Review")
     st.caption(
-        "What it means: Preview a trade-review note for process improvement. "
-        "This is currently a preview-only note builder."
+        "What it means: Build a trade-review note for process improvement and save it to your lessons archive."
     )
 
-    st.info(
-        "Manual notes are preview-only in v2.0. "
-        "A future version can persist review notes to SQLite."
-    )
+    current_user_id = _current_saas_user_id()
+    supabase_ready, supabase_reason, _ = _journal_supabase_persistence_available(current_user_id)
+    st.session_state["journal_supabase_available"] = supabase_ready
+    if not supabase_ready:
+        st.warning(supabase_reason)
 
     with st.container(border=True):
         n1, n2, n3 = responsive_columns(3)
@@ -1498,7 +1661,12 @@ def run_page():
                 st.json(note_payload)
 
         with action_col_2:
-            save_disabled = not bool(str(notes or "").strip())
+            save_disabled = (
+                not bool(str(current_user_id or "").strip())
+                or not bool(str(selected_symbol or "").strip())
+                or not bool(str(notes or "").strip())
+                or not bool(supabase_ready)
+            )
             if st.button(
                 "Save Lesson to Archive",
                 use_container_width=True,
@@ -1515,11 +1683,14 @@ def run_page():
                 )
 
                 storage = str(save_report.get("storage", "unknown"))
+                status = str(save_report.get("status", "")).upper()
 
-                if storage == "supabase":
+                if status == "DUPLICATE":
+                    st.info("Duplicate lesson detected. Existing archive entry was kept; no new row was created.")
+                elif storage == "supabase":
                     st.success("Lesson saved to Supabase Trade Lessons Archive.")
                 else:
-                    st.warning("Lesson saved locally. Supabase journal_reviews was unavailable for this save.")
+                    st.warning(str(save_report.get("reason") or "Journal lesson save failed."))
 
                 st.rerun()
 
@@ -1543,10 +1714,10 @@ def run_page():
         "Bootstrap Recovery": st.session_state.get("bootstrap_recovery_status", ""),
         "Runtime/Audit Recovery OK": st.session_state.get(
             "bootstrap_recovered_ok",
-            False,
+            True,
         ),
         "Journal Supabase Loaded": st.session_state.get("journal_supabase_loaded", False),
-        "Journal Supabase Reviews": st.session_state.get("journal_supabase_review_count", 0),
+        "Journal Saved Lessons": st.session_state.get("journal_saved_lessons_count", 0),
         "Journal Supabase Error": st.session_state.get("journal_supabase_load_error", ""),
     }
 

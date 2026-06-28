@@ -545,6 +545,96 @@ def _pull_ledger(portfolio_engine) -> list:
     return []
 
 
+def _current_saas_user_id() -> str:
+    saas_user = st.session_state.get("saas_user")
+    user_id = getattr(saas_user, "user_id", "") if saas_user is not None else ""
+    return str(user_id or "").strip()
+
+
+def _ensure_portfolio_loaded_for_user(portfolio_engine, user_id: str) -> dict:
+    if portfolio_engine is None or not user_id:
+        st.session_state["portfolio_supabase_loaded"] = False
+        st.session_state["portfolio_supabase_load_status"] = "SKIPPED"
+        return {"status": "SKIPPED", "reason": "missing_engine_or_user"}
+
+    if not hasattr(portfolio_engine, "load_positions_from_supabase"):
+        st.session_state["portfolio_supabase_loaded"] = False
+        st.session_state["portfolio_supabase_load_status"] = "SKIPPED"
+        return {"status": "SKIPPED", "reason": "load_positions_from_supabase unavailable"}
+
+    loaded_user = str(st.session_state.get("portfolio_supabase_loaded_user_id") or "")
+    if loaded_user == user_id:
+        st.session_state.setdefault("portfolio_supabase_loaded", True)
+        st.session_state["portfolio_supabase_load_status"] = "SKIPPED"
+        return {"status": "SKIPPED", "reason": "already_loaded_this_user"}
+
+    try:
+        report = portfolio_engine.load_positions_from_supabase(user_id)
+        st.session_state["portfolio_supabase_loaded_user_id"] = user_id
+        st.session_state["portfolio_supabase_loaded"] = True
+        st.session_state["portfolio_supabase_load_status"] = str(report.get("status") or "OK") if isinstance(report, dict) else "OK"
+        st.session_state["portfolio_supabase_load_report"] = report
+        st.session_state["portfolio_supabase_load_error"] = ""
+        return report if isinstance(report, dict) else {"status": "OK"}
+    except Exception as exc:
+        st.session_state["portfolio_supabase_loaded"] = False
+        st.session_state["portfolio_supabase_load_status"] = "ERROR"
+        st.session_state["portfolio_supabase_load_error"] = str(exc)
+        return {"status": "ERROR", "reason": str(exc)}
+
+
+def _positions_signature(positions: dict) -> str:
+    rows = []
+    for symbol in sorted((positions or {}).keys()):
+        row = positions.get(symbol) or {}
+        rows.append(
+            (
+                str(symbol),
+                round(_safe_float(row.get("signed_qty")), 8),
+                round(_safe_float(row.get("avg_price")), 8),
+                round(_safe_float(row.get("realized_pnl")), 8),
+            )
+        )
+    return str(rows)
+
+
+def _persist_portfolio_for_user(portfolio_engine, user_id: str, positions: dict) -> dict:
+    if portfolio_engine is None or not user_id:
+        st.session_state["portfolio_supabase_saved"] = False
+        st.session_state["portfolio_supabase_save_status"] = "SKIPPED"
+        return {"status": "SKIPPED", "reason": "missing_engine_or_user"}
+
+    if not hasattr(portfolio_engine, "persist_all_positions"):
+        st.session_state["portfolio_supabase_saved"] = False
+        st.session_state["portfolio_supabase_save_status"] = "SKIPPED"
+        return {"status": "SKIPPED", "reason": "persist_all_positions unavailable"}
+
+    signature = _positions_signature(positions)
+    signature_key = f"portfolio_last_persist_signature_{user_id}"
+    if str(st.session_state.get(signature_key) or "") == signature:
+        st.session_state["portfolio_supabase_saved"] = True
+        st.session_state["portfolio_supabase_save_status"] = "SKIPPED"
+        return {"status": "SKIPPED", "reason": "snapshot_unchanged"}
+
+    try:
+        if hasattr(portfolio_engine, "set_user_id"):
+            portfolio_engine.set_user_id(user_id)
+
+        report = portfolio_engine.persist_all_positions(user_id=user_id)
+        st.session_state[signature_key] = signature
+        st.session_state["portfolio_supabase_persist_report"] = report
+        st.session_state["portfolio_supabase_persist_error"] = ""
+        save_status = str(report.get("status") or "OK") if isinstance(report, dict) else "OK"
+        st.session_state["portfolio_supabase_save_status"] = save_status
+        st.session_state["portfolio_supabase_saved"] = save_status.upper() == "OK"
+        return report if isinstance(report, dict) else {"status": "OK"}
+    except Exception as exc:
+        st.session_state["portfolio_supabase_saved"] = False
+        st.session_state["portfolio_supabase_save_status"] = "ERROR"
+        st.session_state["portfolio_supabase_persist_error"] = str(exc)
+        return {"status": "ERROR", "reason": str(exc)}
+
+
 # =========================================================
 # RESPONSIVE UI HELPERS
 # =========================================================
@@ -1160,6 +1250,18 @@ def run_page():
         st.error("Portfolio engine unavailable.")
         return
 
+    user_id = _current_saas_user_id()
+    user_id_present = bool(user_id)
+    if hasattr(portfolio_engine, "set_user_id"):
+        try:
+            portfolio_engine.set_user_id(user_id)
+        except Exception:
+            pass
+
+    load_report = _ensure_portfolio_loaded_for_user(portfolio_engine, user_id)
+    if str(load_report.get("status") or "").upper() == "ERROR":
+        st.warning("Portfolio load warning: unable to load saved positions from Supabase for this user.")
+
     live_mode = st.session_state.get("mode") == "LIVE"
 
     # =====================================================
@@ -1283,7 +1385,7 @@ def run_page():
         if positions:
             position_source = "IBKR_GATEWAY"
 
-        if not positions:
+        if not positions and not user_id_present:
             for key in ("broker_snapshot_positions", "broker_positions", "ibkr_positions", "live_positions"):
                 candidate = st.session_state.get(key)
                 positions = _normalize_positions(candidate)
@@ -1307,7 +1409,7 @@ def run_page():
             if positions:
                 position_source = "GATEWAY_FALLBACK"
 
-        if not positions:
+        if not positions and not user_id_present:
             for key in ("portfolio_positions", "positions", "broker_positions", "ibkr_positions", "live_positions"):
                 candidate = st.session_state.get(key)
                 positions = _normalize_positions(candidate)
@@ -1315,10 +1417,17 @@ def run_page():
                     position_source = f"SESSION:{key}"
                     break
 
+        if not positions and user_id_present and position_source == "NONE":
+            position_source = "USER_SCOPED_EMPTY"
+
     st.caption(
         "Live mark-to-market disabled for fast Portfolio loading. "
         "In LIVE mode, positions come from IBKR broker truth only; old SIM/test portfolio positions are ignored."
     )
+
+    persist_report = _persist_portfolio_for_user(portfolio_engine, user_id, positions)
+    if str(persist_report.get("status") or "").upper() == "ERROR":
+        st.warning("Portfolio save warning: unable to persist positions to Supabase for this user.")
 
     # =====================================================
     # ANALYTICS
@@ -1498,6 +1607,12 @@ def run_page():
 
         health = {
             "Portfolio Engine": "ONLINE",
+            "Portfolio Supabase Loaded": bool(st.session_state.get("portfolio_supabase_loaded", False)),
+            "Portfolio Supabase Saved": bool(st.session_state.get("portfolio_supabase_saved", False)),
+            "Current User ID Present": user_id_present,
+            "Position Count": len(positions),
+            "Ledger Count": len(ledger),
+            "Last Persistence Error": st.session_state.get("portfolio_supabase_persist_error", "") or st.session_state.get("portfolio_supabase_load_error", ""),
             "Runtime Positions": len(positions),
             "Position Source": position_source,
             "Ledger Entries": len(ledger),

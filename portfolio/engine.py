@@ -748,6 +748,13 @@ class PortfolioEngine:
         if st is not None:
             try:
                 session_state = getattr(st, "session_state", {})
+
+                saas_user = session_state.get("saas_user")
+                if saas_user is not None:
+                    saas_user_id = getattr(saas_user, "user_id", "") or getattr(saas_user, "id", "")
+                    if saas_user_id:
+                        return str(saas_user_id).strip()
+
                 for key in (
                     "user_id",
                     "supabase_user_id",
