@@ -456,6 +456,9 @@ def run_page() -> None:
             highest_symbol = str(highest_event.get("symbol", "N/A") or "N/A")
             highest_days = str(highest_event.get("days_until", "N/A") or "N/A")
             highest_status = str(highest_event.get("status", "N/A") or "N/A")
+            if highest_status.upper() == "NOT_APPLICABLE_ETF":
+                highest_status = "Not Applicable (ETF)"
+                highest_days = "N/A"
 
         action_text, action_detail, action_tone = scanner_action_from_score(
             score,
@@ -532,6 +535,16 @@ def run_page() -> None:
 
         if events:
             event_df = pd.DataFrame(events)
+
+            if "status" in event_df.columns:
+                etf_mask = event_df["status"].astype(str).str.upper().eq("NOT_APPLICABLE_ETF")
+                if "earnings_date" in event_df.columns:
+                    event_df.loc[etf_mask, "earnings_date"] = "Not Applicable (ETF)"
+                if "days_until" in event_df.columns:
+                    event_df.loc[etf_mask, "days_until"] = "N/A"
+                if "reason" in event_df.columns:
+                    event_df.loc[etf_mask, "reason"] = "Not Applicable (ETF)"
+                event_df.loc[etf_mask, "status"] = "NOT_APPLICABLE_ETF"
 
             display_cols = [
                 "symbol",

@@ -97,15 +97,23 @@ div[data-testid="stDataFrame"] { width:100% !important; max-width:100% !importan
 div[data-testid="stDataFrame"] * { white-space: normal !important; overflow-wrap: anywhere !important; }
 .stButton > button { border-radius: 10px !important; font-weight: 750 !important; min-height: 38px !important; border:1px solid #d7e3f5 !important; }
 .pcc-card-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 245px), 1fr)); gap:0.85rem; margin:0.45rem 0 1.0rem 0; }
+.pcc-card-grid--compact { margin-top:0.16rem; margin-bottom:0.72rem; }
 .pcc-card { border:1px solid; border-radius:14px; padding:0.82rem 0.92rem; min-height:100px; overflow:hidden; box-sizing:border-box; }
 .pcc-label { color:#64748b; font-size:var(--jfbp-type-card-label, 0.72rem); font-weight:850; letter-spacing:0.05em; text-transform:uppercase; margin-bottom:0.30rem; }
 .pcc-value { font-size:var(--jfbp-type-card-value, clamp(1.05rem, 2.2vw, 1.35rem)); font-weight:880; line-height:1.14; margin-bottom:0.30rem; overflow-wrap:anywhere; }
 .pcc-detail { color:#475569; font-size:var(--jfbp-type-caption, 0.82rem); line-height:1.35; overflow-wrap:anywhere; }
+.pcc-hero-metrics { display:flex; flex-wrap:wrap; gap:0.42rem; margin:0.12rem 0 0.34rem 0; }
+.pcc-hero-metric { flex:1 1 140px; min-width:140px; background:rgba(255,255,255,0.70); border:1px solid rgba(148,163,184,0.36); border-radius:12px; padding:0.42rem 0.58rem; box-sizing:border-box; }
+.pcc-hero-metric-label { display:block; color:#64748b; font-size:0.68rem; font-weight:850; letter-spacing:0.05em; text-transform:uppercase; line-height:1.05; margin-bottom:0.18rem; }
+.pcc-hero-metric-value { display:block; color:#111827; font-size:0.98rem; font-weight:880; line-height:1.12; overflow-wrap:anywhere; }
 .pcc-section-card { background:#ffffff; border:1px solid #e5eaf3; border-radius:14px; padding:0.88rem 0.94rem; margin:0 0 0.82rem 0; overflow:hidden; }
 .pcc-mini-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap:0.65rem; margin:0.45rem 0 1rem 0; }
 .pcc-mini { background:#f8fafc; border:1px solid #dbe3ef; border-radius:14px; padding:0.72rem 0.82rem; }
 .pcc-mini-label { color:#64748b; font-size:var(--jfbp-type-card-label, 0.72rem); font-weight:850; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:0.25rem; }
 .pcc-mini-value { color:#111827; font-size:var(--jfbp-type-card-value, clamp(1.05rem, 2.2vw, 1.35rem)); font-weight:880; overflow-wrap:anywhere; }
+.pcc-checklist-card { background:#fffdf2; border:1px solid #f2d98d; border-radius:12px; padding:0.72rem 0.84rem; margin:0.34rem 0 0.22rem 0; }
+.pcc-checklist-title { color:#78350f; font-size:0.76rem; font-weight:900; letter-spacing:0.055em; text-transform:uppercase; margin-bottom:0.28rem; }
+.pcc-checklist-item { color:#1f2937; font-size:0.92rem; font-weight:700; line-height:1.4; margin:0.08rem 0; }
 .pcc-flow { background:#eff6ff; border:1px solid #bfdbfe; border-radius:12px; padding:0.72rem 0.82rem; margin:0.50rem 0 0.78rem 0; color:#334155; }
 .pcc-hero { border:1px solid; border-radius:18px; padding:0.88rem 0.92rem; margin:0.60rem 0 0.82rem 0; box-shadow:0 2px 10px rgba(15, 23, 42, 0.05); }
 .pcc-hero-kicker { font-size:var(--jfbp-type-card-label, 0.72rem); font-weight:850; letter-spacing:0.055em; text-transform:uppercase; color:#64748b; margin-bottom:0.24rem; }
@@ -128,10 +136,12 @@ div[data-testid="stDataFrame"] * { white-space: normal !important; overflow-wrap
 @media (max-width:760px) {
     .pcc-card-grid, .pcc-mini-grid { grid-template-columns:1fr; }
     .pcc-desktop-only { display:none !important; }
+    .pcc-hero-metric { min-width:100%; }
 }
 @media (min-width:761px) {
     .pcc-mobile-only { display:none !important; }
 }
+div[data-testid="stSelectbox"] { margin-bottom:0.12rem !important; }
 </style>
         """,
         unsafe_allow_html=True,
@@ -149,8 +159,9 @@ def card_html(title: str, value: Any, detail: str = "", tone: str = "neutral") -
     )
 
 
-def render_card_grid(cards: List[Dict[str, Any]]) -> None:
-    pieces = ['<div class="pcc-card-grid">']
+def render_card_grid(cards: List[Dict[str, Any]], compact: bool = False) -> None:
+    class_name = "pcc-card-grid pcc-card-grid--compact" if compact else "pcc-card-grid"
+    pieces = [f'<div class="{class_name}">']
     for card in cards:
         pieces.append(card_html(card.get("title", ""), card.get("value", ""), card.get("detail", ""), card.get("tone", "neutral")))
     pieces.append("</div>")
@@ -165,6 +176,19 @@ def render_mini_grid(items: List[Tuple[str, Any]]) -> None:
             f'<div class="pcc-mini-value">{html.escape(str(value))}</div></div>'
         )
     pieces.append("</div>")
+    st.markdown("".join(pieces), unsafe_allow_html=True)
+
+
+def render_hero_metrics(metrics: List[Tuple[str, Any]]) -> None:
+    pieces = ['<div class="pcc-hero-metrics">']
+    for label, value in metrics:
+        pieces.append(
+            '<div class="pcc-hero-metric">'
+            f'<span class="pcc-hero-metric-label">{html.escape(str(label))}</span>'
+            f'<span class="pcc-hero-metric-value">{html.escape(str(value))}</span>'
+            '</div>'
+        )
+    pieces.append('</div>')
     st.markdown("".join(pieces), unsafe_allow_html=True)
 
 def health_badge(score: Any) -> str:
@@ -213,6 +237,36 @@ def section_open(title: str, caption: str = "") -> None:
 
 def section_close() -> None:
     st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_exit_rules_checklist(reasons: Any) -> None:
+    if isinstance(reasons, (list, tuple, set)):
+        items = [str(item).strip() for item in reasons if str(item).strip()]
+    elif reasons:
+        items = [str(reasons).strip()]
+    else:
+        items = []
+
+    if not items:
+        items = ["No rule text available."]
+
+    normalized_items = []
+    for item in items:
+        lowered = item.lower()
+        if "under entry" in lowered:
+            normalized_items.append("Entry complete")
+        elif "market regime" in lowered and "selective" in lowered:
+            normalized_items.append("Market supports position")
+        elif "market stress" in lowered and ("calm" in lowered or "stable" in lowered):
+            normalized_items.append("Stress acceptable")
+        else:
+            normalized_items.append(item[0].upper() + item[1:] if item else item)
+
+    checklist_html = ['<div class="pcc-checklist-card">', '<div class="pcc-checklist-title">Exit Checklist</div>']
+    for item in normalized_items:
+        checklist_html.append(f'<div class="pcc-checklist-item">✓ {html.escape(str(item))}</div>')
+    checklist_html.append('</div>')
+    st.markdown("".join(checklist_html), unsafe_allow_html=True)
 
 
 # =========================================================
@@ -931,6 +985,7 @@ def build_commander_report(
     return {
         "status": status,
         "tone": tone,
+        "open_positions": len(positions),
         "strong": strong,
         "review": review,
         "exit_candidates": actions.get("EXIT", 0),
@@ -951,7 +1006,15 @@ def render_commander_report(report: Dict[str, Any], market: Dict[str, Any], heat
     bg, border, color = tone_palette(tone)
     regime = html.escape(str(market.get("regime", "UNKNOWN")))
     stress = safe_int(market.get("stress_score"), 0)
-    summary = html.escape(str(report.get("summary", "Portfolio status unavailable.")))
+    metrics = [
+        ("Market Regime", regime),
+        ("Stress", f"{stress}/100"),
+        ("Open Positions", report.get("open_positions", 0)),
+        ("Strong", report.get("strong", 0)),
+        ("Review", report.get("review", 0)),
+        ("Largest Position", exposure.get("largest_symbol", "—")),
+        ("Portfolio Heat", f"{safe_float(heat.get('heat')):.1f}%"),
+    ]
     action_text = str(report.get("action_text", "ACTION: Continue monitoring."))
     action_text = "<br>".join(html.escape(part) for part in action_text.split("<br>"))
     st.markdown(
@@ -959,12 +1022,13 @@ def render_commander_report(report: Dict[str, Any], market: Dict[str, Any], heat
         <div class="pcc-hero" style="background:{bg};border-color:{border};">
             <div class="pcc-hero-kicker">Institutional Position Command</div>
             <div class="pcc-hero-title" style="color:{color};">🛡 PORTFOLIO STATUS: {html.escape(status)}</div>
-            <div class="pcc-hero-text"><strong>Market Regime:</strong> {regime} · <strong>Stress:</strong> {stress}/100 · {summary}</div>
+            <div class="pcc-hero-text">Operational snapshot</div>
             <div class="pcc-hero-action">{action_text}</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+    render_hero_metrics(metrics)
 
     render_card_grid([
         {"title": "Portfolio Status", "value": status, "detail": "Institutional position-management state", "tone": tone},
@@ -1175,6 +1239,26 @@ def run_page() -> None:
     closed_archive_df = build_closed_trades_archive(ledger)
     risk_alerts = build_risk_alerts(report, heat, exposure, alignment_df)
 
+    total_positions = len(positions)
+    total_market_value = sum(abs(safe_float(row.get("position_value"), 0.0)) for row in positions.values())
+    total_cost_basis = sum(abs(safe_float(row.get("cost_basis"), 0.0)) for row in positions.values())
+    total_open_pnl = sum(safe_float(row.get("unrealized_pnl"), 0.0) for row in positions.values())
+    total_daily_pnl = sum(safe_float(row.get("unrealized_pnl"), 0.0) for row in positions.values())
+    winning_positions = sum(1 for row in positions.values() if safe_float(row.get("unrealized_pnl"), 0.0) > 0)
+    losing_positions = sum(1 for row in positions.values() if safe_float(row.get("unrealized_pnl"), 0.0) < 0)
+    largest_position = exposure.get("largest_symbol", "—")
+    average_position = total_market_value / total_positions if total_positions else 0.0
+    risk_score = safe_float(heat.get("heat"), 0.0)
+    total_income = realized_pnl
+    stop_distance = 0.0
+    action_source = "Action Raw" if not pos_df.empty and "Action Raw" in pos_df.columns else "Action"
+    actions = pos_df[action_source].value_counts().to_dict() if not pos_df.empty and action_source in pos_df.columns else {}
+    health_values = [parse_health_score(x) for x in pos_df["Health"]] if not pos_df.empty and "Health" in pos_df.columns else []
+    avg_health = sum(health_values) / max(len(health_values), 1) if health_values else 0
+    winners = sum(1 for row in positions.values() if safe_float(row.get("unrealized_pnl"), 0.0) > 0) if positions else 0
+    losers = sum(1 for row in positions.values() if safe_float(row.get("unrealized_pnl"), 0.0) < 0) if positions else 0
+    winner_symbol, winner_pnl, loser_symbol, loser_pnl = largest_winner_loser(positions)
+
     st.title("🎯 Position Command Center")
     st.caption(
         "Institutional position management, exposure monitoring, scanner alignment, and OMS preparation. Advisory only."
@@ -1221,220 +1305,119 @@ def run_page() -> None:
 
     render_commander_report(report, market, heat, exposure)
 
-    action_source = "Action Raw" if not pos_df.empty and "Action Raw" in pos_df.columns else "Action"
-    actions = pos_df[action_source].value_counts().to_dict() if not pos_df.empty and action_source in pos_df.columns else {}
-    health_values = [parse_health_score(x) for x in pos_df["Health"]] if not pos_df.empty and "Health" in pos_df.columns else []
-    avg_health = sum(health_values) / max(len(health_values), 1) if health_values else 0
-    winners = sum(1 for row in positions.values() if safe_float(row.get("unrealized_pnl"), 0.0) > 0) if positions else 0
-    losers = sum(1 for row in positions.values() if safe_float(row.get("unrealized_pnl"), 0.0) < 0) if positions else 0
-    total_open_pnl = sum(safe_float(row.get("unrealized_pnl"), 0.0) for row in positions.values()) if positions else 0.0
-
-    st.caption("Compact command read: status, exposure, P&L, realized P&L, risk utilization, and average health.")
+    st.subheader("Executive Position Brief")
+    st.caption("High-level read on the active position book before drilling into management actions.")
     render_card_grid([
         {"title": "Position Status", "value": report.get("status", "STANDBY"), "detail": "Commander portfolio posture", "tone": report.get("tone", "info")},
         {"title": "Total Exposure", "value": fmt_money(exposure["gross_exposure"]), "detail": f"Net {fmt_money(exposure['net_exposure'])}", "tone": "info" if positions else "warning"},
         {"title": "Open P&L", "value": fmt_money(total_open_pnl), "detail": "Current unrealized position P&L", "tone": pnl_tone(total_open_pnl)},
+    ])
+    render_card_grid([
         {"title": "Realized P&L", "value": fmt_money(realized_pnl), "detail": "From engine/ledger when available", "tone": pnl_tone(realized_pnl)},
         {"title": "Risk Utilization", "value": f"{heat['heat']:.1f}%", "detail": f"{heat['label']} | Max guide {heat['max_allowed']:.1f}%", "tone": heat["tone"]},
         {"title": "Avg Health", "value": health_badge(avg_health), "detail": "Open-position health score", "tone": "good" if avg_health >= 80 else "warning" if avg_health >= 40 else "risk"},
     ])
 
-    command_left, command_right = st.columns([0.68, 0.32], gap="large")
+    st.subheader("Position Health Monitor")
+    st.caption("Risk dashboard for conviction, stop distance, reward/risk, drawdown, volatility, and income quality.")
+    selected_symbol = st.selectbox("Select position", options=sorted(positions.keys()) if positions else ["No positions"], key="pcc_selected_symbol")
+    selected_row = positions.get(selected_symbol, {}) if positions else {}
+    selected_health = score_position(selected_row, market, scanner_lookup().get(selected_symbol, {})) if selected_row else {}
 
-    with command_left:
-        st.subheader("🧠 Position Intelligence Engine")
-        st.caption("Middle-layer read: winners, losers, concentration risk, and review queue.")
-        render_card_grid([
-            {"title": "Largest Winner", "value": winner_symbol, "detail": fmt_money(winner_pnl), "tone": pnl_tone(winner_pnl)},
-            {"title": "Largest Loser", "value": loser_symbol, "detail": fmt_money(loser_pnl), "tone": pnl_tone(loser_pnl)},
-            {"title": "Winners", "value": winners, "detail": "Open positions with positive unrealized P&L", "tone": "good" if winners else "neutral"},
-            {"title": "Losers", "value": losers, "detail": "Open positions with negative unrealized P&L", "tone": "risk" if losers else "good"},
-            {"title": "Concentration Risk", "value": f"{exposure['largest_symbol']} · {exposure['largest_pct']:.1f}%", "detail": f"Top 3 concentration {exposure['top3_pct']:.1f}%", "tone": "risk" if exposure["largest_pct"] >= 25 or exposure["top3_pct"] >= 40 else "warning" if exposure["largest_pct"] >= 20 else "good"},
-            {"title": "Review Queue", "value": actions.get("EXIT", 0) + actions.get("TRIM", 0) + actions.get("TIGHTEN STOP", 0), "detail": "Exit / trim / tighten-stop candidates", "tone": "warning" if (actions.get("EXIT", 0) + actions.get("TRIM", 0) + actions.get("TIGHTEN STOP", 0)) else "good"},
+    last_price = safe_float(selected_row.get("last_price"), 0.0)
+    stop_price = safe_float(selected_health.get("stop"), 0.0)
+    target_price = safe_float(selected_health.get("target"), 0.0)
+
+    if last_price:
+        stop_distance = ((last_price - stop_price) / last_price) * 100.0
+        reward_risk = ((target_price - last_price) / max(abs(last_price - stop_price), 1.0)) * 100.0
+    else:
+        stop_distance = 0.0
+        reward_risk = 0.0
+
+    health_cards = [
+        {"title": "Position Grade", "value": health_badge(selected_health.get("health_score", 0)), "detail": "Institutional position score", "tone": position_summary_tone(selected_health.get("action", ""))},
+        {"title": "Conviction", "value": f"{selected_health.get('health_score', 0):.0f}/100", "detail": "Score translated to conviction", "tone": "good" if selected_health.get("health_score", 0) >= 78 else "warning" if selected_health.get("health_score", 0) >= 55 else "risk"},
+        {"title": "Risk Level", "value": selected_health.get("health_label", "N/A"), "detail": "Current position risk state", "tone": selected_health.get("tone", "info")},
+        {"title": "Stop Distance", "value": fmt_pct(stop_distance), "detail": "Distance to modeled stop", "tone": "warning"},
+        {"title": "Reward / Risk", "value": fmt_pct(reward_risk), "detail": "Modeled target versus stop", "tone": "info"},
+        {"title": "Drawdown", "value": fmt_pct(min(0.0, selected_health.get("pnl_pct", 0.0))), "detail": "Unrealized loss pressure", "tone": "risk" if selected_health.get("pnl_pct", 0.0) < 0 else "good"},
+        {"title": "Volatility", "value": selected_health.get("tone", "N/A"), "detail": "Health tone proxy", "tone": selected_health.get("tone", "info")},
+        {"title": "Income Quality", "value": "N/A", "detail": "See position income characteristics", "tone": "neutral"},
+    ]
+    render_card_grid(health_cards, compact=True)
+
+    st.subheader("Position Management Center")
+    st.caption("Operational controls grouped together for stop, target, risk amount, and action readiness.")
+    if selected_row:
+        render_mini_grid([
+            ("Symbol", selected_symbol),
+            ("Side", selected_row.get("side", "N/A")),
+            ("Qty", f"{safe_float(selected_row.get('qty')):,.2f}"),
+            ("Current Stop", fmt_money(selected_health.get("stop"))),
+            ("Target", fmt_money(selected_health.get("target"))),
+            ("Risk Amount", fmt_money(abs(safe_float(selected_row.get('unrealized_pnl'), 0.0)))),
         ])
 
-        st.subheader("🎯 Position Summary")
-        st.caption("Fast read: which positions need action before you study the full monitor.")
-        render_position_summary(pos_df)
+        st.markdown("**Risk Reduction**")
+        risk_left, risk_right = st.columns(2)
+        with risk_left:
+            if st.button("🟡 Trim 25%", width="stretch", disabled=not bool(selected_row), key="pcc_trim_25"):
+                ticket = prepare_position_ticket(selected_row, "TRIM_25", 0.25)
+                st.success(f"Prepared 25% trim ticket for {ticket.get('symbol')}.")
+                st.json(ticket)
+        with risk_right:
+            if st.button("🟡 Trim 50%", width="stretch", disabled=not bool(selected_row), key="pcc_trim_50"):
+                ticket = prepare_position_ticket(selected_row, "TRIM_50", 0.50)
+                st.success(f"Prepared 50% trim ticket for {ticket.get('symbol')}.")
+                st.json(ticket)
 
-    with command_right:
-        section_open("🎛 Quick OMS Actions", "Prepare advisory position-management tickets. This page does not route live orders.")
-        selected_symbol = st.selectbox("Select position", options=sorted(positions.keys()) if positions else ["No positions"], key="pcc_selected_symbol")
-        selected_row = positions.get(selected_symbol, {}) if positions else {}
-        selected_health = score_position(selected_row, market, scanner_lookup().get(selected_symbol, {})) if selected_row else {}
+        st.markdown("**Stop Management**")
+        if st.button("🟢 Move Stop to Breakeven", width="stretch", disabled=not bool(selected_row), key="pcc_stop_be"):
+            ticket = prepare_position_ticket(selected_row, "STOP_BREAKEVEN", 1.0)
+            st.success(f"Prepared breakeven stop ticket for {ticket.get('symbol')}.")
+            st.json(ticket)
 
-        if selected_row:
-            render_mini_grid([
-                ("Symbol", selected_symbol),
-                ("Side", selected_row.get("side", "N/A")),
-                ("Qty", f"{safe_float(selected_row.get('qty')):,.2f}"),
-                ("Health", health_badge(selected_health.get("health_score", 0))),
-                ("Action", action_badge(selected_health.get("action", ""))),
-                ("P&L", fmt_money(selected_row.get("unrealized_pnl"))),
-            ])
-
+        st.markdown("**Exit**")
         if st.button("🔴 Prepare Full Exit", width="stretch", disabled=not bool(selected_row), key="pcc_prepare_exit", type="primary"):
             ticket = prepare_position_ticket(selected_row, "FULL_EXIT", 1.0)
             st.success(f"Prepared full exit ticket for {ticket.get('symbol')}.")
             st.json(ticket)
 
-        qa1, qa2 = st.columns(2)
-        with qa1:
-            if st.button("🟡 Trim 25%", width="stretch", disabled=not bool(selected_row), key="pcc_trim_25"):
-                ticket = prepare_position_ticket(selected_row, "TRIM_25", 0.25)
-                st.success(f"Prepared 25% trim ticket for {ticket.get('symbol')}.")
-                st.json(ticket)
-            if st.button("🟢 Move Stop to Breakeven", width="stretch", disabled=not bool(selected_row), key="pcc_stop_be"):
-                ticket = prepare_position_ticket(selected_row, "STOP_BREAKEVEN", 1.0)
-                st.success(f"Prepared breakeven stop ticket for {ticket.get('symbol')}.")
-                st.json(ticket)
-        with qa2:
-            if st.button("🟡 Trim 50%", width="stretch", disabled=not bool(selected_row), key="pcc_trim_50"):
-                ticket = prepare_position_ticket(selected_row, "TRIM_50", 0.50)
-                st.success(f"Prepared 50% trim ticket for {ticket.get('symbol')}.")
-                st.json(ticket)
-            if st.button("🟢 Lock Profit", width="stretch", disabled=not bool(selected_row), key="pcc_lock_profit"):
-                ticket = prepare_position_ticket(selected_row, "LOCK_PROFIT", 1.0)
-                st.success(f"Prepared profit-lock stop ticket for {ticket.get('symbol')}.")
-                st.json(ticket)
+        st.markdown("**Profit Management**")
+        if st.button("🟢 Lock Profit", width="stretch", disabled=not bool(selected_row), key="pcc_lock_profit"):
+            ticket = prepare_position_ticket(selected_row, "LOCK_PROFIT", 1.0)
+            st.success(f"Prepared profit-lock stop ticket for {ticket.get('symbol')}.")
+            st.json(ticket)
 
-        if st.button("Open OMS With Prepared Ticket", width="stretch", disabled=not bool(selected_row), key="pcc_open_oms"):
+        st.markdown("**Neutral**")
+        if st.button("🟢 Hold", width="stretch", disabled=not bool(selected_row), key="pcc_hold"):
+            st.info("Hold selected position. No routing action was changed.")
+
+        render_exit_rules_checklist(selected_health.get("reasons", ["No rule text available."]))
+        st.markdown('<div style="height: 0.6rem;"></div>', unsafe_allow_html=True)
+        st.caption("Execution Handoff")
+        if st.button("Open OMS With Prepared Ticket", width="stretch", disabled=not bool(selected_row), key="pcc_open_oms", type="primary"):
             if selected_row:
                 prepare_position_ticket(selected_row, "FULL_EXIT", 1.0)
             st.session_state["jfbp_main_navigation"] = "OMS Execution"
             st.rerun()
-        section_close()
+    else:
+        st.info("No positions available for management actions.")
 
-
-    section_open("📐 Exposure Monitor", "Full-width exposure read: long, short, net, gross, concentration, heat, guide equity, and sector exposure.")
-    render_card_grid([
-        {"title": "Long Exposure", "value": fmt_money(exposure["long_exposure"]), "detail": "Total long market value", "tone": "info"},
-        {"title": "Short Exposure", "value": fmt_money(exposure["short_exposure"]), "detail": "Total short market value", "tone": "neutral" if exposure["short_exposure"] == 0 else "warning"},
-        {"title": "Net Exposure", "value": fmt_money(exposure["net_exposure"]), "detail": "Long minus short exposure", "tone": "info"},
-        {"title": "Gross Exposure", "value": fmt_money(exposure["gross_exposure"]), "detail": "Total absolute exposure", "tone": heat["tone"]},
-        {"title": "Largest Risk", "value": f"{exposure['largest_symbol']} · {exposure['largest_pct']:.1f}%", "detail": "Single-position concentration", "tone": "risk" if exposure["largest_pct"] >= 25 else "warning" if exposure["largest_pct"] >= 20 else "good"},
-        {"title": "Top 3 Concentration", "value": f"{exposure['top3_pct']:.1f}%", "detail": "Top three positions", "tone": "risk" if exposure["top3_pct"] >= 40 else "good"},
-        {"title": "Heat", "value": f"{heat['heat']:.1f}%", "detail": f"{heat['label']} | Max guide {heat['max_allowed']:.1f}%", "tone": heat["tone"]},
-        {"title": "Guide Equity", "value": fmt_money(exposure["account_value"]), "detail": "Risk guide denominator", "tone": "neutral"},
-    ])
-
-    exposure_left, exposure_right = st.columns([0.62, 0.38], gap="large")
-    with exposure_left:
-        if exposure["largest_pct"] >= 25 or exposure["top3_pct"] >= 40:
-            st.error("Concentration risk is elevated. Review largest position and top-3 exposure before adding risk.")
-        elif len(positions) == 0:
-            st.info("No active exposure detected.")
+    st.subheader("Research & Analytics")
+    st.caption("Reference detail, ledger views, diagnostics, and closed-trade context live here after the operational workflow.")
+    with st.expander("📊 Open Position Monitor", expanded=False):
+        st.caption("Desktop table plus mobile cards for active position management.")
+        if pos_df.empty:
+            st.info("No open positions detected. Positions will appear here after OMS, Portfolio, or broker truth reports active holdings.")
         else:
-            st.success("Exposure profile is within normal guide.")
-    with exposure_right:
-        if sector_df.empty:
-            st.info("No sector exposure available.")
-        else:
-            st.dataframe(sector_df, width="stretch", hide_index=True, height=160)
-    section_close()
-
-    tab_open, tab_risk, tab_ledger, tab_archive = st.tabs([
-        "📊 Open Positions",
-        "🚨 Risk Center",
-        "📒 Position Ledger",
-        "🗄 Trade Archive",
-    ])
-
-    with tab_open:
-        tab_left, tab_right = st.columns([0.68, 0.32], gap="large")
-        with tab_left:
-            section_open("📊 Open Position Monitor", "Desktop table plus mobile cards for active position management.")
-            if pos_df.empty:
-                st.info("No open positions detected. Positions will appear here after OMS, Portfolio, or broker truth reports active holdings.")
-            else:
-                st.markdown('<div class="pcc-desktop-only">', unsafe_allow_html=True)
-                display_pos_df = pos_df.drop(columns=["Action Raw"], errors="ignore")
-                st.dataframe(display_pos_df, width="stretch", hide_index=True, height=360)
-                st.markdown('</div>', unsafe_allow_html=True)
-                render_mobile_position_cards(display_pos_df)
-            section_close()
-        with tab_right:
-            section_open("🚨 Exit Watchlist", "Focus list for positions that need action: EXIT, TRIM, or TIGHTEN STOP.")
-            if exit_df.empty:
-                st.success("No exit or trim candidates detected right now.")
-            else:
-                st.dataframe(exit_df, width="stretch", hide_index=True, height=360)
-            section_close()
-
-    with tab_risk:
-        risk_left, risk_right = st.columns([0.68, 0.32], gap="large")
-        with risk_left:
-            section_open("🔎 Scanner Alignment Engine", "Compares current positions against the latest Scanner signal when available.")
-            if alignment_df.empty:
-                st.info("No scanner alignment available. Run Scanner first to populate current signals.")
-            else:
-                conflicts = alignment_df[alignment_df["Alignment"].astype(str).str.contains("Conflict|Risk", case=False, regex=True)]
-                if not conflicts.empty:
-                    conflict_symbols = ", ".join(conflicts["Symbol"].astype(str).head(5).tolist()) if "Symbol" in conflicts.columns else "review list"
-                    st.error(f"🚨 SCANNER CONFLICT / POSITION RISK DETECTED: {conflict_symbols}. Review before adding exposure.")
-                else:
-                    st.success("No critical Scanner conflicts detected.")
-                st.dataframe(alignment_df, width="stretch", hide_index=True, height=360)
-            section_close()
-        with risk_right:
-            section_open("🚨 Risk Alerts", "Commander alerts before adding or holding exposure.")
-            for title, detail in risk_alerts:
-                if title.startswith("🔴"):
-                    st.error(f"**{title}**\n\n{detail}")
-                elif title.startswith("🟡"):
-                    st.warning(f"**{title}**\n\n{detail}")
-                else:
-                    st.success(f"**{title}**\n\n{detail}")
-            section_close()
-
-            section_open("🧠 Position Health Method")
-            st.markdown(
-                """
-                Health score uses:
-                - open P&L versus cost basis
-                - Market Pulse regime and stress
-                - Scanner signal alignment when available
-                - estimated stop and target zones
-                - long/short regime conflict
-                - position action priority
-
-                Actions are advisory only: **HOLD**, **TRIM**, **TIGHTEN STOP**, or **EXIT**.
-                """
-            )
-            section_close()
-
-            section_open("📝 Recent Journal Reviews")
-            reviews = st.session_state.get("pcc_journal_reviews", [])
-            if not reviews:
-                st.info("No position reviews prepared yet.")
-            else:
-                st.dataframe(pd.DataFrame(reviews[:10]), width="stretch", hide_index=True, height=220)
-            if st.button("Send Review to Journal", width="stretch", disabled=not bool(selected_row), key="pcc_send_journal"):
-                note = send_position_review_to_journal(selected_symbol, selected_row, selected_health)
-                st.success(f"Position review note prepared for {selected_symbol}.")
-                st.json(note)
-            if st.button("Open Journal", width="stretch", disabled=not bool(selected_row), key="pcc_open_journal"):
-                st.session_state["jfbp_main_navigation"] = "Journal"
-                st.rerun()
-            section_close()
-
-    with tab_ledger:
-        section_open("📒 Position Ledger", "Clean position ledger for current open holdings.")
-        if position_ledger_df.empty:
-            st.info("No open position ledger rows available.")
-        else:
-            st.dataframe(position_ledger_df, width="stretch", hide_index=True, height=420)
-        section_close()
-
-    with tab_archive:
-        section_open("🗄 Closed Trades Archive", "Closed or realized-trade rows from the portfolio ledger when available.")
-        if closed_archive_df.empty:
-            st.info("No closed-trade archive rows found in the current ledger yet.")
-        else:
-            st.dataframe(closed_archive_df, width="stretch", hide_index=True, height=420)
-        section_close()
-
-    with st.expander("Position Diagnostics", expanded=False):
+            display_pos_df = pos_df.drop(columns=["Action Raw"], errors="ignore")
+            st.markdown('<div class="pcc-desktop-only">', unsafe_allow_html=True)
+            st.dataframe(display_pos_df, width="stretch", hide_index=True, height=360)
+            st.markdown('</div>', unsafe_allow_html=True)
+            render_mobile_position_cards(display_pos_df)
+    with st.expander("🧭 Position Diagnostics", expanded=False):
         st.write({
             "Version": "Frozen Build",
             "Updated": now_iso(),
@@ -1453,6 +1436,93 @@ def run_page() -> None:
             "Sector Exposure": sector_df.to_dict("records") if not sector_df.empty else [],
             "Risk Alerts": risk_alerts,
         })
+
+    with st.expander("📒 Trade History", expanded=False):
+        st.caption("Trades related to this position are archived here for review.")
+        if closed_archive_df.empty:
+            st.info("No closed-trade archive rows found in the current ledger yet.")
+        else:
+            st.dataframe(closed_archive_df, width="stretch", hide_index=True, height=320)
+
+    with st.expander("📝 Journal", expanded=False):
+        st.caption("Position review notes and journal handoff context.")
+        reviews = st.session_state.get("pcc_journal_reviews", [])
+        if not reviews:
+            st.info("No position reviews prepared yet.")
+        else:
+            st.dataframe(pd.DataFrame(reviews[:10]), width="stretch", hide_index=True, height=220)
+        journal_cols = st.columns(2)
+        with journal_cols[0]:
+            if st.button("Send Review to Journal", width="stretch", disabled=not bool(selected_row), key="pcc_send_journal"):
+                note = send_position_review_to_journal(selected_symbol, selected_row, selected_health)
+                st.success(f"Position review note prepared for {selected_symbol}.")
+                st.json(note)
+        with journal_cols[1]:
+            if st.button("Open Journal", width="stretch", disabled=not bool(selected_row), key="pcc_open_journal"):
+                st.session_state["jfbp_main_navigation"] = "Journal"
+                st.rerun()
+
+    tab_risk, tab_ledger, tab_archive = st.tabs([
+        "🚨 Risk Center",
+        "📒 Position Ledger",
+        "🗄 Trade Archive",
+    ])
+
+    with tab_risk:
+        section_open("🔎 Scanner Alignment Engine", "Compares current positions against the latest Scanner signal when available.")
+        if alignment_df.empty:
+            st.info("No scanner alignment available. Run Scanner first to populate current signals.")
+        else:
+            conflicts = alignment_df[alignment_df["Alignment"].astype(str).str.contains("Conflict|Risk", case=False, regex=True)]
+            if not conflicts.empty:
+                conflict_symbols = ", ".join(conflicts["Symbol"].astype(str).head(5).tolist()) if "Symbol" in conflicts.columns else "review list"
+                st.error(f"🚨 SCANNER CONFLICT / POSITION RISK DETECTED: {conflict_symbols}. Review before adding exposure.")
+            else:
+                st.success("No critical Scanner conflicts detected.")
+            st.dataframe(alignment_df, width="stretch", hide_index=True, height=360)
+        section_close()
+
+        section_open("🚨 Risk Alerts", "Commander alerts before adding or holding exposure.")
+        for title, detail in risk_alerts:
+            if title.startswith("🔴"):
+                st.error(f"**{title}**\n\n{detail}")
+            elif title.startswith("🟡"):
+                st.warning(f"**{title}**\n\n{detail}")
+            else:
+                st.success(f"**{title}**\n\n{detail}")
+        section_close()
+
+        section_open("🧠 Position Health Method")
+        st.markdown(
+            """
+            Health score uses:
+            - open P&L versus cost basis
+            - Market Pulse regime and stress
+            - Scanner signal alignment when available
+            - estimated stop and target zones
+            - long/short regime conflict
+            - position action priority
+
+            Actions are advisory only: **HOLD**, **TRIM**, **TIGHTEN STOP**, or **EXIT**.
+            """
+        )
+        section_close()
+
+    with tab_ledger:
+        section_open("📒 Position Ledger", "Clean position ledger for current open holdings.")
+        if position_ledger_df.empty:
+            st.info("No open position ledger rows available.")
+        else:
+            st.dataframe(position_ledger_df, width="stretch", hide_index=True, height=420)
+        section_close()
+
+    with tab_archive:
+        section_open("🗄 Closed Trades Archive", "Closed or realized-trade rows from the portfolio ledger when available.")
+        if closed_archive_df.empty:
+            st.info("No closed-trade archive rows found in the current ledger yet.")
+        else:
+            st.dataframe(closed_archive_df, width="stretch", hide_index=True, height=420)
+        section_close()
 
 def page() -> None:
     run_page()

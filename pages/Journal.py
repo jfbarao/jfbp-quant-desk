@@ -203,10 +203,7 @@ def _journal_supabase_persistence_available(user_id: str) -> tuple[bool, str, ob
             f"{JOURNAL_LESSONS_TABLE}. Error: {exc}",
             client,
         )
-
-    return True, "", client
-
-
+    return True, "Available", client
 def _insert_journal_lesson(
     client,
     user_id: str,
@@ -364,6 +361,233 @@ def inject_journal_css() -> None:
                 overflow-wrap: break-word !important;
             }
 
+            .journal-card-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(min(100%, 245px), 1fr));
+                gap: 0.85rem;
+                margin: 0.45rem 0 1.0rem 0;
+            }
+
+            .journal-card-grid--compact {
+                gap: 0.55rem;
+                margin: 0.22rem 0 0.65rem 0;
+            }
+
+            .journal-card-grid--compact .journal-card {
+                min-height: 84px;
+                padding: 0.68rem 0.76rem;
+                margin-bottom: 0.18rem;
+            }
+
+            .journal-card-grid--compact .journal-card-label {
+                margin-bottom: 0.20rem;
+            }
+
+            .journal-card-grid--compact .journal-card-detail {
+                margin-top: 0.22rem;
+            }
+
+            .journal-metric-strip {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(min(100%, 155px), 1fr));
+                gap: 0.55rem;
+                margin: 0.18rem 0 0.70rem 0;
+            }
+
+            .journal-metric-chip {
+                background: #ffffff;
+                border: 1px solid #dbe3ef;
+                border-radius: 12px;
+                padding: 0.58rem 0.70rem;
+                box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+            }
+
+            .journal-metric-chip-label {
+                color: #64748b;
+                font-size: 0.68rem;
+                font-weight: 850;
+                letter-spacing: 0.05em;
+                text-transform: uppercase;
+                margin-bottom: 0.16rem;
+            }
+
+            .journal-metric-chip-value {
+                color: #111827;
+                font-size: 0.96rem;
+                line-height: 1.12;
+                font-weight: 880;
+                overflow-wrap: anywhere;
+            }
+
+            .journal-queue-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(min(100%, 165px), 1fr));
+                gap: 0.55rem;
+                margin: 0.20rem 0 0.65rem 0;
+            }
+
+            .journal-queue-card {
+                background: #ffffff;
+                border: 1px solid #dbe3ef;
+                border-radius: 12px;
+                padding: 0.60rem 0.68rem;
+                box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+            }
+
+            .journal-queue-symbol {
+                color: #111827;
+                font-size: 1.0rem;
+                font-weight: 900;
+                line-height: 1.1;
+                margin-bottom: 0.18rem;
+            }
+
+            .journal-queue-status {
+                color: #334155;
+                font-size: 0.78rem;
+                font-weight: 800;
+                line-height: 1.2;
+                margin-bottom: 0.10rem;
+            }
+
+            .journal-queue-detail {
+                color: #64748b;
+                font-size: 0.74rem;
+                line-height: 1.28;
+                margin-bottom: 0.34rem;
+                overflow-wrap: anywhere;
+            }
+
+            .journal-summary-strip {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
+                gap: 0.55rem;
+                margin: 0.20rem 0 0.55rem 0;
+            }
+
+            .journal-summary-card {
+                background: #f8fafc;
+                border: 1px solid #dbe3ef;
+                border-radius: 12px;
+                padding: 0.62rem 0.70rem;
+            }
+
+            .journal-summary-label {
+                color: #64748b;
+                font-size: 0.68rem;
+                font-weight: 850;
+                letter-spacing: 0.05em;
+                text-transform: uppercase;
+                margin-bottom: 0.16rem;
+            }
+
+            .journal-summary-value {
+                color: #111827;
+                font-size: 0.94rem;
+                font-weight: 890;
+                line-height: 1.12;
+                overflow-wrap: anywhere;
+            }
+
+            .journal-summary-detail {
+                color: #64748b;
+                font-size: 0.74rem;
+                line-height: 1.25;
+                margin-top: 0.16rem;
+            }
+
+            .journal-review-layout {
+                display: grid;
+                grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+                gap: 0.75rem;
+                margin-top: 0.18rem;
+            }
+
+            .journal-review-panel {
+                background: #ffffff;
+                border: 1px solid #dbe3ef;
+                border-radius: 14px;
+                padding: 0.78rem 0.84rem;
+            }
+
+            .journal-review-panel-title {
+                font-size: 0.72rem;
+                font-weight: 900;
+                letter-spacing: 0.055em;
+                text-transform: uppercase;
+                color: #64748b;
+                margin-bottom: 0.32rem;
+            }
+
+            .journal-review-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
+                gap: 0.45rem;
+            }
+
+            .journal-review-item {
+                background: #f8fafc;
+                border: 1px solid #e5e7eb;
+                border-radius: 10px;
+                padding: 0.50rem 0.56rem;
+            }
+
+            .journal-review-item-label {
+                color: #64748b;
+                font-size: 0.67rem;
+                font-weight: 850;
+                letter-spacing: 0.05em;
+                text-transform: uppercase;
+                margin-bottom: 0.14rem;
+            }
+
+            .journal-review-item-value {
+                color: #111827;
+                font-size: 0.86rem;
+                line-height: 1.2;
+                font-weight: 850;
+                overflow-wrap: anywhere;
+            }
+
+            .journal-lessons-layout {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+                gap: 0.55rem;
+                margin-top: 0.20rem;
+            }
+
+            .journal-lessons-layout .stTextArea textarea {
+                min-height: 96px !important;
+            }
+
+            .journal-coaching-compact .journal-quality-row {
+                padding: 0.52rem 0.62rem;
+                margin-bottom: 0.32rem;
+            }
+
+            .journal-coaching-compact .journal-quality-label {
+                font-size: 0.92rem;
+            }
+
+            .journal-coaching-compact .journal-quality-detail {
+                font-size: 0.72rem;
+            }
+
+            .journal-coaching-compact .journal-quality-value {
+                font-size: 0.92rem;
+            }
+
+            .journal-analytics-empty {
+                background: #f8fafc;
+                border: 1px dashed #cbd5e1;
+                border-radius: 14px;
+                padding: 1.0rem 1.0rem;
+                color: #334155;
+                font-weight: 650;
+                line-height: 1.35;
+                margin: 0.25rem 0 0.6rem 0;
+            }
+
             .journal-flow {
                 background: #eff6ff;
                 border: 1px solid #bfdbfe;
@@ -438,6 +662,13 @@ def inject_journal_css() -> None:
                     padding-right: 0.9rem !important;
                 }
 
+                .journal-metric-strip,
+                .journal-queue-grid,
+                .journal-review-layout,
+                .journal-lessons-layout {
+                    grid-template-columns: 1fr;
+                }
+
                 div[data-testid="stHorizontalBlock"] > div,
                 div[data-testid="column"] {
                     flex: 1 1 100% !important;
@@ -496,6 +727,176 @@ def tone_palette(tone: str) -> tuple[str, str, str]:
         "info": ("#eff6ff", "#bfdbfe", "#1d4ed8"),
     }
     return palette.get(tone, palette["neutral"])
+
+
+def safe_float(value, default: float = 0.0) -> float:
+    try:
+        if value is None:
+            return default
+        if isinstance(value, str):
+            value = value.replace("$", "").replace(",", "").replace("%", "").strip()
+            if not value:
+                return default
+        return float(value)
+    except Exception:
+        return default
+
+
+def safe_int(value, default: int = 0) -> int:
+    try:
+        return int(round(safe_float(value, default)))
+    except Exception:
+        return default
+
+
+def fmt_money(value) -> str:
+    try:
+        return f"${float(value):,.2f}"
+    except Exception:
+        return "$0.00"
+
+
+def fmt_pct(value) -> str:
+    try:
+        return f"{float(value):.2f}%"
+    except Exception:
+        return "0.00%"
+
+
+def safe_percent(value, default: float = 0.0) -> float:
+    return safe_float(value, default)
+
+
+def render_card_grid(cards: list[dict]) -> None:
+    pieces = ['<div class="journal-card-grid">']
+    for card in cards:
+        background, border, value_color = tone_palette(str(card.get("tone", "neutral")))
+        pieces.append(
+            f'<div class="journal-card" style="background:{background};border:1px solid {border};">'
+            f'<div class="journal-card-label">{html.escape(str(card.get("title", "")))}</div>'
+            f'<div class="journal-card-value" style="color:{value_color};">{html.escape(str(card.get("value", "")))}</div>'
+            f'<div class="journal-card-detail">{html.escape(str(card.get("detail", "")))}</div>'
+            f'</div>'
+        )
+    pieces.append('</div>')
+    st.markdown("".join(pieces), unsafe_allow_html=True)
+
+
+def render_compact_card_grid(cards: list[dict]) -> None:
+    pieces = ['<div class="journal-card-grid journal-card-grid--compact">']
+    for card in cards:
+        background, border, value_color = tone_palette(str(card.get("tone", "neutral")))
+        pieces.append(
+            f'<div class="journal-card" style="background:{background};border:1px solid {border};">'
+            f'<div class="journal-card-label">{html.escape(str(card.get("title", "")))}</div>'
+            f'<div class="journal-card-value" style="color:{value_color};">{html.escape(str(card.get("value", "")))}</div>'
+            f'<div class="journal-card-detail">{html.escape(str(card.get("detail", "")))}</div>'
+            f'</div>'
+        )
+    pieces.append('</div>')
+    st.markdown("".join(pieces), unsafe_allow_html=True)
+
+
+def render_metric_strip(metrics: list[dict]) -> None:
+    pieces = ['<div class="journal-metric-strip">']
+    for metric in metrics:
+        pieces.append(
+            '<div class="journal-metric-chip">'
+            f'<div class="journal-metric-chip-label">{html.escape(str(metric.get("label", "")))}</div>'
+            f'<div class="journal-metric-chip-value">{html.escape(str(metric.get("value", "")))}</div>'
+            '</div>'
+        )
+    pieces.append('</div>')
+    st.markdown("".join(pieces), unsafe_allow_html=True)
+
+
+def render_summary_strip(metrics: list[dict]) -> None:
+    pieces = ['<div class="journal-summary-strip">']
+    for metric in metrics:
+        pieces.append(
+            f'<div class="journal-summary-card"><div class="journal-summary-label">{html.escape(str(metric.get("title", "")))}</div>'
+            f'<div class="journal-summary-value">{html.escape(str(metric.get("value", "")))}</div>'
+            f'<div class="journal-summary-detail">{html.escape(str(metric.get("detail", "")))}</div></div>'
+        )
+    pieces.append('</div>')
+    st.markdown("".join(pieces), unsafe_allow_html=True)
+
+
+def render_queue_cards(queue_rows: list[dict]) -> None:
+    if not queue_rows:
+        st.info("No trade reviews available yet.")
+        return
+
+    for chunk_start in range(0, len(queue_rows), 5):
+        row_chunk = queue_rows[chunk_start:chunk_start + 5]
+        cols = responsive_columns(len(row_chunk))
+        for col, item in zip(cols, row_chunk):
+            with col:
+                tone = "good" if item["status"] in {"Closed Winner", "Executed Well"} else "warning" if item["status"] == "Needs Review" else "risk"
+                background, border, value_color = tone_palette(tone)
+                try:
+                    queue_time = pd.to_datetime(item.get("time_text", ""), errors="coerce")
+                    time_label = queue_time.strftime("%b %d • %H:%M") if not pd.isna(queue_time) else str(item.get("time_text", ""))
+                except Exception:
+                    time_label = str(item.get("time_text", ""))
+                st.markdown(
+                    f'''
+                    <div class="journal-queue-card" style="background:{background};border:1px solid {border};">
+                        <div class="journal-queue-symbol" style="color:{value_color};">{html.escape(item["symbol"])} · {html.escape(item["action"] or "Review")}</div>
+                        <div class="journal-queue-status">{html.escape(item["status"])}</div>
+                        <div class="journal-queue-detail">{html.escape(time_label)}</div>
+                    </div>
+                    ''',
+                    unsafe_allow_html=True,
+                )
+                if st.button("Open Review", key=f"journal_queue_open_{item['key']}", width="stretch"):
+                    st.session_state["journal_selected_trade_key"] = item["key"]
+                    st.session_state["journal_selected_trade_row"] = item["row"]
+                    st.rerun()
+
+
+def render_review_layout(left_title: str, left_items: list[tuple[str, Any]], right_title: str, right_items: list[tuple[str, Any]]) -> None:
+    left_html = ''.join(
+        f'<div class="journal-review-item"><div class="journal-review-item-label">{html.escape(str(label))}</div><div class="journal-review-item-value">{html.escape(str(value))}</div></div>'
+        for label, value in left_items
+    )
+    right_html = ''.join(
+        f'<div class="journal-review-item"><div class="journal-review-item-label">{html.escape(str(label))}</div><div class="journal-review-item-value">{html.escape(str(value))}</div></div>'
+        for label, value in right_items
+    )
+    st.markdown(
+        f'''
+        <div class="journal-review-layout">
+            <div class="journal-review-panel">
+                <div class="journal-review-panel-title">{html.escape(left_title)}</div>
+                <div class="journal-review-grid">{left_html}</div>
+            </div>
+            <div class="journal-review-panel">
+                <div class="journal-review-panel-title">{html.escape(right_title)}</div>
+                <div class="journal-review-grid">{right_html}</div>
+            </div>
+        </div>
+        ''',
+        unsafe_allow_html=True,
+    )
+
+
+def render_metric_card(label: str, value, detail: str = "", tone: str = "neutral") -> None:
+    journal_metric_card(label, value, detail, tone)
+
+
+def render_status_banner(title: str, summary: str, action: str = "", tone: str = "neutral") -> None:
+    background, border, _ = tone_palette(tone)
+    st.markdown(
+        f"""
+        <div class="journal-commander-hero {html.escape(tone)}" style="background:{background};border-color:{border};">
+            <div class="journal-commander-kicker">{html.escape(title)}</div>
+            <div class="journal-commander-summary">{html.escape(summary)}</div>
+            {f'<div class="journal-commander-action">{html.escape(action)}</div>' if action else ''}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def journal_metric_card(
@@ -650,6 +1051,10 @@ def inject_journal_commander_css() -> None:
                 white-space: nowrap;
             }
             @media (max-width: 760px) {
+                .journal-card-grid {
+                    grid-template-columns: 1fr;
+                }
+
                 .journal-quality-row { grid-template-columns: 1fr; }
                 .journal-quality-value { white-space: normal; }
             }
@@ -775,16 +1180,18 @@ def render_commander_review_report(snapshot: dict) -> None:
 def render_executive_review_brief(snapshot: dict) -> None:
     st.subheader("Executive Review Brief")
     st.caption("Commander-level snapshot before reviewing the ledger, symbols, days, and notes.")
-    r1 = responsive_columns(4)
-    r2 = responsive_columns(4)
-    with r1[0]: journal_metric_card("Discipline Score", f"{snapshot.get('discipline_score', 0)}/100", snapshot.get("grade", "N/A"), tone=snapshot.get("tone", "warning"))
-    with r1[1]: journal_metric_card("Win Rate", f"{snapshot.get('win_rate', 0) * 100:.1f}%", "Winning trades / total", tone=pct_tone(snapshot.get("win_rate", 0)))
-    with r1[2]: journal_metric_card("Profit Factor", f"{snapshot.get('profit_factor', 0):.2f}", "Gross wins / gross losses", tone=ratio_tone(snapshot.get("profit_factor", 0)))
-    with r1[3]: journal_metric_card("Expectancy", f"${snapshot.get('expectancy', 0):,.2f}", "Average expected trade", tone=pnl_tone(snapshot.get("expectancy", 0)))
-    with r2[0]: journal_metric_card("Total Trades", snapshot.get("total_trades", 0), "Ledger entries analyzed", tone="info")
-    with r2[1]: journal_metric_card("Winners / Losers", f"{snapshot.get('winners', 0)} / {snapshot.get('losers', 0)}", "Outcome split", tone="good" if snapshot.get('winners', 0) >= snapshot.get('losers', 0) else "warning")
-    with r2[2]: journal_metric_card("Total P&L", f"${snapshot.get('total_pnl', 0):,.2f}", "Realized + unrealized", tone=pnl_tone(snapshot.get("total_pnl", 0)))
-    with r2[3]: journal_metric_card("Open Positions", snapshot.get("open_positions", 0), "Current book exposure", tone="info")
+    render_compact_card_grid([
+        {"title": "Discipline Score", "value": f"{snapshot.get('discipline_score', 0)}/100", "detail": snapshot.get("grade", "N/A"), "tone": snapshot.get("tone", "warning")},
+        {"title": "Win Rate", "value": f"{snapshot.get('win_rate', 0) * 100:.1f}%", "detail": "Winning trades / total", "tone": pct_tone(snapshot.get("win_rate", 0))},
+        {"title": "Profit Factor", "value": f"{snapshot.get('profit_factor', 0):.2f}", "detail": "Gross wins / gross losses", "tone": ratio_tone(snapshot.get("profit_factor", 0))},
+        {"title": "Expectancy", "value": f"${snapshot.get('expectancy', 0):,.2f}", "detail": "Average expected trade", "tone": pnl_tone(snapshot.get("expectancy", 0))},
+    ])
+    render_compact_card_grid([
+        {"title": "Total Trades", "value": snapshot.get("total_trades", 0), "detail": "Ledger entries analyzed", "tone": "info"},
+        {"title": "Winners / Losers", "value": f"{snapshot.get('winners', 0)} / {snapshot.get('losers', 0)}", "detail": "Outcome split", "tone": "good" if snapshot.get('winners', 0) >= snapshot.get('losers', 0) else "warning"},
+        {"title": "Total P&L", "value": f"${snapshot.get('total_pnl', 0):,.2f}", "detail": "Realized + unrealized", "tone": pnl_tone(snapshot.get("total_pnl", 0))},
+        {"title": "Open Positions", "value": snapshot.get("open_positions", 0), "detail": "Current book exposure", "tone": "info"},
+    ])
 
 
 def render_journal_scorecard(snapshot: dict) -> None:
@@ -850,10 +1257,11 @@ def render_coaching_engine(snapshot: dict, df: pd.DataFrame | None = None, pnl_c
             focus = "Continue current process and document every exception."
             tone = "good"
 
-    rows = responsive_columns(3)
-    with rows[0]: journal_metric_card("Top Strength", strength, "What is working", tone="good" if snapshot.get("total_trades", 0) else "info")
-    with rows[1]: journal_metric_card("Top Weakness", weakness, "What needs attention", tone=tone)
-    with rows[2]: journal_metric_card("Focus Next Week", focus, "Next process target", tone="info")
+    render_compact_card_grid([
+        {"title": "Top Strength", "value": strength, "detail": "What is working", "tone": "good" if snapshot.get("total_trades", 0) else "info"},
+        {"title": "Top Weakness", "value": weakness, "detail": "What needs attention", "tone": tone},
+        {"title": "Focus Next Week", "value": focus, "detail": "Next process target", "tone": "info"},
+    ])
 
 
 def render_daily_command_center(daily_perf: pd.DataFrame) -> None:
@@ -1067,15 +1475,12 @@ def render_trade_lessons_archive(df: pd.DataFrame | None, pnl_col: str = "realiz
     if not tag_counts.empty and int(tag_counts.iloc[0]) >= 3:
         improvement_trend = "Repeated Theme"
 
-    metrics = responsive_columns(4)
-    with metrics[0]:
-        journal_metric_card("Total Lessons", total_lessons, "Saved lesson archive", tone="info")
-    with metrics[1]:
-        journal_metric_card("Most Common Error", most_common_error, "Repeated tag / theme", tone="warning" if most_common_error not in ("N/A", "None") else "neutral")
-    with metrics[2]:
-        journal_metric_card("Last Lesson Added", last_lesson, "Most recent archive entry", tone="info")
-    with metrics[3]:
-        journal_metric_card("Improvement Trend", improvement_trend, "Coaching signal", tone="warning" if improvement_trend == "Repeated Theme" else "good")
+    render_compact_card_grid([
+        {"title": "Total Lessons", "value": total_lessons, "detail": "Saved lesson archive", "tone": "info"},
+        {"title": "Most Common Error", "value": most_common_error, "detail": "Repeated tag / theme", "tone": "warning" if most_common_error not in ("N/A", "None") else "neutral"},
+        {"title": "Last Lesson Added", "value": last_lesson, "detail": "Most recent archive entry", "tone": "info"},
+        {"title": "Improvement Trend", "value": improvement_trend, "detail": "Coaching signal", "tone": "warning" if improvement_trend == "Repeated Theme" else "good"},
+    ])
 
     if display_lessons.empty:
         st.info("No lessons archived yet. Use Manual Trade Review below, add a note, and save it to build the lessons archive.")
@@ -1132,6 +1537,447 @@ def render_trade_lessons_archive(df: pd.DataFrame | None, pnl_col: str = "realiz
                 save_trade_lessons(empty_lessons_df(), user_id=user_id)
                 st.warning(f"Supabase unavailable for archive clear. Local fallback cleared instead. {reason}")
             st.rerun()
+
+
+def _coerce_timestamp_frame(df: pd.DataFrame | None) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    work = df.copy()
+    if "timestamp" in work.columns:
+        work["timestamp"] = pd.to_datetime(work["timestamp"], errors="coerce")
+    return work
+
+
+def build_daily_performance_brief(df: pd.DataFrame | None, report, pnl_col: str = "realized_delta") -> dict:
+    work = _coerce_timestamp_frame(df)
+    today = datetime.now().date()
+    today_df = pd.DataFrame()
+
+    if not work.empty and "timestamp" in work.columns:
+        today_df = work[work["timestamp"].dt.date == today].copy()
+
+    if today_df.empty and work.empty:
+        today_df = pd.DataFrame(columns=df.columns if df is not None else [])
+
+    if pnl_col not in today_df.columns and pnl_col in work.columns:
+        today_df[pnl_col] = work.loc[today_df.index, pnl_col]
+
+    pnl_series = pd.to_numeric(today_df[pnl_col], errors="coerce").fillna(0.0) if pnl_col in today_df.columns else pd.Series(dtype=float)
+    winners = pnl_series[pnl_series > 0]
+    losers = pnl_series[pnl_series < 0]
+
+    best_idx = pnl_series.idxmax() if not pnl_series.empty else None
+    worst_idx = pnl_series.idxmin() if not pnl_series.empty else None
+
+    def _row_symbol(row_index):
+        if row_index is None or today_df.empty or row_index not in today_df.index:
+            return "—"
+        row = today_df.loc[row_index]
+        return str(row.get("symbol") or row.get("Symbol") or "—").upper().strip() or "—"
+
+    def _row_value(row_index):
+        if row_index is None or pnl_series.empty or row_index not in pnl_series.index:
+            return 0.0
+        return float(pnl_series.loc[row_index])
+
+    return {
+        "trades_today": int(len(today_df)),
+        "winning_trades": int((pnl_series > 0).sum()),
+        "losing_trades": int((pnl_series < 0).sum()),
+        "win_rate": float((pnl_series > 0).mean()) if len(pnl_series) else 0.0,
+        "average_gain": float(winners.mean()) if len(winners) else 0.0,
+        "average_loss": float(losers.mean()) if len(losers) else 0.0,
+        "net_pnl": float(pnl_series.sum()) if len(pnl_series) else 0.0,
+        "best_trade_symbol": _row_symbol(best_idx),
+        "best_trade_value": _row_value(best_idx),
+        "worst_trade_symbol": _row_symbol(worst_idx),
+        "worst_trade_value": _row_value(worst_idx),
+        "summary": str(getattr(report, "status", "Review complete")) if report is not None else "Review complete",
+        "tone": "good" if float(pnl_series.sum()) > 0 else "warning" if len(pnl_series) else "neutral",
+    }
+
+
+def build_trade_review_queue(df: pd.DataFrame | None, pnl_col: str = "realized_delta", limit: int = 8) -> list[dict]:
+    work = _coerce_timestamp_frame(df)
+    if work.empty:
+        return []
+
+    if "timestamp" in work.columns:
+        work = work.sort_values("timestamp", ascending=False, na_position="last")
+
+    queue = []
+    for idx, row in work.head(limit).iterrows():
+        symbol = str(row.get("symbol") or row.get("Symbol") or "N/A").upper().strip() or "N/A"
+        action = str(row.get("action") or row.get("Action") or row.get("tag") or "Review").strip() or "Review"
+        pnl_value = safe_float(row.get(pnl_col), 0.0)
+        note_text = str(row.get("notes") or row.get("lesson") or "").strip()
+        tag_text = str(row.get("tag") or "").strip().lower()
+        queue_status = "Needs Review"
+        if any(term in tag_text for term in ("violation", "mistake", "bad process")):
+            queue_status = "Rule Violation"
+        elif pnl_value > 0 and any(term in tag_text for term in ("good", "perfect", "executed")):
+            queue_status = "Executed Well"
+        elif pnl_value > 0:
+            queue_status = "Closed Winner"
+        elif pnl_value < 0:
+            queue_status = "Needs Review"
+
+        timestamp = row.get("timestamp")
+        if pd.isna(timestamp):
+            time_text = "N/A"
+        else:
+            try:
+                time_text = pd.to_datetime(timestamp).strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                time_text = str(timestamp)
+
+        queue.append({
+            "key": f"{symbol}|{time_text}|{action}|{idx}",
+            "symbol": symbol,
+            "status": queue_status,
+            "action": action,
+            "pnl": pnl_value,
+            "time_text": time_text,
+            "note_text": note_text,
+            "row": row.to_dict(),
+        })
+
+    return queue
+
+
+def parse_review_sections(notes: str) -> dict[str, str]:
+    text = str(notes or "").strip()
+    if not text:
+        return {}
+
+    headings = [
+        "What went well?",
+        "What went wrong?",
+        "Would I take this trade again?",
+        "Rule followed?",
+        "Rule broken?",
+        "Improvement for next time",
+    ]
+    values = {heading: "" for heading in headings}
+
+    current = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        matched = None
+        for heading in headings:
+            normalized = heading.lower().replace("?", "")
+            if stripped.lower().startswith(normalized):
+                matched = heading
+                break
+        if matched:
+            current = matched
+            remainder = stripped.split(":", 1)[1].strip() if ":" in stripped else ""
+            if remainder:
+                values[current] = remainder
+            continue
+        if current:
+            values[current] = (values[current] + "\n" + stripped).strip()
+
+    return {key: value for key, value in values.items() if value}
+
+
+def compose_review_notes(sections: dict[str, str]) -> str:
+    ordered = [
+        "What went well?",
+        "What went wrong?",
+        "Would I take this trade again?",
+        "Rule followed?",
+        "Rule broken?",
+        "Improvement for next time",
+    ]
+    chunks = []
+    for heading in ordered:
+        value = str(sections.get(heading, "")).strip()
+        if value:
+            chunks.append(f"{heading}\n{value}")
+    return "\n\n".join(chunks).strip()
+
+
+def review_quality_assessment(row: dict, pnl_col: str = "realized_delta") -> list[dict[str, str]]:
+    pnl_value = safe_float(row.get(pnl_col), 0.0)
+    tag_text = str(row.get("tag") or row.get("action") or "").lower()
+    note_text = str(row.get("notes") or row.get("lesson") or "").lower()
+    combined = f"{tag_text} {note_text}"
+
+    assessments = {
+        "Entry Quality": ("Strong" if pnl_value > 0 or "good" in combined else "Needs Review", "good" if pnl_value > 0 else "warning"),
+        "Exit Quality": ("Clean" if pnl_value >= 0 else "Needs Work", "good" if pnl_value >= 0 else "risk"),
+        "Risk Management": ("Controlled" if "risk" not in combined or "good" in combined else "Review", "info" if "risk" not in combined else "warning"),
+        "Discipline": ("On Plan" if any(term in combined for term in ("good", "perfect", "executed")) else "Watch", "good" if any(term in combined for term in ("good", "perfect", "executed")) else "warning"),
+        "Execution": ("Stable" if pnl_value >= 0 else "Needs Improvement", "good" if pnl_value >= 0 else "warning"),
+    }
+
+    return [
+        {"label": key, "value": value, "tone": tone}
+        for key, (value, tone) in assessments.items()
+    ]
+
+
+def render_daily_performance_brief(brief: dict) -> None:
+    st.subheader("Daily Performance Brief")
+    st.caption("What did we learn from today's decisions?")
+    tone = brief.get("tone", "neutral")
+    render_status_banner(
+        title="Institutional Review Center",
+        summary="Readout of today's trade decisions, outcomes, and review priorities.",
+        action=f"SUMMARY: {brief.get('summary', 'Review complete')}",
+        tone=tone,
+    )
+    render_metric_strip([
+        {"label": "Trades Today", "value": brief.get("trades_today", 0)},
+        {"label": "Winning Trades", "value": brief.get("winning_trades", 0)},
+        {"label": "Losing Trades", "value": brief.get("losing_trades", 0)},
+        {"label": "Win Rate", "value": f"{brief.get('win_rate', 0) * 100:.1f}%"},
+        {"label": "Average Gain", "value": f"${brief.get('average_gain', 0):,.2f}"},
+    ])
+    render_summary_strip([
+        {"title": "Average Loss", "value": f"${brief.get('average_loss', 0):,.2f}", "detail": "Average loser"},
+        {"title": "Net P&L", "value": f"${brief.get('net_pnl', 0):,.2f}", "detail": "Today's realized total"},
+        {"title": "Best Trade", "value": brief.get("best_trade_symbol", "—"), "detail": f"{brief.get('best_trade_value', 0):,.2f}"},
+        {"title": "Worst Trade", "value": brief.get("worst_trade_symbol", "—"), "detail": f"{brief.get('worst_trade_value', 0):,.2f}"},
+    ])
+
+
+def render_trade_review_queue(queue_rows: list[dict]) -> None:
+    st.subheader("Trades Requiring Review")
+    st.caption("One click opens the full review.")
+    render_queue_cards(queue_rows)
+
+
+def render_selected_trade_review(selected_trade: dict | None, pnl_col: str = "realized_delta") -> None:
+    st.subheader("Selected Trade Review")
+    st.caption("Trade snapshot and decision quality for the selected review.")
+
+    if not selected_trade:
+        st.info("No trade selected. Choose a trade above to begin the institutional review.")
+        return
+
+    snapshot_row = selected_trade
+    summary_items = [
+        ("Symbol", str(snapshot_row.get("symbol") or snapshot_row.get("Symbol") or "N/A").upper().strip()),
+        ("Side", str(snapshot_row.get("action") or snapshot_row.get("side") or "N/A")),
+        ("Entry", snapshot_row.get("entry_price") or snapshot_row.get("avg_price") or snapshot_row.get("fill_price") or "N/A"),
+        ("Exit", snapshot_row.get("exit_price") or snapshot_row.get("close_price") or snapshot_row.get("fill_price") or "N/A"),
+        ("P&L", f"${safe_float(snapshot_row.get(pnl_col), 0.0):,.2f}"),
+        ("Position Size", snapshot_row.get("qty") or snapshot_row.get("size") or "N/A"),
+    ]
+    quality_items = review_quality_assessment(snapshot_row, pnl_col=pnl_col)
+    render_review_layout(
+        "Trade Summary",
+        summary_items,
+        "Decision Quality",
+        [(item["label"], item["value"]) for item in quality_items],
+    )
+
+
+def render_lessons_learned_center(selected_trade: dict | None, pnl_col: str = "realized_delta") -> None:
+    st.subheader("Lessons Learned")
+    if not selected_trade:
+        st.caption("Select a trade to begin the review.")
+        return
+
+    st.caption("Structured review notes that preserve existing lessons while improving presentation.")
+
+    selected_symbol = str((selected_trade or {}).get("symbol") or (selected_trade or {}).get("Symbol") or "").upper().strip()
+    existing_notes = str((selected_trade or {}).get("notes") or (selected_trade or {}).get("lesson") or "").strip()
+    parsed_notes = parse_review_sections(existing_notes)
+    user_id = _current_saas_user_id()
+    availability = _journal_supabase_persistence_available(user_id)
+    if not isinstance(availability, tuple) or len(availability) != 3:
+        supabase_ready, supabase_reason, supabase_client = False, "Unavailable", None
+    else:
+        supabase_ready, supabase_reason, supabase_client = availability
+    st.session_state["journal_supabase_available"] = supabase_ready
+    if not supabase_ready:
+        st.warning(supabase_reason)
+
+    if existing_notes:
+        with st.expander("Existing note", expanded=False):
+            st.write(existing_notes)
+
+    symbol_input = st.text_input("Symbol", value=selected_symbol or st.session_state.get("journal_selected_symbol", ""), key="journal_review_symbol")
+    lesson_cols_top = responsive_columns(3)
+    lesson_cols_bottom = responsive_columns(3)
+    with lesson_cols_top[0]:
+        went_well = st.text_area("What went well?", value=parsed_notes.get("What went well?", ""), height=96, key="journal_review_went_well")
+    with lesson_cols_top[1]:
+        went_wrong = st.text_area("What went wrong?", value=parsed_notes.get("What went wrong?", ""), height=96, key="journal_review_went_wrong")
+    with lesson_cols_top[2]:
+        would_repeat = st.text_area("Would I take this trade again?", value=parsed_notes.get("Would I take this trade again?", ""), height=96, key="journal_review_repeat")
+
+    with lesson_cols_bottom[0]:
+        rule_followed = st.text_area("Rule followed?", value=parsed_notes.get("Rule followed?", ""), height=96, key="journal_review_rule_followed")
+    with lesson_cols_bottom[1]:
+        rule_broken = st.text_area("Rule broken?", value=parsed_notes.get("Rule broken?", ""), height=96, key="journal_review_rule_broken")
+    with lesson_cols_bottom[2]:
+        improvement = st.text_area("Improvement for next time", value=parsed_notes.get("Improvement for next time", ""), height=96, key="journal_review_improvement")
+
+    tag_options = [
+        "Process Review",
+        "Perfect Execution",
+        "FOMO",
+        "Revenge Trade",
+        "Early Exit",
+        "Late Entry",
+        "Thesis Break",
+        "Good Process",
+        "Bad Process",
+        "Mistake",
+    ]
+    tag_default = str((selected_trade or {}).get("tag") or "Process Review")
+    try:
+        tag_index = tag_options.index(tag_default)
+    except ValueError:
+        tag_index = 0
+    review_tag = st.selectbox("Review Tag", tag_options, index=tag_index, key="journal_review_tag")
+
+    save_disabled = not bool(symbol_input.strip()) or not bool(supabase_ready)
+    save_cols = st.columns(2)
+    with save_cols[0]:
+        if st.button("Preview Lesson", width="stretch", key="journal_preview_lesson"):
+            preview_sections = {
+                "What went well?": went_well,
+                "What went wrong?": went_wrong,
+                "Would I take this trade again?": would_repeat,
+                "Rule followed?": rule_followed,
+                "Rule broken?": rule_broken,
+                "Improvement for next time": improvement,
+            }
+            st.json({
+                "symbol": symbol_input.upper().strip(),
+                "tag": review_tag,
+                "notes": compose_review_notes(preview_sections),
+            })
+    with save_cols[1]:
+        if st.button("Save Lesson to Archive", width="stretch", key="journal_save_lesson_button", disabled=save_disabled):
+            note_sections = {
+                "What went well?": went_well,
+                "What went wrong?": went_wrong,
+                "Would I take this trade again?": would_repeat,
+                "Rule followed?": rule_followed,
+                "Rule broken?": rule_broken,
+                "Improvement for next time": improvement,
+            }
+            composed_notes = compose_review_notes(note_sections)
+            save_report = append_trade_lesson(
+                symbol=symbol_input or "N/A",
+                setup_grade="C",
+                execution_grade="C",
+                tag=review_tag,
+                notes=composed_notes,
+                mistake=review_tag == "Mistake",
+            )
+            storage = str(save_report.get("storage", "unknown"))
+            status = str(save_report.get("status", "")).upper()
+            if status == "DUPLICATE":
+                st.info("Duplicate lesson detected. Existing archive entry was kept; no new row was created.")
+            elif storage == "supabase":
+                st.success("Lesson saved to Supabase Trade Lessons Archive.")
+            else:
+                st.warning(str(save_report.get("reason") or "Journal lesson save failed."))
+            st.rerun()
+
+
+def render_performance_analytics_center(df: pd.DataFrame | None, pnl_col: str = "realized_delta") -> None:
+    st.subheader("Research & Analytics")
+    st.caption("Deeper analytics live below the review workflow.")
+
+    def format_trader_money(value: Any) -> str:
+        number = safe_float(value, 0.0)
+        if number < 0:
+            return f"-${abs(number):,.2f}"
+        return f"${number:,.2f}"
+
+    work = _coerce_timestamp_frame(df)
+    empty_analytics_message = (
+        "No realized trade history available yet.<br>"
+        "Analytics will populate automatically after completed trades."
+    )
+    if work.empty or pnl_col not in work.columns:
+        st.markdown(
+            f'<div class="journal-analytics-empty">{empty_analytics_message}</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    pnl_series = pd.to_numeric(work[pnl_col], errors="coerce").fillna(0.0) if pnl_col in work.columns else pd.Series(dtype=float)
+    if len(work) < 2 or float(pnl_series.abs().sum()) == 0.0:
+        st.markdown(
+            f'<div class="journal-analytics-empty">{empty_analytics_message}</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    if "timestamp" in work.columns and not pnl_series.empty:
+        work = work.assign(pnl=pnl_series, month=work["timestamp"].dt.to_period("M").astype(str))
+    else:
+        work = work.assign(pnl=pnl_series if not pnl_series.empty else 0.0, month="N/A")
+
+    tab_winloss, tab_equity, tab_strategy, tab_mistake, tab_monthly = st.tabs([
+        "Win/Loss Analysis",
+        "Equity Curve",
+        "Strategy Performance",
+        "Mistake Tracker",
+        "Monthly Review",
+    ])
+
+    with tab_winloss:
+        winners = work[work["pnl"] > 0]
+        losers = work[work["pnl"] < 0]
+        summary_cols = responsive_columns(4)
+        with summary_cols[0]: journal_metric_card("Winning Trades", len(winners), "Positive realized outcomes", tone="good")
+        with summary_cols[1]: journal_metric_card("Losing Trades", len(losers), "Trades that need review", tone="risk")
+        with summary_cols[2]: journal_metric_card("Average Gain", format_trader_money(winners["pnl"].mean()) if len(winners) else "$0.00", "Average winner", tone="good")
+        with summary_cols[3]: journal_metric_card("Average Loss", format_trader_money(losers["pnl"].mean()) if len(losers) else "$0.00", "Average loser", tone="risk")
+        breakdown = (
+            work.groupby(work["pnl"].apply(lambda value: "🟢 Wins" if value > 0 else "🔴 Losses" if value < 0 else "⚪ Flat"))["pnl"]
+            .agg(["count", "sum", "mean"])
+            .reset_index()
+            .rename(columns={"pnl": "Outcome", "count": "Trades", "sum": "Total P&L", "mean": "Average P&L"})
+        )
+        if "Total P&L" in breakdown.columns:
+            breakdown["Total P&L"] = breakdown["Total P&L"].apply(format_trader_money)
+        if "Average P&L" in breakdown.columns:
+            breakdown["Average P&L"] = breakdown["Average P&L"].apply(format_trader_money)
+        st.dataframe(breakdown, width="stretch", hide_index=True, height=280)
+
+    with tab_equity:
+        equity_df = work.copy()
+        equity_df = equity_df.sort_values("timestamp") if "timestamp" in equity_df.columns else equity_df
+        equity_df["equity_curve"] = equity_df["pnl"].cumsum()
+        st.line_chart(equity_df.set_index("timestamp")["equity_curve"] if "timestamp" in equity_df.columns else equity_df["equity_curve"])
+        st.dataframe(equity_df[[col for col in ["timestamp", "symbol", "pnl"] if col in equity_df.columns]], width="stretch", hide_index=True, height=320)
+
+    with tab_strategy:
+        if "symbol" in work.columns:
+            symbol_perf = (
+                work.groupby("symbol", as_index=False)
+                .agg(trades=("symbol", "count"), realized_pnl=("pnl", "sum"), avg_trade=("pnl", "mean"), best_trade=("pnl", "max"), worst_trade=("pnl", "min"))
+                .sort_values("realized_pnl", ascending=False)
+            )
+            st.dataframe(symbol_perf, width="stretch", hide_index=True, height=360)
+        else:
+            st.info("No symbol data available for strategy performance.")
+
+    with tab_mistake:
+        render_mistake_tracker(work)
+
+    with tab_monthly:
+        if "month" in work.columns:
+            monthly = work.groupby("month", as_index=False).agg(trades=("month", "count"), realized_pnl=("pnl", "sum"), avg_trade=("pnl", "mean")).sort_values("month", ascending=False)
+            st.dataframe(monthly, width="stretch", hide_index=True, height=360)
+        else:
+            st.info("No monthly grouping data available.")
+
+
+def render_trade_archive_center(df: pd.DataFrame | None, pnl_col: str = "realized_delta") -> None:
+    st.expander("Trade Archive", expanded=False)
+
 
 
 # =========================================================
@@ -1272,104 +2118,60 @@ def run_page():
     render_commander_review_report(journal_snapshot)
     render_executive_review_brief(journal_snapshot)
 
-    score_left, score_right = responsive_columns([1.0, 1.0], gap="large")
-    with score_left:
-        render_journal_scorecard(journal_snapshot)
-    with score_right:
-        render_coaching_engine(journal_snapshot, None)
+    df = pd.DataFrame(ledger) if ledger else pd.DataFrame()
+    if not df.empty and "timestamp" in df.columns:
+        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
 
-    # =====================================================
-    # PERFORMANCE SUMMARY
-    # =====================================================
+    pnl_col = "realized_delta" if (not df.empty and "realized_delta" in df.columns) else "realized_pnl"
 
-    st.divider()
-    st.subheader("🧠 Performance Summary")
-    st.caption(
-        "What it means: High-level trading performance, realized and unrealized P&L, "
-        "win rate, expectancy, and open position count."
-    )
-
-    row_1 = responsive_columns(4)
-
-    with row_1[0]:
-        journal_metric_card("Trades", report.total_trades, "Total completed ledger entries.", tone="info")
-
-    with row_1[1]:
-        journal_metric_card(
-            "Win Rate",
-            f"{report.win_rate * 100:.1f}%",
-            "Percentage of winning trades.",
-            tone=pct_tone(report.win_rate),
-        )
-
-    with row_1[2]:
-        journal_metric_card(
-            "Profit Factor",
-            f"{report.profit_factor:.2f}",
-            "Gross wins divided by gross losses.",
-            tone=ratio_tone(report.profit_factor),
-        )
-
-    with row_1[3]:
-        journal_metric_card(
-            "Expectancy",
-            f"${report.expectancy:,.2f}",
-            "Average expected P&L per trade.",
-            tone=pnl_tone(report.expectancy),
-        )
-
-    row_2 = responsive_columns(4)
-
-    with row_2[0]:
-        journal_metric_card("Winners", report.winners, "Winning trade count.", tone="good")
-
-    with row_2[1]:
-        journal_metric_card("Losers", report.losers, "Losing trade count.", tone="risk" if report.losers else "good")
-
-    with row_2[2]:
-        journal_metric_card("Best Trade", f"${report.best_trade:,.2f}", "Largest realized winner.", tone=pnl_tone(report.best_trade))
-
-    with row_2[3]:
-        journal_metric_card("Worst Trade", f"${report.worst_trade:,.2f}", "Largest realized loser.", tone=pnl_tone(report.worst_trade))
-
-    row_3 = responsive_columns(4)
-
-    with row_3[0]:
-        journal_metric_card("Realized P&L", f"${report.realized_pnl:,.2f}", "Closed-trade profit and loss.", tone=pnl_tone(report.realized_pnl))
-
-    with row_3[1]:
-        journal_metric_card("Unrealized P&L", f"${report.unrealized_pnl:,.2f}", "Open-position profit and loss.", tone=pnl_tone(report.unrealized_pnl))
-
-    with row_3[2]:
-        journal_metric_card("Total P&L", f"${report.total_pnl:,.2f}", "Realized plus unrealized P&L.", tone=pnl_tone(report.total_pnl))
-
-    with row_3[3]:
-        journal_metric_card("Open Positions", len(positions), "Current portfolio positions.", tone="info")
-
-    journal_tip(
-        "Use this section first. It tells you whether the trading process is improving, flat, or deteriorating."
-    )
-
-    # =====================================================
-    # TRADE LEDGER
-    # =====================================================
+    journal_snapshot_dict = journal_snapshot if isinstance(journal_snapshot, dict) else {}
+    daily_brief = build_daily_performance_brief(df, report, pnl_col=pnl_col)
+    review_queue = build_trade_review_queue(df, pnl_col=pnl_col, limit=8)
 
     st.divider()
-    st.subheader("📋 Trade Ledger")
-    st.caption(
-        "What it means: Source-of-truth trade history from the portfolio engine. "
-        "Use filters to isolate symbols, actions, sources, winners, and losers."
-    )
+    render_daily_performance_brief(daily_brief)
+    render_trade_review_queue(review_queue)
 
-    if not ledger:
-        st.info("No trades available yet.")
+    selected_trade = st.session_state.get("journal_selected_trade_row")
+    if selected_trade is None and review_queue:
+        selected_key = st.session_state.get("journal_selected_trade_key")
+        if selected_key:
+            for item in review_queue:
+                if item.get("key") == selected_key:
+                    selected_trade = item.get("row")
+                    break
 
-        st.divider()
-        st.subheader("🩺 Journal Health")
+    render_selected_trade_review(selected_trade, pnl_col=pnl_col)
+    render_lessons_learned_center(selected_trade, pnl_col=pnl_col)
+
+    render_trade_lessons_archive(df, pnl_col=pnl_col)
+
+    render_performance_analytics_center(df, pnl_col=pnl_col)
+
+    render_coaching_engine(journal_snapshot, None)
+
+    st.divider()
+    st.subheader("Trade Archive")
+    st.caption("Historical trades are kept at the bottom and collapsed by default.")
+    with st.expander("Trade Archive", expanded=False):
+        st.caption("Source-of-truth trade history from the portfolio engine. Use filters to isolate symbols, actions, sources, winners, and losers.")
+
+        if df.empty:
+            st.info("No trades available yet.")
+        else:
+            archive_cols = [col for col in ["timestamp", "symbol", "action", "qty", "fill_price", "realized_delta", "realized_pnl", "source"] if col in df.columns]
+            archive_df = df[archive_cols] if archive_cols else df
+            st.dataframe(archive_df, width="stretch", hide_index=True, height=min(520, max(220, 38 * (len(archive_df) + 1))))
+
+    st.divider()
+    with st.expander("▼ System Diagnostics", expanded=False):
+        st.caption(
+            "What it means: Confirms that Journal Intelligence can read the portfolio engine, ledger, and runtime recovery state."
+        )
+
         health = {
             "Portfolio Engine": "ONLINE",
-            "Ledger Entries": 0,
-            "Filtered Entries": 0,
+            "Ledger Entries": len(ledger),
             "Positions": len(positions),
             "Bootstrap Recovery": st.session_state.get("bootstrap_recovery_status", ""),
             "Runtime/Audit Recovery OK": st.session_state.get("bootstrap_recovered_ok", True),
@@ -1377,355 +2179,5 @@ def run_page():
             "Journal Saved Lessons": st.session_state.get("journal_saved_lessons_count", 0),
             "Journal Supabase Error": st.session_state.get("journal_supabase_load_error", ""),
         }
+
         st.dataframe(pd.DataFrame(list(health.items()), columns=["Metric", "Value"]), width="stretch", hide_index=True)
-        return
-
-    df = pd.DataFrame(ledger)
-
-    if "timestamp" in df.columns:
-        df["timestamp"] = pd.to_datetime(
-            df["timestamp"],
-            errors="coerce",
-        )
-
-    # =====================================================
-    # FILTERS
-    # =====================================================
-
-    with st.container(border=True):
-        st.markdown("#### 🔎 Ledger Filters")
-        filter_cols = responsive_columns(4)
-
-        with filter_cols[0]:
-            symbols = sorted(df["symbol"].dropna().unique()) if "symbol" in df.columns else []
-            selected_symbols = st.multiselect("Symbols", symbols)
-
-        with filter_cols[1]:
-            actions = sorted(df["action"].dropna().unique()) if "action" in df.columns else []
-            selected_actions = st.multiselect("Actions", actions)
-
-        with filter_cols[2]:
-            sources = sorted(df["source"].dropna().unique()) if "source" in df.columns else []
-            selected_sources = st.multiselect("Sources", sources)
-
-        with filter_cols[3]:
-            pnl_filter = st.selectbox(
-                "P&L Filter",
-                ["All", "Winners", "Losers", "Breakeven"],
-            )
-
-    filtered = df.copy()
-
-    if selected_symbols and "symbol" in filtered.columns:
-        filtered = filtered[filtered["symbol"].isin(selected_symbols)]
-
-    if selected_actions and "action" in filtered.columns:
-        filtered = filtered[filtered["action"].isin(selected_actions)]
-
-    if selected_sources and "source" in filtered.columns:
-        filtered = filtered[filtered["source"].isin(selected_sources)]
-
-    pnl_col = "realized_delta" if "realized_delta" in filtered.columns else "realized_pnl"
-
-    if pnl_col in filtered.columns:
-        filtered[pnl_col] = pd.to_numeric(filtered[pnl_col], errors="coerce").fillna(0.0)
-
-        if pnl_filter == "Winners":
-            filtered = filtered[filtered[pnl_col] > 0]
-        elif pnl_filter == "Losers":
-            filtered = filtered[filtered[pnl_col] < 0]
-        elif pnl_filter == "Breakeven":
-            filtered = filtered[filtered[pnl_col] == 0]
-
-    preferred_cols = [
-        "timestamp",
-        "symbol",
-        "action",
-        "qty",
-        "fill_price",
-        "old_side",
-        "old_qty",
-        "new_side",
-        "new_qty",
-        "realized_delta",
-        "realized_pnl",
-        "source",
-        "fill_id",
-        "order_id",
-    ]
-
-    display_cols = [
-        col for col in preferred_cols
-        if col in filtered.columns
-    ]
-
-    ledger_view = filtered[display_cols] if display_cols else filtered
-
-    if selected_symbols:
-        active_symbol = str(selected_symbols[0]).upper().strip()
-        with st.container(border=True):
-            st.caption(f"Round-trip selected ledger symbol: {active_symbol}")
-            r1, r2, r3 = responsive_columns(3)
-            with r1:
-                if st.button("Analyze Selected", width="stretch", key="journal_selected_research_v31"):
-                    publish_symbol_handoff(active_symbol, "Research Stock")
-            with r2:
-                if st.button("Plan Selected", width="stretch", key="journal_selected_trade_v31"):
-                    publish_symbol_handoff(active_symbol, "Trade Command Center")
-            with r3:
-                if st.button("Manage Selected", width="stretch", key="journal_selected_position_v31"):
-                    publish_symbol_handoff(active_symbol, "Position Command Center")
-
-    st.dataframe(
-        ledger_view,
-        width="stretch",
-        hide_index=True,
-        height=min(520, max(220, 38 * (len(ledger_view) + 1))),
-    )
-
-    st.divider()
-    render_mistake_tracker(df)
-
-    # =====================================================
-    # PERFORMANCE DETAIL AREA
-    # =====================================================
-
-    st.divider()
-    detail_left, detail_right = responsive_columns(2)
-
-    with detail_left:
-        st.subheader("🏆 Symbol Performance")
-        st.caption(
-            "What it means: Identifies which symbols are contributing most to realized performance."
-        )
-
-        if "symbol" in df.columns and pnl_col in df.columns:
-
-            symbol_perf = (
-                df.assign(
-                    pnl=pd.to_numeric(df[pnl_col], errors="coerce").fillna(0.0)
-                )
-                .groupby("symbol", as_index=False)
-                .agg(
-                    trades=("symbol", "count"),
-                    realized_pnl=("pnl", "sum"),
-                    avg_trade=("pnl", "mean"),
-                    best_trade=("pnl", "max"),
-                    worst_trade=("pnl", "min"),
-                )
-                .sort_values("realized_pnl", ascending=False)
-            )
-
-            st.dataframe(
-                symbol_perf,
-                width="stretch",
-                hide_index=True,
-                height=min(420, max(180, 38 * (len(symbol_perf) + 1))),
-            )
-
-        else:
-            st.info("Not enough data for symbol performance.")
-
-    with detail_right:
-        st.subheader("📊 Trade Breakdown")
-        st.caption(
-            "What it means: Summarizes trade activity by action and resulting position side."
-        )
-
-        breakdown_top, breakdown_bottom = responsive_columns(2)
-
-        with breakdown_top:
-            if "action" in df.columns:
-                action_counts = (
-                    df["action"]
-                    .value_counts()
-                    .reset_index()
-                )
-                action_counts.columns = ["Action", "Count"]
-                st.dataframe(action_counts, width="stretch", hide_index=True)
-            else:
-                st.info("No action data.")
-
-        with breakdown_bottom:
-            if "new_side" in df.columns:
-                side_counts = (
-                    df["new_side"]
-                    .value_counts()
-                    .reset_index()
-                )
-                side_counts.columns = ["Post-Trade Side", "Count"]
-                st.dataframe(side_counts, width="stretch", hide_index=True)
-            else:
-                st.info("No side data.")
-
-    # =====================================================
-    # DAILY PERFORMANCE
-    # =====================================================
-
-    st.divider()
-    st.subheader("📅 Daily Review")
-    st.caption(
-        "What it means: Groups trade results by date to help identify strong and weak trading sessions."
-    )
-
-    if "timestamp" in df.columns and pnl_col in df.columns:
-
-        daily_df = df.copy()
-
-        daily_df["date"] = daily_df["timestamp"].dt.date
-        daily_df["pnl"] = pd.to_numeric(
-            daily_df[pnl_col],
-            errors="coerce",
-        ).fillna(0.0)
-
-        daily_perf = (
-            daily_df.groupby("date", as_index=False)
-            .agg(
-                trades=("symbol", "count"),
-                realized_pnl=("pnl", "sum"),
-                avg_trade=("pnl", "mean"),
-            )
-            .sort_values("date", ascending=False)
-        )
-
-        render_daily_command_center(daily_perf)
-
-        st.dataframe(
-            daily_perf,
-            width="stretch",
-            hide_index=True,
-            height=min(420, max(180, 38 * (len(daily_perf) + 1))),
-        )
-
-    else:
-        st.info("No timestamp/P&L data available for daily review.")
-
-    # =====================================================
-    # MANUAL REVIEW NOTE
-    # =====================================================
-
-    st.divider()
-    st.subheader("📝 Manual Trade Review")
-    st.caption(
-        "What it means: Build a trade-review note for process improvement and save it to your lessons archive."
-    )
-
-    current_user_id = _current_saas_user_id()
-    supabase_ready, supabase_reason, _ = _journal_supabase_persistence_available(current_user_id)
-    st.session_state["journal_supabase_available"] = supabase_ready
-    if not supabase_ready:
-        st.warning(supabase_reason)
-
-    with st.container(border=True):
-        n1, n2, n3 = responsive_columns(3)
-
-        with n1:
-            selected_symbol = st.text_input("Symbol").upper().strip()
-            setup_grade = st.selectbox("Setup Grade", ["A", "B", "C", "D", "F"])
-
-        with n2:
-            execution_grade = st.selectbox("Execution Grade", ["A", "B", "C", "D", "F"])
-            mistake = st.checkbox("Mistake?")
-
-        with n3:
-            tag = st.selectbox(
-                "Tag",
-                [
-                    "None",
-                    "Perfect Execution",
-                    "FOMO",
-                    "Revenge Trade",
-                    "Early Exit",
-                    "Late Entry",
-                    "Thesis Break",
-                    "Good Process",
-                    "Bad Process",
-                ],
-            )
-
-        notes = st.text_area("Notes")
-
-        action_col_1, action_col_2 = st.columns(2)
-
-        with action_col_1:
-            if st.button("Preview Journal Note", use_container_width=True, key="journal_preview_note_button"):
-                note_payload = {
-                    "symbol": selected_symbol,
-                    "setup_grade": setup_grade,
-                    "execution_grade": execution_grade,
-                    "mistake": mistake,
-                    "tag": tag,
-                    "notes": notes,
-                }
-                st.success("Journal note preview created.")
-                st.json(note_payload)
-
-        with action_col_2:
-            save_disabled = (
-                not bool(str(current_user_id or "").strip())
-                or not bool(str(selected_symbol or "").strip())
-                or not bool(str(notes or "").strip())
-                or not bool(supabase_ready)
-            )
-            if st.button(
-                "Save Lesson to Archive",
-                use_container_width=True,
-                key="journal_save_lesson_button",
-                disabled=save_disabled,
-            ):
-                save_report = append_trade_lesson(
-                    symbol=selected_symbol or "N/A",
-                    setup_grade=setup_grade,
-                    execution_grade=execution_grade,
-                    tag=tag,
-                    notes=notes,
-                    mistake=mistake,
-                )
-
-                storage = str(save_report.get("storage", "unknown"))
-                status = str(save_report.get("status", "")).upper()
-
-                if status == "DUPLICATE":
-                    st.info("Duplicate lesson detected. Existing archive entry was kept; no new row was created.")
-                elif storage == "supabase":
-                    st.success("Lesson saved to Supabase Trade Lessons Archive.")
-                else:
-                    st.warning(str(save_report.get("reason") or "Journal lesson save failed."))
-
-                st.rerun()
-
-    render_trade_lessons_archive(df, pnl_col)
-
-    # =====================================================
-    # HEALTH
-    # =====================================================
-
-    st.divider()
-    st.subheader("🩺 Journal Health")
-    st.caption(
-        "What it means: Confirms that Journal Intelligence can read the portfolio engine, ledger, and runtime recovery state."
-    )
-
-    health = {
-        "Portfolio Engine": "ONLINE",
-        "Ledger Entries": len(ledger),
-        "Filtered Entries": len(filtered),
-        "Positions": len(positions),
-        "Bootstrap Recovery": st.session_state.get("bootstrap_recovery_status", ""),
-        "Runtime/Audit Recovery OK": st.session_state.get(
-            "bootstrap_recovered_ok",
-            True,
-        ),
-        "Journal Supabase Loaded": st.session_state.get("journal_supabase_loaded", False),
-        "Journal Saved Lessons": st.session_state.get("journal_saved_lessons_count", 0),
-        "Journal Supabase Error": st.session_state.get("journal_supabase_load_error", ""),
-    }
-
-    st.dataframe(
-        pd.DataFrame(
-            list(health.items()),
-            columns=["Metric", "Value"],
-        ),
-        width="stretch",
-        hide_index=True,
-    )

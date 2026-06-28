@@ -40,11 +40,13 @@ try:
         analyze_earnings_risk,
         analyze_symbol_earnings_risk,
         apply_earnings_risk_adjustment,
+        earnings_exemption_type,
     )
 except Exception:
     analyze_earnings_risk = None
     analyze_symbol_earnings_risk = None
     apply_earnings_risk_adjustment = None
+    earnings_exemption_type = None
 
 
 # =========================================================
@@ -121,7 +123,11 @@ def cached_symbol_earnings_context(symbol: str) -> Dict[str, Any]:
 
         return {
             "symbol": symbol,
-            "earnings_date": row.get("earnings_date"),
+            "earnings_date": (
+                "Not Applicable (ETF)"
+                if str(row.get("status") or "").upper().strip() == "NOT_APPLICABLE_ETF"
+                else row.get("earnings_date")
+            ),
             "days_until": row.get("days_until"),
             "risk_score": int(float(row.get("risk_score") or 0)),
             "risk_label": str(row.get("risk_label") or "NONE").upper().strip(),
@@ -1716,16 +1722,17 @@ def run_page():
         symbol = str(symbol or "").upper().strip()
 
         # Forex pairs and futures do not have corporate earnings.
-        if symbol.endswith("=X") or symbol.endswith("=F"):
+        exemption_type = earnings_exemption_type(symbol) if callable(earnings_exemption_type) else None
+        if exemption_type is not None:
             return {
                 "symbol": symbol,
-                "earnings_date": None,
+                "earnings_date": "Not Applicable (ETF)" if exemption_type == "ETF" else None,
                 "days_until": None,
                 "risk_score": 0,
                 "risk_label": "NONE",
-                "status": "NOT_APPLICABLE",
+                "status": f"NOT_APPLICABLE_{exemption_type}",
                 "source": "ASSET_CLASS_SKIP",
-                "reason": "Forex/futures symbols do not have earnings events.",
+                "reason": "Not Applicable (ETF)" if exemption_type == "ETF" else f"Not Applicable ({exemption_type.title()})",
                 "enforcement_enabled": False,
             }
 
@@ -4168,17 +4175,17 @@ def run_page():
             f'background:{background};'
             f'border:1px solid {border};'
             'border-radius:14px;'
-            'padding:0.78rem 0.86rem;'
-            'min-height:82px;'
-            'margin-bottom:0.55rem;'
+            'padding:0.52rem 0.62rem;'
+            'min-height:68px;'
+            'margin-bottom:0.22rem;'
             'overflow-wrap:anywhere;'
             '">'
             '<div style="font-size:0.70rem;font-weight:850;color:#52677d;'
             'text-transform:uppercase;letter-spacing:0.04em;line-height:1.15;'
-            'margin-bottom:0.35rem;">'
+            'margin-bottom:0.22rem;">'
             f'{str(label)}'
             '</div>'
-            f'<div style="font-size:1.02rem;font-weight:850;color:{color};'
+            f'<div style="font-size:0.96rem;font-weight:850;color:{color};'
             'line-height:1.15;white-space:normal;overflow-wrap:anywhere;">'
             f'{str(value)}'
             '</div></div>'
@@ -4331,8 +4338,8 @@ def run_page():
                ===================================================== */
 
             .block-container {
-                padding-top: 1.4rem !important;
-                padding-bottom: 2.5rem !important;
+                padding-top: 0.9rem !important;
+                padding-bottom: 1.6rem !important;
 
                 max-width: 1700px !important;
 
@@ -4348,6 +4355,8 @@ def run_page():
                 font-weight: 850 !important;
                 color: #1f2937 !important;
                 line-height: 1.12 !important;
+                margin-top: 0.05rem !important;
+                margin-bottom: 0.4rem !important;
             }
 
             h2, h3 {
@@ -4355,10 +4364,22 @@ def run_page():
                 font-weight: 850 !important;
                 color: #1f2937 !important;
                 line-height: 1.18 !important;
+                margin-top: 0.2rem !important;
+                margin-bottom: 0.28rem !important;
+            }
+
+            p {
+                margin-top: 0.2rem !important;
+                margin-bottom: 0.42rem !important;
+            }
+
+            [data-testid="stCaptionContainer"] {
+                margin-top: -0.1rem !important;
+                margin-bottom: 0.18rem !important;
             }
 
             div[data-testid="stHorizontalBlock"] {
-                gap: 0.85rem;
+                gap: 0.62rem;
                 align-items: stretch;
             }
 
@@ -4369,18 +4390,19 @@ def run_page():
             div[data-testid="stVerticalBlockBorderWrapper"] {
                 overflow-wrap: anywhere;
                 word-break: normal;
+                margin-bottom: 0.35rem !important;
             }
 
             div[data-testid="stMetric"] {
                 background: #f7fbff;
                 border: 1px solid #d9e8ff;
                 border-radius: 14px;
-                padding: 14px;
+                padding: 9px;
                 box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
             }
 
             div[data-testid="stMetricLabel"] {
-                font-size: 0.85rem !important;
+                font-size: 0.77rem !important;
                 font-weight: 800 !important;
                 color: #48617a !important;
                 text-transform: uppercase;
@@ -4388,13 +4410,13 @@ def run_page():
             }
 
             div[data-testid="stMetricValue"] {
-                font-size: 1.25rem !important;
+                font-size: 1.08rem !important;
                 font-weight: 850 !important;
                 color: #1f2937 !important;
             }
 
             div[data-testid="stDataFrame"] {
-                font-size: 0.92rem !important;
+                font-size: 0.88rem !important;
                 border-radius: 12px !important;
                 overflow-x: auto !important;
                 max-width: 100% !important;
@@ -4408,14 +4430,17 @@ def run_page():
             .stButton > button {
                 border-radius: 10px;
                 font-weight: 750;
-                min-height: 38px;
+                min-height: 34px;
                 border: 1px solid #d7e3f5;
+                padding-top: 0.18rem !important;
+                padding-bottom: 0.18rem !important;
             }
 
             .scanner-section-card {
                 border-radius: 16px;
-                padding: 12px 14px;
-                margin: 6px 0 10px 0;
+                padding: 8px 10px;
+                margin: 3px 0 5px 0;
+                min-height: 82px;
             }
 
             .scanner-section-blue {
@@ -4434,25 +4459,137 @@ def run_page():
             }
 
             .scanner-section-title {
-                font-size: 0.76rem;
+                font-size: 0.72rem;
                 font-weight: 850;
                 color: #52677d;
                 text-transform: uppercase;
                 letter-spacing: 0.04em;
-                margin-bottom: 4px;
+                margin-bottom: 2px;
             }
 
             .scanner-section-value {
-                font-size: 1.2rem;
+                font-size: 1.04rem;
                 font-weight: 850;
                 color: #1f2937;
                 line-height: 1.15;
             }
 
             .scanner-section-note {
-                font-size: 0.9rem;
+                font-size: 0.84rem;
                 color: #52677d;
-                margin-top: 4px;
+                margin-top: 2px;
+            }
+
+            .scanner-brief-shell {
+                border-radius: 16px;
+                border-left: 1px solid #d6e4f7;
+                border-right: 1px solid #d6e4f7;
+                border-bottom: 1px solid #d6e4f7;
+                border-top: 0;
+                background: linear-gradient(180deg, #f7fbff 0%, #edf4ff 100%);
+                padding: 0.35rem 0.5rem;
+                margin-bottom: 0.2rem;
+            }
+
+            .scanner-preset-tile {
+                border-radius: 14px;
+                border: 1px solid #d6e4f7;
+                background: linear-gradient(180deg, #f9fbff 0%, #eef5ff 100%);
+                padding: 0.5rem 0.58rem 0.42rem 0.58rem;
+                min-height: 104px;
+                box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+                display: flex;
+                flex-direction: column;
+                justify-content: space-between;
+                gap: 0.3rem;
+            }
+
+            .scanner-preset-accent {
+                font-size: 0.95rem;
+                line-height: 1;
+                margin-bottom: 0.14rem;
+            }
+
+            .scanner-preset-title {
+                font-size: 0.8rem;
+                font-weight: 850;
+                color: #23384d;
+                text-transform: uppercase;
+                letter-spacing: 0.03em;
+                line-height: 1.1;
+            }
+
+            .scanner-preset-note {
+                font-size: 0.77rem;
+                color: #5b6f84;
+                line-height: 1.2;
+                margin-top: 0.14rem;
+                margin-bottom: 0.1rem;
+            }
+
+            .scanner-board-elite {
+                min-height: 108px;
+                border-width: 2px;
+                border-color: #7fd39a;
+                box-shadow: 0 8px 18px rgba(8, 122, 47, 0.12);
+            }
+
+            .scanner-board-elite .scanner-section-title {
+                font-size: 0.78rem;
+                color: #0d5f2a;
+            }
+
+            .scanner-board-elite .scanner-section-note {
+                font-size: 0.9rem;
+                color: #0f5132;
+                font-weight: 700;
+            }
+
+            .scanner-board-momentum {
+                min-height: 96px;
+                border-width: 2px;
+                border-color: #9ec5fe;
+                box-shadow: 0 6px 14px rgba(30, 64, 175, 0.10);
+            }
+
+            .scanner-board-secondary {
+                min-height: 82px;
+                opacity: 0.96;
+            }
+
+            .scanner-hero-shell {
+                border-radius: 16px;
+                border: 1px solid #cfe2ff;
+                background: linear-gradient(135deg, #eef6ff 0%, #f8fbff 100%);
+                padding: 0.55rem 0.65rem;
+                margin-bottom: 0.25rem;
+            }
+
+            .scanner-hero-ticker {
+                font-size: clamp(2.1rem, 4vw, 2.8rem);
+                font-weight: 900;
+                line-height: 1.0;
+                color: #102a43;
+                letter-spacing: 0.01em;
+            }
+
+            .scanner-hero-sector {
+                font-size: 0.88rem;
+                font-weight: 700;
+                color: #36536b;
+                margin-top: 0.14rem;
+            }
+
+            .scanner-hero-score {
+                font-size: 1.3rem;
+                font-weight: 900;
+                color: #0b6b31;
+                margin-top: 0.2rem;
+            }
+
+            [data-testid="stMarkdownContainer"] hr {
+                margin-top: 0.65rem !important;
+                margin-bottom: 0.55rem !important;
             }
 
             .scanner-inline-note {
@@ -4491,8 +4628,8 @@ def run_page():
             @media (max-width: 1180px) {
                 .block-container {
                     max-width: 100% !important;
-                    padding-left: 1.5rem !important;
-                    padding-right: 1.5rem !important;
+                    padding-left: 1.1rem !important;
+                    padding-right: 1.1rem !important;
                 }
 
                 div[data-testid="stHorizontalBlock"] > div {
@@ -4501,11 +4638,11 @@ def run_page():
                 }
 
                 div[data-testid="stMetric"] {
-                    padding: 10px 11px;
+                    padding: 8px 9px;
                 }
 
                 div[data-testid="stMetricValue"] {
-                    font-size: 1.05rem !important;
+                    font-size: 0.98rem !important;
                 }
 
                 div[data-testid="stMetricLabel"] {
@@ -4516,8 +4653,8 @@ def run_page():
             /* Mobile. */
             @media (max-width: 760px) {
                 .block-container {
-                    padding-left: 0.9rem !important;
-                    padding-right: 0.9rem !important;
+                    padding-left: 0.72rem !important;
+                    padding-right: 0.72rem !important;
                 }
 
                 div[data-testid="stDataFrame"] {
@@ -4525,7 +4662,7 @@ def run_page():
                 }
 
                 .scanner-section-card {
-                    padding: 11px 12px;
+                    padding: 8px 9px;
                 }
             }
 
@@ -4535,40 +4672,525 @@ def run_page():
     )
 
     # =====================================================
-    # SCANNER COMMAND ROW
+    # SCANNER v2.0 INSTITUTIONAL DISCOVERY CENTER
     # =====================================================
 
     render_research_stock_autonav()
 
-    st.title("📡 Scanner")
-    st.caption(
-        "Research-model opportunity scanner with one Scanner Mode selector, index/futures universes, responsive layout, and optional custom batch symbols."
+    st.title("Institutional Discovery Center")
+    st.caption("Decision-first scanner workflow: what is happening, what deserves attention, then execution controls.")
+
+    raw_signals_preview = st.session_state.get("scanner_last_raw_signals", [])
+    raw_signals_preview = [
+        row for row in raw_signals_preview
+        if isinstance(row, dict)
+    ] if isinstance(raw_signals_preview, list) else []
+
+    preview_df = (
+        pd.DataFrame(enrich_scanner_rows(raw_signals_preview))
+        if raw_signals_preview else pd.DataFrame()
     )
 
-    scanner_help_expander(
-        "How to use this page",
-        """
-        **1. Pick a Scanner Mode.** The single **Scanner Mode** selector replaces the old separate universe + preset workflow. Use **Momentum / Swing Trading / Breakouts / Defensive / Dividend Income / AI Leaders / Canada / Earnings Watch** as trading playbooks, **INDEXES** for broad market ETFs, **FUTURES DASHBOARD** or the Futures universes for E-mini, commodity, FX, and rates futures, **Pulse universes** for Oil/Gold/Crypto/Forex, **CURRENCY ETFs** for macro currency ETF proxies, **JFBP** for the saved app universe, **FALLBACK** for the safe built-in list, or **CUSTOM BATCH** to paste your own symbols.
+    scanner_grade = "LOW"
+    if len(raw_signals_preview) >= 20:
+        scanner_grade = "HIGH"
+    elif len(raw_signals_preview) >= 8:
+        scanner_grade = "MEDIUM"
 
-        **2. For Gold / Oil / Forex / Crypto, open the matching Pulse page first.** The Pulse page reads the asset-class regime, stress, breadth, execution bias, and best opportunity. Then return to **Scanner**, select the matching universe, and run the scan.
+    best_symbol = "N/A"
+    if not preview_df.empty and "symbol" in preview_df.columns:
+        best_symbol = str(preview_df.iloc[0].get("display_symbol") or preview_df.iloc[0].get("symbol") or "N/A")
 
-        - **Gold:** Open **Gold Pulse** → return to **Scanner** → select **GOLD PULSE** → **Run Scanner**.
-        - **Oil:** Open **Oil Pulse** → return to **Scanner** → select **OIL PULSE** → **Run Scanner**.
-        - **Forex:** Open **Forex Pulse** → return to **Scanner** → select **FOREX PULSE** → **Run Scanner**.
-        - **Crypto:** Open **Crypto Pulse** → return to **Scanner** → select **CRYPTO PULSE** → **Run Scanner**.
+    with st.container():
+        st.subheader("Institutional Discovery Brief")
+        st.markdown('<div class="scanner-brief-shell">', unsafe_allow_html=True)
+        brief_cols = responsive_columns(5)
+        with brief_cols[0]:
+            scanner_compact_card("Universe", scanner_mode_label(universe_mode), tone="blue")
+        with brief_cols[1]:
+            scanner_compact_card("Candidates", len(raw_signals_preview), tone="blue")
+        with brief_cols[2]:
+            scanner_compact_card("Institutional Grade", scanner_grade, tone="green" if scanner_grade == "HIGH" else "yellow")
+        with brief_cols[3]:
+            scanner_compact_card("Best Opportunity", best_symbol, tone="green")
+        with brief_cols[4]:
+            scanner_compact_card("Market Regime", str(market_ctx.get("regime_label", "NEUTRAL")).replace("_", "-"), tone="yellow")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-        **3. Run Scanner.** This ranks symbols by trend, relative strength, sector leadership, earnings risk, economic risk, Market Pulse context, and Pulse regime context when available.
+    def board_rows(df: pd.DataFrame, limit: int = 4, selector: Any = None) -> list[dict]:
+        if df.empty:
+            return []
+        scoped = df.copy()
+        if selector is not None:
+            try:
+                scoped = scoped[selector(scoped)]
+            except Exception:
+                scoped = df.copy()
+        if "opportunity_score_pct" in scoped.columns:
+            scoped = scoped.sort_values(by=["opportunity_score_pct"], ascending=False)
+        picks = []
+        for _, row in scoped.head(limit).iterrows():
+            symbol = str(row.get("display_symbol") or row.get("symbol") or "").upper().strip()
+            score = safe_float(row.get("opportunity_score_pct"), 0.0)
+            if symbol:
+                picks.append({"symbol": symbol, "score": score})
+        return picks
 
-        **4. Build Risk-Aware Plan.** This does not blindly trade. It checks the risk engine, existing positions, target sizing, long-only rules, and event-risk overlays first.
-
-        **5. Execute only after review.** Execution still requires confirmation and only approved BUY/SELL rows are routed.
-        """,
+    elite_rows = board_rows(
+        preview_df,
+        selector=lambda d: (
+            d.get("overall_rating", pd.Series(dtype=str)).astype(str).isin(["A+", "A", "A-"]) &
+            d.get("leadership_tier", pd.Series(dtype=str)).astype(str).str.upper().isin(["ELITE", "LEADER"])
+        ),
+    )
+    momentum_rows = board_rows(
+        preview_df,
+        selector=lambda d: d.get("trend", pd.Series(dtype=str)).astype(str).str.upper().eq("BULLISH"),
+    )
+    mean_reversion_rows = board_rows(
+        preview_df,
+        selector=lambda d: d.get("trend", pd.Series(dtype=str)).astype(str).str.upper().eq("BEARISH"),
+    )
+    income_rows = board_rows(
+        preview_df,
+        selector=lambda d: d.get("sector", pd.Series(dtype=str)).astype(str).str.upper().str.contains("DIVIDEND|UTILITY|STAPLES|FINANCIAL", regex=True),
+    )
+    options_rows = board_rows(
+        preview_df,
+        selector=lambda d: d.get("liquidity", pd.Series(dtype=float)).fillna(0).astype(float).ge(4),
     )
 
+    with st.container(border=True):
+        st.subheader("Opportunity Board")
+        board_cols = responsive_columns(5)
+        board_cards = [
+            ("Elite Candidates", elite_rows, "scanner-section-green scanner-board-elite"),
+            ("Momentum Leaders", momentum_rows, "scanner-section-blue scanner-board-momentum"),
+            ("Mean Reversion", mean_reversion_rows, "scanner-section-yellow scanner-board-secondary"),
+            ("Income Opportunities", income_rows, "scanner-section-blue scanner-board-secondary"),
+            ("Options Candidates", options_rows, "scanner-section-green scanner-board-secondary"),
+        ]
+        for col, (title, rows, tone_class) in zip(board_cols, board_cards):
+            with col:
+                if rows:
+                    entries = "<br>".join([f"{item['symbol']}  {item['score']:.1f}" for item in rows])
+                else:
+                    entries = "Run Scanner"
+                st.markdown(
+                    f"""
+                    <div class="scanner-section-card {tone_class}">
+                        <div class="scanner-section-title">{title}</div>
+                        <div class="scanner-section-note">{entries}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
-    # =====================================================
-    # MULTI-ASSET SIGNAL BUS DASHBOARD
-    # =====================================================
+    selected_universe_mode = universe_mode
+    run_scan_btn = False
+    build_plan_btn = False
+    refresh_btn = False
+    clear_btn = False
+
+    with st.container(border=True):
+        st.subheader("Scan Controls")
+        controls_cols = responsive_columns(3)
+        with controls_cols[0]:
+            scanner_compact_card("Scan Type", "Institutional Discovery", tone="blue")
+        with controls_cols[1]:
+            scanner_compact_card("Strategy", scanner_mode_label(universe_mode), tone="blue")
+        with controls_cols[2]:
+            scanner_compact_card("Timeframe", "Model Default", tone="blue")
+
+    with st.container(border=True):
+        st.subheader("Universe Selection")
+        universe_cols = responsive_columns(3)
+        with universe_cols[0]:
+            selected_universe_mode = st.selectbox(
+                "Universe",
+                universe_options,
+                index=universe_options.index(universe_mode),
+                key="scanner_universe_mode_selector",
+            )
+        sector_options = sorted({
+            str((row or {}).get("sector") or "Unknown")
+            for row in active_universe.values()
+            if isinstance(row, dict)
+        }) if isinstance(active_universe, dict) else ["Unknown"]
+        with universe_cols[1]:
+            st.multiselect(
+                "Sector Selection",
+                sector_options,
+                default=[],
+                key="scanner_sector_selection_ui_v20",
+            )
+        with universe_cols[2]:
+            asset_class = "All"
+            if universe_mode in ("INDEX FUTURES", "COMMODITY FUTURES", "FX FUTURES", "RATES FUTURES", "FUTURES DASHBOARD"):
+                asset_class = "Futures"
+            elif universe_mode in ("FOREX PULSE", "CURRENCY ETFs"):
+                asset_class = "FX"
+            elif universe_mode == "CRYPTO PULSE":
+                asset_class = "Crypto"
+            elif universe_mode in ("INDEXES", "ETF MOMENTUM", "DIVIDENDS", "DIVIDEND INCOME"):
+                asset_class = "ETFs"
+            scanner_compact_card("Asset Class", asset_class, tone="blue")
+        if selected_universe_mode != universe_mode:
+            st.session_state["scanner_universe_mode"] = selected_universe_mode
+            st.session_state["scanner_last_status"] = "REFRESHED"
+            st.rerun()
+
+    with st.container(border=True):
+        st.subheader("Scan Presets")
+        preset_cols = responsive_columns(6)
+        preset_modes = [
+            ("MOMENTUM", "↗", "Trend continuation"),
+            ("BREAKOUTS", "◻", "Relative strength breaks"),
+            ("SWING TRADING", "≈", "Multi-day quality setups"),
+            ("DEFENSIVE", "▣", "Lower-beta protection"),
+            ("DIVIDEND INCOME", "◌", "Income and carry"),
+            ("AI LEADERS", "◆", "Institutional growth leaders"),
+        ]
+        for col, (preset_mode, accent, note) in zip(preset_cols, preset_modes):
+            with col:
+                st.markdown(
+                    f"""
+                    <div class="scanner-preset-tile">
+                        <div>
+                            <div class="scanner-preset-accent">{accent}</div>
+                            <div class="scanner-preset-title">{preset_mode.title()}</div>
+                            <div class="scanner-preset-note">{note}</div>
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                if st.button(
+                    preset_mode.title(),
+                    width="stretch",
+                    key=f"scanner_preset_quick_{preset_mode.lower().replace(' ', '_')}_v20",
+                ):
+                    st.session_state["scanner_universe_mode"] = preset_mode
+                    st.session_state["scanner_last_status"] = "REFRESHED"
+                    st.rerun()
+
+    with st.container(border=True):
+        st.subheader("Execute Scan")
+        exec_cols = responsive_columns([1.2, 1.2, 1.0, 1.0])
+        with exec_cols[0]:
+            run_scan_btn = st.button("Run Scanner", width="stretch", key="scanner_run_v36_1")
+        with exec_cols[1]:
+            build_plan_btn = st.button("Build Plan", width="stretch", key="scanner_plan_v36_1")
+        with exec_cols[2]:
+            refresh_btn = st.button("Refresh", width="stretch", key="scanner_refresh_v36_1")
+        with exec_cols[3]:
+            clear_btn = st.button("Clear View", width="stretch", key="scanner_clear_v36_1")
+        st.caption(
+            f"Scan summary: {scanner_mode_label(universe_mode)} • {len(active_universe)} symbols • Status {scanner_status_display}"
+        )
+        progress_map = {
+            "Signals Generated": 0.55,
+            "Plan Ready": 0.75,
+            "Executed": 1.0,
+            "No Trades": 0.35,
+            "Risk-Off": 0.30,
+        }
+        st.progress(progress_map.get(scanner_status_display, 0.2))
+
+    with st.expander("▼ Advanced Filters", expanded=False):
+        scanner_help_expander(
+            "How to use this page",
+            """
+            **1. Pick a Scanner Mode.** The single **Universe** selector powers scanner mode and presets.
+
+            **2. For Gold / Oil / Forex / Crypto, open the matching Pulse page first.**
+
+            **3. Run Scanner.** Review opportunities first, then build the risk-aware plan.
+
+            **4. Execute only after review.**
+            """,
+        )
+
+        with st.expander("Account Sizing", expanded=False):
+
+            current_equity = scanner_account_equity()
+            manual_equity = safe_float(
+                st.session_state.get("scanner_account_equity_override"),
+                0.0,
+            )
+
+            st.caption(
+                "Scanner position sizing uses account equity when available. "
+                "If no live account equity is found, it falls back safely to $50,000."
+            )
+
+            sizing_col1, sizing_col2, sizing_col3 = responsive_columns(3)
+
+            with sizing_col1:
+                st.metric(
+                    "Account Equity Used",
+                    f"${current_equity:,.2f}",
+                )
+
+            with sizing_col2:
+                st.metric(
+                    "Target Position %",
+                    f"{SCANNER_TARGET_POSITION_PCT * 100:.1f}%",
+                )
+
+            with sizing_col3:
+                st.metric(
+                    "Target Position Value",
+                    f"${scanner_target_position_value():,.2f}",
+                )
+
+            new_manual_equity = st.number_input(
+                "Manual account equity override",
+                min_value=0.0,
+                value=float(manual_equity),
+                step=1000.0,
+                help=(
+                    "Use 0 to allow automatic account equity detection. "
+                    "Set a value to size scanner positions from a specific account size."
+                ),
+                key="scanner_account_equity_override_input",
+            )
+
+            if abs(new_manual_equity - manual_equity) > 1e-9:
+                st.session_state["scanner_account_equity_override"] = float(
+                    new_manual_equity
+                )
+                st.session_state["scanner_last_status"] = "REFRESHED"
+                st.rerun()
+
+            if manual_equity > 0:
+                if st.button(
+                    "Clear manual equity override",
+                    width="stretch",
+                    key="scanner_clear_equity_override_v36_1",
+                ):
+                    st.session_state["scanner_account_equity_override"] = 0.0
+                    st.session_state["scanner_last_status"] = "REFRESHED"
+                    st.rerun()
+
+        with st.expander("Economic Calendar Risk Overlay", expanded=False):
+
+            economic_ctx = economic_calendar_context()
+
+            ec1, ec2 = responsive_columns(2)
+
+            ec1.metric(
+                "Economic Risk",
+                economic_ctx["label"],
+            )
+
+            ec2.metric(
+                "Risk Score",
+                economic_ctx["score"],
+            )
+
+            st.caption(
+                f"Highest event: {economic_ctx['highest_event'] or 'None'} • "
+                f"Source: {economic_ctx['source']}"
+            )
+
+            current_economic_enforcement = bool(
+                st.session_state.get(
+                    "scanner_economic_enforcement_enabled",
+                    False,
+                )
+            )
+
+            new_economic_enforcement = st.checkbox(
+                "Enable Economic Calendar enforcement in Scanner",
+                value=current_economic_enforcement,
+                key="scanner_economic_enforcement_enabled_input",
+                help=(
+                    "OFF = monitor only. ON = high-risk economic events can block "
+                    "new BUY signals and medium-risk events can reduce BUY sizing."
+                ),
+            )
+
+            if new_economic_enforcement != current_economic_enforcement:
+                st.session_state[
+                    "scanner_economic_enforcement_enabled"
+                ] = bool(new_economic_enforcement)
+                st.session_state["scanner_last_status"] = "REFRESHED"
+                st.rerun()
+
+            if current_economic_enforcement:
+                if economic_ctx["score"] >= 60:
+                    st.warning(
+                        "Economic Calendar enforcement is ON. "
+                        "HIGH/EXTREME event risk will block new BUY signals."
+                    )
+                elif economic_ctx["score"] >= 35:
+                    st.info(
+                        "Economic Calendar enforcement is ON. "
+                        "MEDIUM event risk will reduce BUY sizing."
+                    )
+                else:
+                    st.success(
+                        "Economic Calendar enforcement is ON, but event risk is low."
+                    )
+            else:
+                st.info(
+                    "Economic Calendar enforcement is OFF. Scanner monitors "
+                    "economic risk but does not change trades."
+                )
+
+        with st.expander("Earnings Risk Overlay", expanded=False):
+
+            earnings_ctx = earnings_universe_context()
+
+            er1, er2 = responsive_columns(2)
+
+            er1.metric(
+                "Earnings Risk",
+                earnings_ctx["label"],
+            )
+
+            er2.metric(
+                "Risk Score",
+                earnings_ctx["score"],
+            )
+
+            st.caption(
+                f"Highest symbol: {earnings_ctx['highest_symbol'] or 'None'} • "
+                f"Days: {earnings_ctx['highest_days'] if earnings_ctx['highest_days'] is not None else 'None'} • "
+                f"Source: {earnings_ctx['source']}"
+            )
+
+            current_earnings_enforcement = bool(
+                st.session_state.get(
+                    "scanner_earnings_enforcement_enabled",
+                    False,
+                )
+            )
+
+            new_earnings_enforcement = st.checkbox(
+                "Enable Earnings Risk enforcement in Scanner",
+                value=current_earnings_enforcement,
+                key="scanner_earnings_enforcement_enabled_input",
+                help=(
+                    "OFF = monitor only. ON = BUY signals are blocked within "
+                    "3 days of earnings and reduced 50% within 7 days."
+                ),
+            )
+
+            if new_earnings_enforcement != current_earnings_enforcement:
+                st.session_state[
+                    "scanner_earnings_enforcement_enabled"
+                ] = bool(new_earnings_enforcement)
+                st.session_state["scanner_last_status"] = "REFRESHED"
+                st.rerun()
+
+            events = earnings_ctx.get("events", [])
+
+            if events:
+                earnings_df = pd.DataFrame(events)
+                days_until_column = "days_until"
+
+                if "status" in earnings_df.columns:
+                    etf_mask = earnings_df["status"].astype(str).str.upper().eq("NOT_APPLICABLE_ETF")
+                    if "earnings_date" in earnings_df.columns:
+                        earnings_df.loc[etf_mask, "earnings_date"] = "Not Applicable (ETF)"
+                    if "days_until" in earnings_df.columns:
+                        earnings_df["days_until_display"] = earnings_df["days_until"]
+                        earnings_df.loc[etf_mask, "days_until_display"] = "N/A"
+                        days_until_column = "days_until_display"
+                    if "reason" in earnings_df.columns:
+                        earnings_df.loc[etf_mask, "reason"] = "Not Applicable (ETF)"
+
+                display_cols = [
+                    "symbol",
+                    "earnings_date",
+                    days_until_column,
+                    "risk_label",
+                    "risk_score",
+                    "status",
+                    "source",
+                    "reason",
+                ]
+
+                display_cols = [
+                    col for col in display_cols
+                    if col in earnings_df.columns
+                ]
+
+                st.dataframe(
+                    earnings_df[display_cols],
+                    width="stretch",
+                    hide_index=True,
+                )
+
+            if current_earnings_enforcement:
+                highest_days = earnings_ctx.get("highest_days")
+
+                try:
+                    highest_days = int(highest_days)
+                except Exception:
+                    highest_days = None
+
+                if highest_days is not None and highest_days <= 3:
+                    st.warning(
+                        "Earnings enforcement is ON. "
+                        "BUY signals within 3 days of earnings are blocked."
+                    )
+
+                elif highest_days is not None and highest_days <= 7:
+                    st.info(
+                        "Earnings enforcement is ON. "
+                        "BUY signals within 7 days of earnings are reduced 50%."
+                    )
+
+                else:
+                    st.success(
+                        "Earnings enforcement is ON, but no near-term earnings risk exists."
+                    )
+            else:
+                st.info(
+                    "Earnings enforcement is OFF. Scanner monitors earnings "
+                    "risk but does not change trades."
+                )
+
+        if selected_universe_mode == "CUSTOM BATCH":
+            with st.expander("Custom Batch Symbols", expanded=True):
+                custom_symbols_input = st.text_area(
+                    "Paste ticker symbols",
+                    value=st.session_state.get(
+                        "scanner_custom_batch_symbols",
+                        "AAPL, MSFT, NVDA, AMZN, META, GOOGL, AVGO",
+                    ),
+                    height=96,
+                    key="scanner_custom_batch_symbols_input",
+                    help=(
+                        "Paste tickers separated by commas, spaces, or new lines. "
+                        "Example: AAPL, MSFT, NVDA, SHOP.TO, RY.TO"
+                    ),
+                )
+
+                parsed_custom_symbols = parse_custom_batch_symbols(
+                    custom_symbols_input
+                )
+
+                if (
+                    custom_symbols_input
+                    != st.session_state.get("scanner_custom_batch_symbols", "")
+                ):
+                    st.session_state["scanner_custom_batch_symbols"] = (
+                        custom_symbols_input
+                    )
+                    st.session_state["universe"] = build_custom_batch_universe(
+                        custom_symbols_input
+                    )
+                    st.session_state["scanner_last_status"] = "REFRESHED"
+
+                st.caption(
+                    f"Parsed symbols: {len(parsed_custom_symbols)} • "
+                    f"{', '.join(parsed_custom_symbols[:15])}"
+                    f"{' ...' if len(parsed_custom_symbols) > 15 else ''}"
+                )
 
     bus_snapshot = multi_asset_signal_bus()
     if bus_snapshot:
@@ -4597,350 +5219,13 @@ def run_page():
                 st.dataframe(pd.DataFrame(bus_rows), width="stretch", hide_index=True)
             else:
                 st.info("No Pulse bus rows have been published yet. Open a Pulse page first, then return to Scanner.")
-    
-
-    # =====================================================
-    # SCANNER v84 TRADING DESK COMMAND STRIP
-    # =====================================================
-    # Compact one-row control layer. The trader should see decision
-    # and opportunity information first; setup controls stay available
-    # without consuming the full first screen.
-
-    with st.container(border=True):
-        strip_cols = responsive_columns([1.55, 1.0, 1.15, 0.85, 1.05, 0.9])
-
-        with strip_cols[0]:
-            selected_universe_mode = st.selectbox(
-                "Scanner Mode",
-                universe_options,
-                index=universe_options.index(universe_mode),
-                key="scanner_universe_mode_selector",
-            )
-
-            if selected_universe_mode != universe_mode:
-                st.session_state["scanner_universe_mode"] = selected_universe_mode
-                st.session_state["scanner_last_status"] = "REFRESHED"
-                st.rerun()
-
-            st.caption(
-                f"{scanner_mode_label(universe_mode)} • {len(active_universe)} symbols"
-            )
-
-        with strip_cols[1]:
-            st.caption("Scanner")
-            run_scan_btn = st.button(
-                "Run Scanner",
-                width="stretch",
-                key="scanner_run_v36_1",
-            )
-
-        with strip_cols[2]:
-            st.caption("Risk Engine")
-            build_plan_btn = st.button(
-                "Build Plan",
-                width="stretch",
-                key="scanner_plan_v36_1",
-            )
-
-        with strip_cols[3]:
-            st.caption("Data")
-            refresh_btn = st.button(
-                "Refresh",
-                width="stretch",
-                key="scanner_refresh_v36_1",
-            )
-
-        with strip_cols[4]:
-            st.caption("Workspace")
-            clear_btn = st.button(
-                "Clear View",
-                width="stretch",
-                key="scanner_clear_v36_1",
-            )
-
-        with strip_cols[5]:
-            st.caption("Controls")
-            with st.popover("Settings ⚙️", use_container_width=True):
-                st.markdown("#### Scanner Settings & Overlays")
-                scanner_tip(
-                    "Settings stay compact in v84 so the opportunity engine remains above the fold."
-                )
-
-                with st.expander("Account Sizing", expanded=False):
-
-                    current_equity = scanner_account_equity()
-                    manual_equity = safe_float(
-                        st.session_state.get("scanner_account_equity_override"),
-                        0.0,
-                    )
-
-                    st.caption(
-                        "Scanner position sizing uses account equity when available. "
-                        "If no live account equity is found, it falls back safely to $50,000."
-                    )
-
-                    sizing_col1, sizing_col2, sizing_col3 = responsive_columns(3)
-
-                    with sizing_col1:
-                        st.metric(
-                            "Account Equity Used",
-                            f"${current_equity:,.2f}",
-                        )
-
-                    with sizing_col2:
-                        st.metric(
-                            "Target Position %",
-                            f"{SCANNER_TARGET_POSITION_PCT * 100:.1f}%",
-                        )
-
-                    with sizing_col3:
-                        st.metric(
-                            "Target Position Value",
-                            f"${scanner_target_position_value():,.2f}",
-                        )
-
-                    new_manual_equity = st.number_input(
-                        "Manual account equity override",
-                        min_value=0.0,
-                        value=float(manual_equity),
-                        step=1000.0,
-                        help=(
-                            "Use 0 to allow automatic account equity detection. "
-                            "Set a value to size scanner positions from a specific account size."
-                        ),
-                        key="scanner_account_equity_override_input",
-                    )
-
-                    if abs(new_manual_equity - manual_equity) > 1e-9:
-                        st.session_state["scanner_account_equity_override"] = float(
-                            new_manual_equity
-                        )
-                        st.session_state["scanner_last_status"] = "REFRESHED"
-                        st.rerun()
-
-                    if manual_equity > 0:
-                        if st.button(
-                            "Clear manual equity override",
-                            width="stretch",
-                            key="scanner_clear_equity_override_v36_1",
-                        ):
-                            st.session_state["scanner_account_equity_override"] = 0.0
-                            st.session_state["scanner_last_status"] = "REFRESHED"
-                            st.rerun()
-
-                with st.expander("Economic Calendar Risk Overlay", expanded=False):
-
-                    economic_ctx = economic_calendar_context()
-
-                    ec1, ec2 = responsive_columns(2)
-
-                    ec1.metric(
-                        "Economic Risk",
-                        economic_ctx["label"],
-                    )
-
-                    ec2.metric(
-                        "Risk Score",
-                        economic_ctx["score"],
-                    )
-
-                    st.caption(
-                        f"Highest event: {economic_ctx['highest_event'] or 'None'} • "
-                        f"Source: {economic_ctx['source']}"
-                    )
-
-                    current_economic_enforcement = bool(
-                        st.session_state.get(
-                            "scanner_economic_enforcement_enabled",
-                            False,
-                        )
-                    )
-
-                    new_economic_enforcement = st.checkbox(
-                        "Enable Economic Calendar enforcement in Scanner",
-                        value=current_economic_enforcement,
-                        key="scanner_economic_enforcement_enabled_input",
-                        help=(
-                            "OFF = monitor only. ON = high-risk economic events can block "
-                            "new BUY signals and medium-risk events can reduce BUY sizing."
-                        ),
-                    )
-
-                    if new_economic_enforcement != current_economic_enforcement:
-                        st.session_state[
-                            "scanner_economic_enforcement_enabled"
-                        ] = bool(new_economic_enforcement)
-                        st.session_state["scanner_last_status"] = "REFRESHED"
-                        st.rerun()
-
-                    if current_economic_enforcement:
-                        if economic_ctx["score"] >= 60:
-                            st.warning(
-                                "Economic Calendar enforcement is ON. "
-                                "HIGH/EXTREME event risk will block new BUY signals."
-                            )
-                        elif economic_ctx["score"] >= 35:
-                            st.info(
-                                "Economic Calendar enforcement is ON. "
-                                "MEDIUM event risk will reduce BUY sizing."
-                            )
-                        else:
-                            st.success(
-                                "Economic Calendar enforcement is ON, but event risk is low."
-                            )
-                    else:
-                        st.info(
-                            "Economic Calendar enforcement is OFF. Scanner monitors "
-                            "economic risk but does not change trades."
-                        )
-
-                with st.expander("Earnings Risk Overlay", expanded=False):
-
-                    earnings_ctx = earnings_universe_context()
-
-                    er1, er2 = responsive_columns(2)
-
-                    er1.metric(
-                        "Earnings Risk",
-                        earnings_ctx["label"],
-                    )
-
-                    er2.metric(
-                        "Risk Score",
-                        earnings_ctx["score"],
-                    )
-
-                    st.caption(
-                        f"Highest symbol: {earnings_ctx['highest_symbol'] or 'None'} • "
-                        f"Days: {earnings_ctx['highest_days'] if earnings_ctx['highest_days'] is not None else 'None'} • "
-                        f"Source: {earnings_ctx['source']}"
-                    )
-
-                    current_earnings_enforcement = bool(
-                        st.session_state.get(
-                            "scanner_earnings_enforcement_enabled",
-                            False,
-                        )
-                    )
-
-                    new_earnings_enforcement = st.checkbox(
-                        "Enable Earnings Risk enforcement in Scanner",
-                        value=current_earnings_enforcement,
-                        key="scanner_earnings_enforcement_enabled_input",
-                        help=(
-                            "OFF = monitor only. ON = BUY signals are blocked within "
-                            "3 days of earnings and reduced 50% within 7 days."
-                        ),
-                    )
-
-                    if new_earnings_enforcement != current_earnings_enforcement:
-                        st.session_state[
-                            "scanner_earnings_enforcement_enabled"
-                        ] = bool(new_earnings_enforcement)
-                        st.session_state["scanner_last_status"] = "REFRESHED"
-                        st.rerun()
-
-                    events = earnings_ctx.get("events", [])
-
-                    if events:
-                        earnings_df = pd.DataFrame(events)
-
-                        display_cols = [
-                            "symbol",
-                            "earnings_date",
-                            "days_until",
-                            "risk_label",
-                            "risk_score",
-                            "status",
-                            "source",
-                            "reason",
-                        ]
-
-                        display_cols = [
-                            col for col in display_cols
-                            if col in earnings_df.columns
-                        ]
-
-                        st.dataframe(
-                            earnings_df[display_cols],
-                            width="stretch",
-                            hide_index=True,
-                        )
-
-                    if current_earnings_enforcement:
-                        highest_days = earnings_ctx.get("highest_days")
-
-                        try:
-                            highest_days = int(highest_days)
-                        except Exception:
-                            highest_days = None
-
-                        if highest_days is not None and highest_days <= 3:
-                            st.warning(
-                                "Earnings enforcement is ON. "
-                                "BUY signals within 3 days of earnings are blocked."
-                            )
-
-                        elif highest_days is not None and highest_days <= 7:
-                            st.info(
-                                "Earnings enforcement is ON. "
-                                "BUY signals within 7 days of earnings are reduced 50%."
-                            )
-
-                        else:
-                            st.success(
-                                "Earnings enforcement is ON, but no near-term earnings risk exists."
-                            )
-                    else:
-                        st.info(
-                            "Earnings enforcement is OFF. Scanner monitors earnings "
-                            "risk but does not change trades."
-                        )
 
     with st.container(border=True):
         st.markdown(f"#### {scanner_mode_label(universe_mode)}")
         st.caption(scanner_mode_note(universe_mode))
         st.info(
-            "Workflow: choose one Scanner Mode → click Run Scanner → review the ranked opportunities → build the risk-aware plan only after review."
+            "Workflow: identify the best opportunities first, then execute scan and build the risk-aware plan."
         )
-
-    if selected_universe_mode == "CUSTOM BATCH":
-        with st.expander("Custom Batch Symbols", expanded=True):
-            custom_symbols_input = st.text_area(
-                "Paste ticker symbols",
-                value=st.session_state.get(
-                    "scanner_custom_batch_symbols",
-                    "AAPL, MSFT, NVDA, AMZN, META, GOOGL, AVGO",
-                ),
-                height=96,
-                key="scanner_custom_batch_symbols_input",
-                help=(
-                    "Paste tickers separated by commas, spaces, or new lines. "
-                    "Example: AAPL, MSFT, NVDA, SHOP.TO, RY.TO"
-                ),
-            )
-
-            parsed_custom_symbols = parse_custom_batch_symbols(
-                custom_symbols_input
-            )
-
-            if (
-                custom_symbols_input
-                != st.session_state.get("scanner_custom_batch_symbols", "")
-            ):
-                st.session_state["scanner_custom_batch_symbols"] = (
-                    custom_symbols_input
-                )
-                st.session_state["universe"] = build_custom_batch_universe(
-                    custom_symbols_input
-                )
-                st.session_state["scanner_last_status"] = "REFRESHED"
-
-            st.caption(
-                f"Parsed symbols: {len(parsed_custom_symbols)} • "
-                f"{', '.join(parsed_custom_symbols[:15])}"
-                f"{' ...' if len(parsed_custom_symbols) > 15 else ''}"
-            )
 
     if run_scan_btn:
         signals = generate_signals()
@@ -5166,7 +5451,7 @@ def run_page():
         # SCANNER OPPORTUNITY RANKING
         # =====================================================
         
-        st.subheader("Scanner Opportunity Dashboard")
+        st.subheader("Scanner Results")
         scanner_tip(
             "This is the main ranking area. It shows the strongest current opportunities first, not a guaranteed buy list."
         )
@@ -5278,16 +5563,20 @@ def run_page():
                         "This is the highest-ranked symbol right now based on the scanner score, sector rank, relative strength, and event-risk checks."
                     )
         
+                    st.markdown('<div class="scanner-hero-shell">', unsafe_allow_html=True)
                     hero_left, hero_right = responsive_columns([1.45, 5.55])
         
                     with hero_left:
                         st.markdown(
                             f"""
-                            <div style="font-size:clamp(1.65rem, 3.2vw, 2.3rem); font-weight:800; line-height:1.05; white-space:nowrap; word-break:keep-all; overflow-wrap:normal;">
+                            <div class="scanner-hero-ticker" style="white-space:nowrap; word-break:keep-all; overflow-wrap:normal;">
                                 {best_symbol or "N/A"}
                             </div>
-                            <div style="font-size:0.85rem; opacity:0.75; margin-top:0.25rem;">
+                            <div class="scanner-hero-sector">
                                 {best_sector or "N/A"}
+                            </div>
+                            <div class="scanner-hero-score">
+                                Opportunity Score {best_score:.1f}
                             </div>
                             """,
                             unsafe_allow_html=True,
@@ -5315,14 +5604,14 @@ def run_page():
                             scanner_compact_card(
                                 "Score",
                                 f"{best_score:.1f}",
-                                tone="blue",
+                                tone="green",
                             )
 
                         with hero_row_2[0]:
                             scanner_compact_card(
                                 "Rating",
                                 best_rating or "N/A",
-                                tone="blue",
+                                tone="green" if str(best_rating or "").upper().startswith("A") else "blue",
                             )
 
                         with hero_row_2[1]:
@@ -5338,6 +5627,7 @@ def run_page():
                                 best_leadership or "N/A",
                                 tone="green" if best_leadership == "ELITE" else "yellow",
                             )
+                    st.markdown('</div>', unsafe_allow_html=True)
         
                     concise_rank = rank_text or "N/A"
                     concise_earnings = (
@@ -5356,7 +5646,7 @@ def run_page():
             # SIMPLIFIED TOP OPPORTUNITIES
             # =================================================
         
-            st.markdown("#### Top Opportunities")
+            st.markdown("#### Opportunity Ranking")
         
             ranking_display_df = ranking_df.copy()
         
@@ -5378,19 +5668,15 @@ def run_page():
                     .fillna(ranking_display_df["trade_recommendation"])
                 )
         
+            ticker_col = "display_symbol" if "display_symbol" in ranking_display_df.columns else "symbol"
+
             ranking_cols = [
-                "display_symbol",
-                "symbol",
-                "recommendation",
                 "opportunity_score_pct",
-                "overall_rating",
-                "sector",
-                "sector_rank",
-                "leadership_tier",
+                ticker_col,
+                "recommendation",
                 "trend",
-                "rs_score",
-                "earnings_risk_label",
-                "price",
+                "liquidity",
+                "overall_rating",
             ]
         
             ranking_cols = [
@@ -5400,19 +5686,71 @@ def run_page():
         
             top_opportunities_df = ranking_display_df[ranking_cols].head(25).copy()
 
+            rename_map = {
+                "opportunity_score_pct": "Opportunity Score",
+                "display_symbol": "Ticker",
+                "symbol": "Ticker",
+                "recommendation": "Signal",
+                "trend": "Trend",
+                "liquidity": "Volume",
+                "overall_rating": "Quality",
+            }
+
+            top_opportunities_df = top_opportunities_df.rename(columns=rename_map)
+
+            ordered_cols = [
+                "Opportunity Score",
+                "Ticker",
+                "Signal",
+                "Trend",
+                "Volume",
+                "Quality",
+            ]
+            ordered_cols = [col for col in ordered_cols if col in top_opportunities_df.columns]
+            if ordered_cols:
+                top_opportunities_df = top_opportunities_df[ordered_cols]
+
             if "leadership_tier" in top_opportunities_df.columns:
                 top_opportunities_df["leadership_tier"] = top_opportunities_df[
                     "leadership_tier"
                 ].apply(leadership_badge)
 
+            def highlight_rank_priority(row):
+                if row.name == 0:
+                    return ["background-color:#dff5e7; font-weight:800;"] * len(row)
+                if row.name in (1, 2):
+                    return ["background-color:#eef6ff; font-weight:700;"] * len(row)
+                return [""] * len(row)
+
+            ranking_styler = top_opportunities_df.style.apply(
+                highlight_rank_priority,
+                axis=1,
+            )
+            ranking_styler = ranking_styler.set_table_styles([
+                {
+                    "selector": "thead th",
+                    "props": [
+                        ("background-color", "#dbe9fb"),
+                        ("color", "#16324a"),
+                        ("font-weight", "800"),
+                        ("font-size", "0.82rem"),
+                        ("border-bottom", "1px solid #b7cde8"),
+                    ],
+                },
+                {
+                    "selector": "tbody td",
+                    "props": [
+                        ("padding-top", "0.32rem"),
+                        ("padding-bottom", "0.32rem"),
+                    ],
+                },
+            ])
+
             st.dataframe(
-                top_opportunities_df.style.apply(
-                    highlight_top_opportunity,
-                    axis=1,
-                ),
+                ranking_styler,
                 width="stretch",
                 hide_index=True,
-                height=320,
+                height=286,
             )
 
         # =====================================================
@@ -6218,7 +6556,7 @@ def run_page():
         with st.container(border=True):
 
             exec_cols = responsive_columns(
-                [1.0, 1.05, 1.2, 1.35, 1.55, 0.95]
+                [0.95, 0.95, 1.05, 1.2, 1.45, 0.9]
             )
 
             with exec_cols[0]:

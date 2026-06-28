@@ -15,9 +15,10 @@ except Exception:
     JFBP_UNIVERSE = {}
 
 try:
-    from engines.earnings_risk import analyze_symbol_earnings_risk
+    from engines.earnings_risk import analyze_symbol_earnings_risk, earnings_exemption_type
 except Exception:
     analyze_symbol_earnings_risk = None
+    earnings_exemption_type = None
 
 try:
     from engines.economic_calendar import (
@@ -471,7 +472,11 @@ def research_earnings_context(symbol: str):
 
         return {
             "symbol": symbol,
-            "earnings_date": earnings_date,
+            "earnings_date": (
+                "Not Applicable (ETF)"
+                if str(row.get("status") or "").upper().strip() == "NOT_APPLICABLE_ETF"
+                else earnings_date
+            ),
             "days_until": row.get("days_until"),
             "risk_score": int(float(row.get("risk_score") or 0)),
             "risk_label": str(row.get("risk_label") or "NONE").upper().strip(),
@@ -1790,13 +1795,19 @@ h2 {
 
     earnings_date_label = "Unknown"
 
-    if earnings_date:
+    if str(earnings_ctx.get("status") or "").upper().strip() == "NOT_APPLICABLE_ETF":
+        earnings_date_label = "Not Applicable (ETF)"
+
+    elif earnings_date:
         earnings_date_label = clean_event_date_only(
             earnings_date
         )
 
     if not earnings_time_label:
         earnings_time_label = "Time Unknown"
+
+    if str(earnings_ctx.get("status") or "").upper().strip() == "NOT_APPLICABLE_ETF":
+        earnings_time_label = "N/A"
 
     earnings_ribbon_label = (
         f"Earnings: {earnings_date_label} • {earnings_time_label}"
@@ -2269,7 +2280,11 @@ h2 {
     event_risk_rows = [
         {
             "Factor": "Next Earnings",
-            "Value": earnings_ctx.get("earnings_date") or "None",
+            "Value": (
+                "Not Applicable (ETF)"
+                if str(earnings_ctx.get("status") or "").upper().strip() == "NOT_APPLICABLE_ETF"
+                else earnings_ctx.get("earnings_date") or "None"
+            ),
         },
         {
             "Factor": "Economic Risk",

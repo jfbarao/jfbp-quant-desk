@@ -41,6 +41,16 @@ HIGH_RISK_DAYS = 3
 MEDIUM_RISK_DAYS = 5
 LOW_RISK_DAYS = 10
 
+KNOWN_ETF_SYMBOLS = {
+    "SPY", "QQQ", "IWM", "DIA", "TQQQ", "UVXY", "RSP", "VTI", "ACWI", "EFA", "EEM", "TLT",
+    "SCHD", "VIG", "VDY.TO", "CDZ.TO", "ZEB.TO", "XEI.TO", "XLV", "XLP", "XLU", "SMH", "XLF",
+    "XLE", "USO", "BNO", "GLD", "IAU", "GDX", "GDXJ", "IBIT", "FBTC", "ETHE", "UUP", "FXE",
+    "FXY", "FXB", "FXC", "CYB", "XLI", "XLK", "XOP", "OIH", "SLV", "SIL", "IAU", "GLD",
+    "VIXY", "XLU", "XLI", "XLV", "XLP", "XLK", "XLE", "XLF", "SMH", "RSP", "VTI", "ACWI",
+    "EFA", "EEM", "IBIT", "FBTC", "ETHE", "GDXJ", "GDX", "UUP", "FXE", "FXY", "FXB", "FXC",
+    "CYB", "XOP", "OIH", "SLV", "SIL",
+}
+
 
 # =========================================================
 # TIME HELPERS
@@ -52,6 +62,27 @@ def utc_now() -> datetime:
 
 def normalize_symbol(symbol: Any) -> str:
     return str(symbol or "").upper().strip()
+
+
+def earnings_exemption_type(symbol: Any) -> Optional[str]:
+    symbol = normalize_symbol(symbol)
+
+    if not symbol:
+        return None
+
+    if symbol.endswith("=F"):
+        return "FUTURES"
+
+    if symbol.endswith("=X"):
+        return "FOREX"
+
+    if symbol.endswith("-USD"):
+        return "CRYPTO"
+
+    if symbol in KNOWN_ETF_SYMBOLS:
+        return "ETF"
+
+    return None
 
 
 def ensure_utc(value: Any) -> Optional[datetime]:
@@ -336,6 +367,22 @@ def analyze_symbol_earnings_risk(symbol: str) -> EarningsEvent:
             reason="Missing symbol.",
         )
 
+    exemption_type = earnings_exemption_type(symbol)
+
+    if exemption_type is not None:
+        pretty_label = "Not Applicable (ETF)" if exemption_type == "ETF" else f"Not Applicable ({exemption_type.title()})"
+
+        return EarningsEvent(
+            symbol=symbol,
+            earnings_date=None,
+            risk_score=0,
+            risk_label="NONE",
+            days_until=None,
+            source="ASSET_CLASS_SKIP",
+            status=f"NOT_APPLICABLE_{exemption_type}",
+            reason=pretty_label,
+        )
+
     try:
         earnings_date = fetch_next_earnings_date_yfinance(symbol)
         days = days_until(earnings_date)
@@ -367,7 +414,7 @@ def analyze_symbol_earnings_risk(symbol: str) -> EarningsEvent:
             days_until=None,
             source="ERROR_SAFE",
             status="ERROR",
-            reason=str(exc),
+            reason="Earnings lookup unavailable.",
         )
 
 
