@@ -465,6 +465,279 @@ def _payload_bid_ask(payload: dict) -> str:
     return f"{safe_price_text(bid)} / {safe_price_text(ask)}"
 
 
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def _payload_move_pct(payload: dict) -> float | None:
+    if not isinstance(payload, dict):
+        return None
+
+    price = payload.get("price")
+    last = payload.get("last")
+
+    try:
+        price_v = float(price)
+        last_v = float(last)
+    except Exception:
+        return None
+
+    if last_v == 0:
+        return None
+
+    return (price_v - last_v) / last_v * 100.0
+
+
+def _symbol_sector(symbol: str) -> str:
+    key = str(symbol or "").upper().strip()
+
+    sector_map = {
+        "XLF": "Financials",
+        "XLK": "Technology",
+        "XLE": "Energy",
+        "XLV": "Healthcare",
+        "XLY": "Consumer Discretionary",
+        "XLP": "Consumer Staples",
+        "XLI": "Industrials",
+        "XLB": "Materials",
+        "XLRE": "Real Estate",
+        "XLU": "Utilities",
+        "XLC": "Communication Services",
+        "SMH": "Semiconductors",
+        "SOXX": "Semiconductors",
+    }
+
+    return sector_map.get(key, "Other")
+
+
+def _asset_class(symbol: str) -> str:
+    key = str(symbol or "").upper().strip()
+
+    equity_index = {"SPY", "QQQ", "IWM", "DIA", "VTI", "VEQT.TO", "XEQT.TO", "VFV.TO", "VCN.TO"}
+    fixed_income = {"TLT", "IEF", "SHY", "BND", "VAB.TO", "AGG", "HYG", "LQD"}
+    commodities = {"GLD", "SLV", "USO", "DBA", "XLE"}
+    fx = {"UUP", "FXE", "FXY", "USDCAD=X"}
+
+    if key in equity_index:
+        return "Equity Index"
+    if key in fixed_income:
+        return "Fixed Income"
+    if key in commodities:
+        return "Commodities"
+    if key in fx:
+        return "FX"
+    return "Equities"
+
+
+def build_market_analytics_df(snapshot: dict) -> pd.DataFrame:
+    rows = []
+
+    for symbol, payload_raw in (snapshot or {}).items():
+        payload = normalize_symbol_payload(payload_raw)
+        symbol_text = str(symbol or "").upper().strip()
+        price = _safe_float(payload.get("price"), 0.0)
+        last = _safe_float(payload.get("last"), 0.0)
+        bid = _safe_float(payload.get("bid"), 0.0)
+        ask = _safe_float(payload.get("ask"), 0.0)
+        volume = _safe_float(payload.get("volume"), 0.0)
+        move_pct = _payload_move_pct(payload)
+
+        spread_pct = 0.0
+        if bid > 0 and ask > 0 and price > 0:
+            spread_pct = abs(ask - bid) / price * 100.0
+
+        rows.append(
+            {
+                "Symbol": symbol_text,
+                "Price": price,
+                "Move %": move_pct,
+                "Volume": volume,
+                "Spread %": spread_pct,
+                "Sector": _symbol_sector(symbol_text),
+                "Asset Class": _asset_class(symbol_text),
+                "Timestamp": _payload_timestamp(payload),
+                "Last": last,
+            }
+        )
+
+    if not rows:
+        return pd.DataFrame(
+            columns=[
+                "Symbol", "Price", "Move %", "Volume", "Spread %",
+                "Sector", "Asset Class", "Timestamp", "Last",
+            ]
+        )
+
+    return pd.DataFrame(rows)
+
+
+def render_market_opportunity_dashboard(analytics_df: pd.DataFrame) -> None:
+    st.subheader("Opportunity Dashboard")
+    st.caption("Sector and asset-class leadership map to direct immediate attention.")
+
+    if analytics_df.empty:
+        st.info("No cached symbol analytics available for opportunity mapping.")
+        return
+
+    sector_df = analytics_df.dropna(subset=["Move %"]).copy()
+    sector_rollup = pd.DataFrame(columns=["Sector", "Move %"])
+
+    if not sector_df.empty:
+        sector_rollup = (
+            sector_df.groupby("Sector", as_index=False)["Move %"]
+            .mean()
+            .sort_values("Move %", ascending=False)
+        )
+
+    best_sector = sector_rollup.iloc[0]["Sector"] if not sector_rollup.empty else "N/A"
+    weakest_sector = sector_rollup.iloc[-1]["Sector"] if not sector_rollup.empty else "N/A"
+
+    strong_industry = best_sector
+    leadership_rollup = (
+        analytics_df.groupby("Asset Class", as_index=False)["Move %"]
+        .mean()
+        .sort_values("Move %", ascending=False, na_position="last")
+    )
+    asset_leader = leadership_rollup.iloc[0]["Asset Class"] if not leadership_rollup.empty else "N/A"
+
+    top_mean = sector_rollup.head(3)["Move %"].mean() if not sector_rollup.empty else 0.0
+    bottom_mean = sector_rollup.tail(3)["Move %"].mean() if not sector_rollup.empty else 0.0
+    rotation = top_mean - bottom_mean
+    rel_strength = analytics_df["Move %"].dropna().mean() if analytics_df["Move %"].notna().any() else 0.0
+
+    r1 = jfbp_columns(3)
+    with r1[0]:
+        live_stock_metric_card("Best Sector", best_sector, "Highest average move", tone="good")
+    with r1[1]:
+        live_stock_metric_card("Weakest Sector", weakest_sector, "Lowest average move", tone="warning")
+    with r1[2]:
+        live_stock_metric_card("Strongest Industry", strong_industry, "Sector leadership proxy", tone="info")
+
+    r2 = jfbp_columns(3)
+    with r2[0]:
+        live_stock_metric_card("Asset-Class Leader", asset_leader, "Relative leadership", tone="info")
+    with r2[1]:
+        live_stock_metric_card("Rotation", f"{rotation:.2f}%", "Top vs bottom sector spread", tone="good" if rotation >= 0 else "warning")
+    with r2[2]:
+        live_stock_metric_card("Relative Strength", f"{rel_strength:.2f}%", "Average symbol move", tone="good" if rel_strength >= 0 else "warning")
+
+
+def render_market_radar(analytics_df: pd.DataFrame) -> None:
+    st.subheader("Market Radar")
+    st.caption("Leaders, laggards, movers, and unusual activity from cached universe.")
+
+    if analytics_df.empty:
+        st.info("No cached symbols available for radar diagnostics.")
+        return
+
+    movers = analytics_df.dropna(subset=["Move %"]).copy()
+    leaders = movers.sort_values("Move %", ascending=False).head(5)
+    laggards = movers.sort_values("Move %", ascending=True).head(5)
+    unusual = analytics_df.sort_values("Spread %", ascending=False).head(5)
+    volume_leaders = analytics_df.sort_values("Volume", ascending=False).head(5)
+
+    top_leader = leaders.iloc[0]["Symbol"] if not leaders.empty else "N/A"
+    top_laggard = laggards.iloc[0]["Symbol"] if not laggards.empty else "N/A"
+    top_volume = volume_leaders.iloc[0]["Symbol"] if not volume_leaders.empty else "N/A"
+    top_unusual = unusual.iloc[0]["Symbol"] if not unusual.empty else "N/A"
+
+    row = jfbp_columns(4)
+    with row[0]:
+        live_stock_metric_card("Today's Leaders", top_leader, "Top positive mover", tone="good")
+    with row[1]:
+        live_stock_metric_card("Today's Laggards", top_laggard, "Top negative mover", tone="warning")
+    with row[2]:
+        live_stock_metric_card("Volume Leader", top_volume, "Highest cached volume", tone="info")
+    with row[3]:
+        live_stock_metric_card("Unusual Activity", top_unusual, "Widest bid/ask spread", tone="warning")
+
+    with st.expander("Radar Detail", expanded=False):
+        c1, c2 = jfbp_columns(2)
+        with c1:
+            st.markdown("**Leaders**")
+            st.dataframe(leaders[["Symbol", "Move %", "Price"]], width="stretch", hide_index=True)
+            st.markdown("**Laggards**")
+            st.dataframe(laggards[["Symbol", "Move %", "Price"]], width="stretch", hide_index=True)
+        with c2:
+            st.markdown("**Biggest Movers (Abs)**")
+            biggest = movers.assign(**{"Abs Move": movers["Move %"].abs()}).sort_values("Abs Move", ascending=False).head(8)
+            st.dataframe(biggest[["Symbol", "Move %", "Abs Move"]], width="stretch", hide_index=True)
+            st.markdown("**Volume Leaders**")
+            st.dataframe(volume_leaders[["Symbol", "Volume", "Price"]], width="stretch", hide_index=True)
+
+
+def render_market_watchlists(symbol: str, analytics_df: pd.DataFrame) -> None:
+    st.subheader("Watchlists")
+    st.caption("Existing watchlists, favorites, and recent symbol handoff context.")
+
+    existing_watchlists = st.session_state.get("watchlist_symbols", [])
+    favorites = st.session_state.get("favorite_symbols", [])
+
+    recent_candidates = [
+        st.session_state.get("selected_symbol", ""),
+        st.session_state.get("scanner_focus_symbol", ""),
+        st.session_state.get("research_symbol", ""),
+        st.session_state.get("trade_command_symbol", ""),
+        st.session_state.get("oms_order_symbol", ""),
+        st.session_state.get("position_command_symbol", ""),
+    ]
+    recent = [str(value).upper().strip() for value in recent_candidates if str(value).strip()]
+    recent = list(dict.fromkeys(recent))[:12]
+
+    if not existing_watchlists and not favorites and not recent:
+        st.info("No watchlist/favorites state detected. Use Scanner and handoff controls to build active symbol context.")
+
+    r1, r2, r3 = jfbp_columns(3)
+
+    with r1:
+        items = existing_watchlists[:8] if isinstance(existing_watchlists, list) else []
+        text = ", ".join(map(str, items)) if items else "N/A"
+        live_stock_metric_card("Existing Watchlists", len(items), text, tone="info" if items else "neutral")
+
+    with r2:
+        items = favorites[:8] if isinstance(favorites, list) else []
+        text = ", ".join(map(str, items)) if items else symbol
+        live_stock_metric_card("Favorites", len(items) if items else 1, text, tone="good" if items else "neutral")
+
+    with r3:
+        text = ", ".join(recent[:5]) if recent else "N/A"
+        live_stock_metric_card("Recent Additions", len(recent), text, tone="warning" if recent else "neutral")
+
+    if not analytics_df.empty:
+        with st.expander("Watchlist Candidates From Cache", expanded=False):
+            candidates = analytics_df.sort_values(["Volume", "Spread %"], ascending=[False, False]).head(20)
+            st.dataframe(candidates[["Symbol", "Price", "Move %", "Volume", "Sector"]], width="stretch", hide_index=True)
+
+
+def render_market_trend_section(symbol: str, data: dict, snapshot: dict, analytics_df: pd.DataFrame) -> None:
+    st.subheader("Market Trend")
+    st.caption("Performance visualization and market-cache historical context.")
+
+    if analytics_df.empty:
+        st.info("No cached analytics available for trend visualization.")
+    else:
+        trend_df = analytics_df.copy()
+        move_df = trend_df.dropna(subset=["Move %"]).sort_values("Move %", ascending=False).head(15)
+        if not move_df.empty:
+            st.markdown("**Move Distribution (Top 15)**")
+            st.bar_chart(move_df.set_index("Symbol")[["Move %"]], height=320, use_container_width=True)
+
+        vol_df = trend_df.sort_values("Volume", ascending=False).head(15)
+        if (vol_df["Volume"] > 0).any():
+            st.markdown("**Volume Leadership (Top 15)**")
+            st.bar_chart(vol_df.set_index("Symbol")[["Volume"]], height=280, use_container_width=True)
+
+    render_live_stock_snapshot_tables(
+        symbol=symbol,
+        selected_price=data.get("price", "N/A") if data else "N/A",
+        selected_status="ACTIVE" if data else "NO DATA",
+        snapshot=snapshot,
+    )
+
+
 def _live_stock_status(snapshot: dict, data: dict) -> tuple[str, str, str, str]:
     if not snapshot:
         return (
@@ -521,60 +794,70 @@ def render_live_stock_commander_report(symbol: str, data: dict, snapshot: dict) 
 
 def render_live_stock_command_brief(symbol: str, data: dict, snapshot: dict) -> None:
     status, tone, _, _ = _live_stock_status(snapshot, data)
+    analytics_df = build_market_analytics_df(snapshot)
 
-    st.subheader("Command Brief")
-    st.caption("One-glance operational state for the selected cached symbol.")
+    breadth_total = len(analytics_df)
+    breadth_up = int((analytics_df["Move %"].fillna(0.0) > 0).sum()) if not analytics_df.empty else 0
+    breadth_text = f"{breadth_up}/{breadth_total}" if breadth_total > 0 else "N/A"
+
+    volatility = analytics_df["Spread %"].mean() if not analytics_df.empty else 0.0
+    momentum = _payload_move_pct(data) if data else None
+    risk_level = "ELEVATED" if volatility >= 0.75 else "MODERATE" if volatility >= 0.35 else "LOW"
+    strength = analytics_df["Move %"].dropna().mean() if not analytics_df.empty and analytics_df["Move %"].notna().any() else 0.0
+
+    st.subheader("Executive Market Brief")
+    st.caption("Institutional quick read on breadth, volatility, risk, momentum, and market strength.")
 
     c1, c2, c3, c4 = jfbp_columns(4)
 
     with c1:
         live_stock_metric_card(
-            "Selected Symbol",
-            symbol,
-            status,
-            tone=tone,
+            "Breadth",
+            breadth_text,
+            "Advancers / cached symbols",
+            tone="good" if breadth_total > 0 and breadth_up >= breadth_total / 2 else "warning",
         )
 
     with c2:
         live_stock_metric_card(
-            "Cached Price",
-            safe_price_text(data.get("price", "N/A")) if data else "N/A",
-            "Last known cache value",
-            tone="good" if data else "warning",
+            "Volatility",
+            f"{volatility:.2f}%",
+            "Average bid/ask spread",
+            tone="warning" if volatility >= 0.75 else "neutral",
         )
 
     with c3:
         live_stock_metric_card(
-            "Hub Size",
-            len(snapshot),
-            "Cached market symbols",
-            tone="info" if snapshot else "warning",
+            "Risk Level",
+            risk_level,
+            f"Hub status: {status}",
+            tone="risk" if risk_level == "ELEVATED" else "warning" if risk_level == "MODERATE" else "good",
         )
 
     with c4:
         live_stock_metric_card(
-            "Render Mode",
-            "CACHE ONLY",
-            "No live fetch during render",
-            tone="good",
+            "Momentum",
+            f"{momentum:.2f}%" if momentum is not None else "N/A",
+            f"Selected symbol: {symbol}",
+            tone="good" if (momentum or 0) >= 0 and momentum is not None else "warning",
         )
 
     d1, d2, d3, d4 = jfbp_columns(4)
 
     with d1:
         live_stock_metric_card(
-            "Bid / Ask",
-            _payload_bid_ask(data),
-            "If available from cache",
-            tone="neutral",
+            "Market Strength",
+            f"{strength:.2f}%",
+            "Average move across hub",
+            tone="good" if strength >= 0 else "warning",
         )
 
     with d2:
         live_stock_metric_card(
-            "Volume",
-            _payload_volume(data),
-            "If available from cache",
-            tone="neutral",
+            "Hub Size",
+            len(snapshot),
+            "Cached market symbols",
+            tone="info" if snapshot else "warning",
         )
 
     with d3:
@@ -590,7 +873,7 @@ def render_live_stock_command_brief(symbol: str, data: dict, snapshot: dict) -> 
             "Data Quality",
             "GOOD" if data else "MISSING",
             "Selected symbol cache check",
-            tone="good" if data else "warning",
+            tone=tone,
         )
 
 
@@ -813,7 +1096,22 @@ def run_page():
         """,
     )
 
+    symbol = st.text_input(
+        "Symbol",
+        value=st.session_state.get("selected_symbol", "AAPL"),
+        help="Uses the local market cache only. No live market fetch is performed during page render.",
+    ).upper().strip()
+
+    if not symbol:
+        symbol = "AAPL"
+
+    st.session_state["selected_symbol"] = symbol
+
     snapshot = read_market_snapshot(market)
+
+    data = normalize_symbol_payload(snapshot.get(symbol, {}))
+    selected_price = data.get("price", "N/A") if data else "N/A"
+    selected_status = "ACTIVE" if data else "NO DATA"
 
     status_text = "Cache Active" if snapshot else "Cache Empty"
     st.markdown(
@@ -831,24 +1129,16 @@ def run_page():
         "Market Hub reads from the app's existing market cache only. Use it to verify what the app already knows, not to force a new quote download."
     )
 
-    symbol = st.text_input(
-        "Symbol",
-        value=st.session_state.get("selected_symbol", "AAPL"),
-        help="Uses the local market cache only. No live market fetch is performed during page render.",
-    ).upper().strip()
+    analytics_df = build_market_analytics_df(snapshot)
 
-    if not symbol:
-        symbol = "AAPL"
-
-    st.session_state["selected_symbol"] = symbol
-
-    data = normalize_symbol_payload(snapshot.get(symbol, {}))
-    selected_price = data.get("price", "N/A") if data else "N/A"
-    selected_status = "ACTIVE" if data else "NO DATA"
-
+    # 2) Market Status Banner
     render_live_stock_commander_report(symbol, data, snapshot)
-    render_live_stock_handoff_center(symbol, data)
+
+    # 3) Executive Market Brief
     render_live_stock_command_brief(symbol, data, snapshot)
+
+    # Keep existing navigation/handoff controls
+    render_live_stock_handoff_center(symbol, data)
 
     live_stock_tip(
         "If Price shows N/A, it usually means that symbol has not been loaded into the market cache yet. Open Scanner, Research Stock, or another market page first, then come back to Market Hub."
@@ -891,18 +1181,17 @@ def run_page():
                 st.session_state["selected_symbol"] = "AAPL"
                 st.rerun()
 
-    st.divider()
+    # 4) Opportunity Dashboard
+    render_market_opportunity_dashboard(analytics_df)
 
-    # =====================================================
-    # CACHE DIAGNOSTICS
-    # =====================================================
+    # 5) Market Radar
+    render_market_radar(analytics_df)
 
-    render_live_stock_snapshot_tables(
-        symbol=symbol,
-        selected_price=selected_price,
-        selected_status=selected_status,
-        snapshot=snapshot,
-    )
+    # 6) Watchlists
+    render_market_watchlists(symbol, analytics_df)
+
+    # 7) Market Trend
+    render_market_trend_section(symbol, data, snapshot, analytics_df)
 
 
 def page() -> None:

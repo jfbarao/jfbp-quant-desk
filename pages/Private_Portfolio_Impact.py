@@ -22,6 +22,11 @@ from core.ui_cards import metric_card as jfbp_metric_card
 from analytics.market_reaction import generate_market_reaction_report
 
 try:
+    from pages.SaaS_Core import get_supabase_client
+except Exception:  # pragma: no cover
+    get_supabase_client = None
+
+try:
     import yfinance as yf
 except Exception:
     yf = None
@@ -34,6 +39,7 @@ except Exception:
 DATA_DIR = Path("data")
 TRANSACTIONS_FILE = DATA_DIR / "private_portfolio_transactions.csv"
 LEGACY_HOLDINGS_FILE = DATA_DIR / "private_portfolio_holdings.csv"
+PRIVATE_PORTFOLIO_TABLE = "portfolio_positions"
 
 ACCOUNT_OPTIONS = [
     "TFSA",
@@ -223,6 +229,215 @@ def clean_transaction_type(value) -> str:
         return "CASH_WITHDRAWAL"
 
     return "BUY"
+
+
+def _current_saas_user_id() -> str:
+    saas_user = st.session_state.get("saas_user")
+    user_id = getattr(saas_user, "user_id", "") if saas_user is not None else ""
+
+    if user_id:
+        return str(user_id or "").strip()
+
+    auth_user = (
+        st.session_state.get("user")
+        or st.session_state.get("auth_user")
+        or {}
+    )
+
+    if isinstance(auth_user, dict):
+        user_id = auth_user.get("id") or auth_user.get("user_id") or ""
+        if user_id:
+            return str(user_id or "").strip()
+
+    user_obj = getattr(auth_user, "user", None)
+    if user_obj is not None:
+        user_id = getattr(user_obj, "id", "") or getattr(user_obj, "user_id", "")
+        if user_id:
+            return str(user_id or "").strip()
+
+    user_id = getattr(auth_user, "id", "") or getattr(auth_user, "user_id", "")
+    return str(user_id or "").strip()
+
+
+def _transactions_file_for_user(user_id: str) -> Path:
+    user_id = str(user_id or "").strip()
+    if not user_id:
+        return DATA_DIR / "private_portfolio_transactions_anonymous.csv"
+
+    safe_user = "".join(ch for ch in user_id.lower() if ch.isalnum())[:32]
+    if not safe_user:
+        safe_user = "anonymous"
+    return DATA_DIR / f"private_portfolio_transactions_{safe_user}.csv"
+
+
+def _private_portfolio_supabase_available(user_id: str) -> tuple[bool, str, object]:
+    user_id = str(user_id or "").strip()
+    if not user_id:
+        return False, "Login required for user-scoped Supabase persistence.", None
+
+    if get_supabase_client is None:
+        return False, "Supabase client import is unavailable.", None
+
+    try:
+        client = get_supabase_client()
+    except Exception as exc:
+        return False, f"Supabase client unavailable: {exc}", None
+
+    if client is None:
+        return False, "Supabase client unavailable.", None
+
+    try:
+        (
+            client.table(PRIVATE_PORTFOLIO_TABLE)
+            .select("user_id")
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        return (
+            False,
+            "Private portfolio table missing or inaccessible. Expected table: "
+            f"{PRIVATE_PORTFOLIO_TABLE}. Error: {exc}",
+            client,
+        )
+
+    return True, "", client
+
+
+def _supabase_rows_to_transactions_df(rows) -> pd.DataFrame:
+    if not rows:
+        return empty_transactions_df()
+
+    normalized = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+
+        symbol = clean_symbol(row.get("symbol") or row.get("Symbol") or "")
+        if not symbol:
+            continue
+
+        shares = safe_float(row.get("shares") or row.get("Shares"), 0.0)
+        avg_price = safe_float(row.get("avg_price") or row.get("Avg Cost") or row.get("Price"), 0.0)
+        cost_basis = safe_float(row.get("cost_basis") or row.get("Cost Basis"), 0.0)
+        market_value = safe_float(row.get("market_value") or row.get("Market Value"), 0.0)
+        realized_pnl = safe_float(row.get("realized_pnl") or row.get("Realized P&L"), 0.0)
+
+        # portfolio_positions stores symbol-level snapshots, not full ledger rows.
+        amount = cost_basis if cost_basis > 0 else shares * avg_price
+        notes = (
+            "Imported from Supabase position snapshot"
+            f" (market_value={market_value:.2f}, realized_pnl={realized_pnl:.2f})"
+        )
+
+        normalized.append(
+            {
+                "Date": str(row.get("date") or row.get("Date") or "").strip(),
+                "Account": clean_account(row.get("account") or row.get("Account") or "TFSA"),
+                "Symbol": symbol,
+                "Type": clean_transaction_type(row.get("transaction_type") or row.get("type") or row.get("Type") or "BUY"),
+                "Shares": shares,
+                "Price": avg_price,
+                "Amount": amount,
+                "Notes": str(row.get("notes") or row.get("Notes") or notes).strip(),
+            }
+        )
+
+    if not normalized:
+        return empty_transactions_df()
+
+    return clean_transactions_df(pd.DataFrame(normalized, columns=TRANSACTION_COLUMNS)).reset_index(drop=True)
+
+
+def _transactions_df_to_supabase_rows(transactions_df: pd.DataFrame, user_id: str) -> list[dict]:
+    rows = []
+    transactions = clean_transactions_df(transactions_df)
+
+    if transactions.empty:
+        return rows
+
+    grouped = transactions.groupby(["Symbol"], dropna=False)
+
+    for (symbol,), group in grouped:
+        symbol = clean_symbol(symbol)
+        if not symbol:
+            continue
+
+        shares = 0.0
+        cost_basis = 0.0
+        realized_pnl = 0.0
+
+        for _, tx in group.iterrows():
+            tx_type = clean_transaction_type(tx.get("Type"))
+            tx_shares = safe_float(tx.get("Shares"))
+            tx_price = safe_float(tx.get("Price"))
+            tx_amount = safe_float(tx.get("Amount"))
+
+            if tx_type in ("BUY", "DRIP"):
+                trade_cost = tx_amount if tx_amount > 0 else tx_shares * tx_price
+                shares += tx_shares
+                cost_basis += trade_cost
+            elif tx_type == "SELL":
+                if shares > 0 and tx_shares > 0:
+                    avg_cost_before_sale = cost_basis / shares if shares > 0 else 0.0
+                    sale_proceeds = tx_amount if tx_amount > 0 else tx_shares * tx_price
+                    cost_removed = avg_cost_before_sale * tx_shares
+                    realized_pnl += sale_proceeds - cost_removed
+                    shares -= tx_shares
+                    cost_basis -= cost_removed
+
+        if shares <= 0:
+            continue
+
+        avg_price = cost_basis / shares if shares > 0 else 0.0
+        market_value = shares * avg_price
+
+        rows.append(
+            {
+                "user_id": user_id,
+                "symbol": symbol,
+                "shares": float(shares),
+                "cost_basis": float(max(cost_basis, 0.0)),
+                "market_value": float(max(market_value, 0.0)),
+                "avg_price": float(max(avg_price, 0.0)),
+                "realized_pnl": float(realized_pnl),
+            }
+        )
+
+    return rows
+
+
+def _load_transactions_fallback_local(user_id: str, default_df: pd.DataFrame) -> pd.DataFrame:
+    fallback_file = _transactions_file_for_user(user_id)
+
+    if fallback_file.exists():
+        try:
+            transactions_df = pd.read_csv(fallback_file)
+            return clean_transactions_df(transactions_df).reset_index(drop=True)
+        except Exception as exc:
+            st.session_state["private_portfolio_last_persistence_error"] = f"Local fallback load failed: {exc}"
+
+    if not user_id and TRANSACTIONS_FILE.exists():
+        try:
+            transactions_df = pd.read_csv(TRANSACTIONS_FILE)
+            return clean_transactions_df(transactions_df).reset_index(drop=True)
+        except Exception as exc:
+            st.session_state["private_portfolio_last_persistence_error"] = f"Legacy local load failed: {exc}"
+
+    transactions_df = migrate_legacy_holdings_to_transactions()
+
+    if transactions_df.empty and default_df is not None and not default_df.empty:
+        transactions_df = default_df.copy()
+
+    return clean_transactions_df(transactions_df).reset_index(drop=True)
+
+
+def _save_transactions_fallback_local(transactions_df: pd.DataFrame, user_id: str) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    fallback_file = _transactions_file_for_user(user_id)
+    clean_df = clean_transactions_df(transactions_df)
+    clean_df.to_csv(fallback_file, index=False)
 
 
 
@@ -657,7 +872,7 @@ def migrate_legacy_holdings_to_transactions() -> pd.DataFrame:
     )
 
 
-def load_transactions(default_df: pd.DataFrame) -> pd.DataFrame:
+def load_transactions(default_df: pd.DataFrame, user_id: str | None = None) -> pd.DataFrame:
     """Load the saved transaction ledger.
 
     Important behavior:
@@ -668,35 +883,94 @@ def load_transactions(default_df: pd.DataFrame) -> pd.DataFrame:
     This prevents deleted holdings, such as VFV in RRSP, from coming back after
     refresh or Streamlit restart.
     """
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    user_id = str(user_id or "").strip()
+    st.session_state["private_portfolio_current_user_id"] = user_id
+    st.session_state["private_portfolio_user_id_present"] = bool(user_id)
 
-    if TRANSACTIONS_FILE.exists():
-        try:
-            transactions_df = pd.read_csv(TRANSACTIONS_FILE)
-        except Exception:
-            transactions_df = empty_transactions_df()
+    if user_id:
+        ready, reason, client = _private_portfolio_supabase_available(user_id)
+        if ready:
+            try:
+                response = (
+                    client.table(PRIVATE_PORTFOLIO_TABLE)
+                    .select("*")
+                    .eq("user_id", user_id)
+                    .order("symbol")
+                    .execute()
+                )
+                rows = getattr(response, "data", None) or []
+                loaded_df = _supabase_rows_to_transactions_df(rows)
+                st.session_state["private_portfolio_supabase_loaded"] = True
+                st.session_state["private_portfolio_supabase_load_status"] = "OK"
+                st.session_state["private_portfolio_last_persistence_error"] = ""
+                st.session_state["private_portfolio_record_count"] = len(loaded_df)
+                return loaded_df
+            except Exception as exc:
+                st.session_state["private_portfolio_supabase_loaded"] = False
+                st.session_state["private_portfolio_supabase_load_status"] = "ERROR"
+                st.session_state["private_portfolio_last_persistence_error"] = f"Supabase load failed: {exc}"
+                st.warning(f"Private Portfolio load warning: Supabase load failed ({exc}). Using emergency fallback for this user.")
+        else:
+            st.session_state["private_portfolio_supabase_loaded"] = False
+            st.session_state["private_portfolio_supabase_load_status"] = "SKIPPED"
+            st.session_state["private_portfolio_last_persistence_error"] = reason
+            st.warning(f"Private Portfolio load warning: Supabase unavailable ({reason}). Using emergency fallback for this user.")
 
-        return clean_transactions_df(transactions_df).reset_index(drop=True)
+        fallback_df = _load_transactions_fallback_local(user_id=user_id, default_df=default_df)
+        st.session_state["private_portfolio_record_count"] = len(fallback_df)
+        return fallback_df
 
-    transactions_df = migrate_legacy_holdings_to_transactions()
+    st.session_state["private_portfolio_supabase_loaded"] = False
+    st.session_state["private_portfolio_supabase_load_status"] = "SKIPPED"
+    anon_df = _load_transactions_fallback_local(user_id="", default_df=default_df)
+    st.session_state["private_portfolio_record_count"] = len(anon_df)
+    return anon_df
 
-    if transactions_df.empty and default_df is not None and not default_df.empty:
-        transactions_df = default_df.copy()
 
-    return clean_transactions_df(transactions_df).reset_index(drop=True)
+def save_transactions(transactions_df: pd.DataFrame, user_id: str | None = None) -> None:
+    user_id = str(user_id or "").strip()
 
+    if user_id:
+        ready, reason, client = _private_portfolio_supabase_available(user_id)
+        rows = _transactions_df_to_supabase_rows(transactions_df, user_id)
 
-def save_transactions(transactions_df: pd.DataFrame) -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+        if ready:
+            try:
+                (
+                    client.table(PRIVATE_PORTFOLIO_TABLE)
+                    .delete()
+                    .eq("user_id", user_id)
+                    .execute()
+                )
 
-    clean_df = clean_transactions_df(
-        transactions_df
-    )
+                if rows:
+                    client.table(PRIVATE_PORTFOLIO_TABLE).insert(rows).execute()
 
-    clean_df.to_csv(
-        TRANSACTIONS_FILE,
-        index=False,
-    )
+                st.session_state["private_portfolio_supabase_saved"] = True
+                st.session_state["private_portfolio_supabase_save_status"] = "OK"
+                st.session_state["private_portfolio_last_persistence_error"] = ""
+                st.session_state["private_portfolio_record_count"] = len(rows)
+                _save_transactions_fallback_local(transactions_df, user_id=user_id)
+                return
+            except Exception as exc:
+                st.session_state["private_portfolio_supabase_saved"] = False
+                st.session_state["private_portfolio_supabase_save_status"] = "ERROR"
+                st.session_state["private_portfolio_last_persistence_error"] = f"Supabase save failed: {exc}"
+                st.warning(f"Private Portfolio save warning: Supabase save failed ({exc}). Using emergency fallback for this user.")
+        else:
+            st.session_state["private_portfolio_supabase_saved"] = False
+            st.session_state["private_portfolio_supabase_save_status"] = "SKIPPED"
+            st.session_state["private_portfolio_last_persistence_error"] = reason
+            st.warning(f"Private Portfolio save warning: Supabase unavailable ({reason}). Using emergency fallback for this user.")
+
+        _save_transactions_fallback_local(transactions_df, user_id=user_id)
+        st.session_state["private_portfolio_record_count"] = len(clean_transactions_df(transactions_df))
+        return
+
+    st.session_state["private_portfolio_supabase_saved"] = False
+    st.session_state["private_portfolio_supabase_save_status"] = "SKIPPED"
+    _save_transactions_fallback_local(transactions_df, user_id="")
+    st.session_state["private_portfolio_record_count"] = len(clean_transactions_df(transactions_df))
 
 
 @st.cache_data(ttl=300)
@@ -2846,7 +3120,7 @@ def render_portfolio_trend(active_df: pd.DataFrame) -> None:
 
     st.bar_chart(
         chart_df,
-        height=260,
+        height=310,
         use_container_width=True,
     )
 
@@ -3787,73 +4061,96 @@ def render_portfolio_navigation_center(active_df: pd.DataFrame) -> None:
     if active_df is None or active_df.empty:
         return
 
-    st.subheader("Portfolio Navigation Center")
-    st.caption(
-        "Use these controls to drill into accounts and symbols without leaving Private Portfolio. "
-        "This replaces the old HTML links that could jump to the wrong page."
+    st.markdown(
+        """
+        <style>
+            .jfbp-nav-title {
+                color: #111827;
+                font-size: 1.02rem;
+                font-weight: 900;
+                margin-bottom: 0.14rem;
+                line-height: 1.2;
+            }
+            .jfbp-nav-caption {
+                color: #64748b;
+                font-size: 0.84rem;
+                font-weight: 700;
+                margin-bottom: 0.45rem;
+                line-height: 1.35;
+            }
+        </style>
+        """,
+        unsafe_allow_html=True,
     )
 
-    account_cols = st.columns(4)
+    with st.container(border=True):
+        st.markdown(
+            """
+            <div class="jfbp-nav-title">Portfolio Navigation Center</div>
+            <div class="jfbp-nav-caption">Drill into accounts and symbols without leaving Private Portfolio.</div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-    account_buttons = [
-        ("All", "All Accounts", ""),
-        ("TFSA", "TFSA", "TFSA"),
-        ("RRSP", "RRSP", "RRSP"),
-        ("Non-Reg", "Non-Registered", "Non-Registered"),
-    ]
+        account_cols = st.columns(4)
 
-    for idx, (label, view_name, focus_account) in enumerate(account_buttons):
-        with account_cols[idx]:
+        account_buttons = [
+            ("All", "All Accounts", ""),
+            ("TFSA", "TFSA", "TFSA"),
+            ("RRSP", "RRSP", "RRSP"),
+            ("Non-Reg", "Non-Registered", "Non-Registered"),
+        ]
+
+        for idx, (label, view_name, focus_account) in enumerate(account_buttons):
+            with account_cols[idx]:
+                if st.button(
+                    label,
+                    width="stretch",
+                    key=f"portfolio_nav_account_{idx}_{view_name}",
+                ):
+                    _set_drilldown_state(
+                        view_name=view_name,
+                        focus_account=focus_account,
+                        focus_symbol="",
+                    )
+                    st.rerun()
+
+        symbol_options = sorted(
+            active_df["Symbol"].dropna().map(clean_symbol).unique().tolist()
+        ) if "Symbol" in active_df.columns else []
+
+        nav_left, nav_mid, nav_right = st.columns([2, 1, 1])
+
+        with nav_left:
+            selected_symbol = st.selectbox(
+                "Symbol Drilldown",
+                [""] + symbol_options,
+                format_func=lambda value: "Choose a symbol" if value == "" else value,
+                key="portfolio_symbol_drilldown_select",
+            )
+
+        with nav_mid:
             if st.button(
-                label,
+                "Open Symbol",
                 width="stretch",
-                key=f"portfolio_nav_account_{idx}_{view_name}",
+                key="portfolio_open_symbol_button",
+                disabled=not bool(selected_symbol),
             ):
                 _set_drilldown_state(
-                    view_name=view_name,
-                    focus_account=focus_account,
-                    focus_symbol="",
+                    view_name="All Accounts",
+                    focus_account="",
+                    focus_symbol=selected_symbol,
                 )
                 st.rerun()
 
-    symbol_options = sorted(
-        active_df["Symbol"].dropna().map(clean_symbol).unique().tolist()
-    ) if "Symbol" in active_df.columns else []
-
-    nav_left, nav_mid, nav_right = st.columns([2, 1, 1])
-
-    with nav_left:
-        selected_symbol = st.selectbox(
-            "Symbol Drilldown",
-            [""] + symbol_options,
-            format_func=lambda value: "Choose a symbol" if value == "" else value,
-            key="portfolio_symbol_drilldown_select",
-        )
-
-    with nav_mid:
-        st.write("")
-        if st.button(
-            "Open Symbol",
-            width="stretch",
-            key="portfolio_open_symbol_button",
-            disabled=not bool(selected_symbol),
-        ):
-            _set_drilldown_state(
-                view_name="All Accounts",
-                focus_account="",
-                focus_symbol=selected_symbol,
-            )
-            st.rerun()
-
-    with nav_right:
-        st.write("")
-        if st.button(
-            "Clear Drilldown",
-            width="stretch",
-            key="portfolio_clear_drilldown_button",
-        ):
-            _clear_drilldown_state()
-            st.rerun()
+        with nav_right:
+            if st.button(
+                "Clear Drilldown",
+                width="stretch",
+                key="portfolio_clear_drilldown_button",
+            ):
+                _clear_drilldown_state()
+                st.rerun()
 
 
 # =========================================================
@@ -4166,10 +4463,10 @@ def inject_family_office_css() -> None:
             .jfbp-wealth-hero {
                 border: 1px solid #bbf7d0;
                 background: #ecfdf5;
-                border-radius: 20px;
-                padding: 1.15rem 1.25rem;
-                margin: 1rem 0 1rem 0;
-                box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+                border-radius: 18px;
+                padding: 0.88rem 0.92rem;
+                margin: 0.60rem 0 0.82rem 0;
+                box-shadow: 0 2px 10px rgba(15, 23, 42, 0.05);
             }
             .jfbp-wealth-hero.watch {
                 border-color: #fde68a;
@@ -4181,35 +4478,36 @@ def inject_family_office_css() -> None:
             }
             .jfbp-wealth-kicker {
                 font-size: 0.72rem;
-                letter-spacing: 0.08em;
+                letter-spacing: 0.055em;
                 text-transform: uppercase;
                 color: #64748b;
-                font-weight: 950;
-                margin-bottom: 0.25rem;
+                font-weight: 850;
+                margin-bottom: 0.24rem;
             }
             .jfbp-wealth-title {
-                font-size: clamp(1.8rem, 4vw, 3.0rem);
-                line-height: 1.02;
-                font-weight: 950;
+                font-size: clamp(1.22rem, 2.35vw, 1.62rem);
+                line-height: 1.14;
+                font-weight: 880;
                 color: #166534;
-                margin-bottom: 0.45rem;
+                margin-bottom: 0.30rem;
             }
             .jfbp-wealth-hero.watch .jfbp-wealth-title { color: #92400e; }
             .jfbp-wealth-hero.risk .jfbp-wealth-title { color: #991b1b; }
             .jfbp-wealth-summary {
-                font-size: clamp(0.88rem, 1.6vw, 1.02rem);
-                color: #1f2937;
-                font-weight: 850;
-                line-height: 1.45;
+                font-size: 0.94rem;
+                color: #334155;
+                font-weight: 700;
+                line-height: 1.38;
+                margin-bottom: 0.36rem;
             }
             .jfbp-wealth-action {
-                margin-top: 0.75rem;
                 background: #ffffff;
                 border: 1px solid #dbe3ef;
                 border-radius: 12px;
-                padding: 0.75rem 0.85rem;
+                padding: 0.60rem 0.78rem;
                 color: #111827;
-                font-weight: 850;
+                font-size: 0.94rem;
+                font-weight: 820;
                 line-height: 1.35;
             }
             .jfbp-family-score-row {
@@ -4502,17 +4800,17 @@ def render_commander_wealth_report(snapshot: dict, selected_account: str) -> Non
 
 def render_executive_wealth_brief(snapshot: dict) -> None:
     st.subheader("Executive Wealth Brief")
-    st.caption("Commander-level snapshot before reviewing accounts, holdings, income, and ledger details.")
+    st.caption("Operational dashboard metrics for workflow execution, concentration control, and ledger readiness.")
     r1 = st.columns(4)
     r2 = st.columns(4)
-    with r1[0]: metric_card("Total Value", f"{format_money(snapshot.get('portfolio_value'))} CAD", f"{snapshot.get('holding_count', 0)} holdings", tone="info")
-    with r1[1]: metric_card("Simple Return", format_pct(snapshot.get("total_return_pct")), f"{format_money(snapshot.get('total_gain'))} CAD", tone="good" if snapshot.get("total_return_pct", 0) >= 0 else "risk")
-    with r1[2]: metric_card("Time-Weighted Return", format_pct(snapshot.get("time_weighted_return")), "Cash-flow adjusted" if snapshot.get("time_weighted_return") is not None else "Add cash-flow rows", tone="good" if (snapshot.get("time_weighted_return") or 0) >= 0 and snapshot.get("time_weighted_return") is not None else "neutral")
-    with r1[3]: metric_card("Today's Move", format_pct(snapshot.get("weighted_move")), calculate_impact_label(snapshot.get("weighted_move", 0)), tone="good" if snapshot.get("weighted_move", 0) >= 0 else "risk")
-    with r2[0]: metric_card("Annual Income", f"{format_money(snapshot.get('projected_annual_income'))} CAD", "Projected forward income", tone="good" if snapshot.get("projected_annual_income", 0) > 0 else "neutral")
-    with r2[1]: metric_card("Monthly Income", f"{format_money(snapshot.get('projected_monthly_income'))} CAD", "Annual / 12", tone="good" if snapshot.get("projected_monthly_income", 0) > 0 else "neutral")
-    with r2[2]: metric_card("Dividends Received", f"{format_money(snapshot.get('total_dividends'))} CAD", "Ledger total", tone="good" if snapshot.get("total_dividends", 0) > 0 else "neutral")
-    with r2[3]: metric_card("Net Contributions", f"{format_money(snapshot.get('cash_flow_net'))} CAD", f"{snapshot.get('cash_flow_count', 0)} cash-flow rows", tone="info")
+    with r1[0]: metric_card("Active Holdings", f"{snapshot.get('holding_count', 0)}", "Current open positions", tone="info")
+    with r1[1]: metric_card("Advancing Today", format_pct(snapshot.get("weighted_move")), calculate_impact_label(snapshot.get("weighted_move", 0)), tone="good" if snapshot.get("weighted_move", 0) >= 0 else "risk")
+    with r1[2]: metric_card("Largest Position", snapshot.get("top_symbol", "N/A"), f"{snapshot.get('top_weight', 0):.1f}% portfolio weight", tone="risk" if snapshot.get("top_weight", 0) >= 35 else "info")
+    with r1[3]: metric_card("Top 3 Concentration", f"{snapshot.get('top3_weight', 0):.1f}%", snapshot.get("top3_symbols", "N/A"), tone="risk" if snapshot.get("top3_weight", 0) >= 65 else "warning" if snapshot.get("top3_weight", 0) >= 50 else "good")
+    with r2[0]: metric_card("Unrealized Gain", f"{format_money(snapshot.get('unrealized_gain'))} CAD", "Open positions", tone="good" if snapshot.get("unrealized_gain", 0) >= 0 else "risk")
+    with r2[1]: metric_card("Realized Gain", f"{format_money(snapshot.get('total_realized'))} CAD", "Closed trades", tone="good" if snapshot.get("total_realized", 0) >= 0 else "risk")
+    with r2[2]: metric_card("Dividends Received", f"{format_money(snapshot.get('total_dividends'))} CAD", "Ledger income", tone="good" if snapshot.get("total_dividends", 0) > 0 else "neutral")
+    with r2[3]: metric_card("Cash-Flow Ledger", f"{snapshot.get('cash_flow_count', 0)} rows", f"Net {format_money(snapshot.get('cash_flow_net'))} CAD", tone="info")
 
 
 def calculate_private_holding_scores(active_df: pd.DataFrame) -> pd.DataFrame:
@@ -4715,7 +5013,7 @@ def render_family_office_command_layer(
     holding_count: int,
     positive_count: int,
     cash_flow_summary: dict,
-) -> None:
+) -> dict:
     inject_family_office_css()
     projected_annual_income, projected_monthly_income, projected_yield = calculate_projected_income(active_df)
     snapshot = build_family_office_snapshot(
@@ -4734,45 +5032,23 @@ def render_family_office_command_layer(
         projected_yield=projected_yield,
         cash_flow_summary=cash_flow_summary,
     )
-    st.divider()
+
     render_commander_wealth_report(snapshot, selected_account)
     render_executive_wealth_brief(snapshot)
-    left, right = st.columns([1.15, 0.85], gap="large")
-    with left:
-        with st.expander("🏆 Holdings Ranking & Family Office Scorecard", expanded=False):
-            st.caption(
-                "Advanced diagnostics for holding quality, income contribution, concentration, "
-                "growth, risk, and data quality. Collapsed by default to keep the command deck compact."
-            )
-            render_private_holding_ranking_engine(active_df)
-            render_family_scorecard(snapshot, active_df)
 
-        with st.expander("📊 Portfolio Summary", expanded=True):
-            render_portfolio_summary_cards(
-                portfolio_value=portfolio_value,
-                total_gain=total_gain,
-                total_return_pct=total_return_pct,
-                time_weighted_return=time_weighted_return,
-                unrealized_gain=unrealized_gain,
-                total_dividends=total_dividends,
-                total_realized=total_realized,
-                weighted_move=weighted_move,
-                holding_count=holding_count,
-                positive_count=positive_count,
-            )
+    render_retirement_readiness_monitor(snapshot)
+    with st.expander("⚖️ Rebalance Command Center", expanded=True):
+        st.caption("Strategic target drift. Advisory only; not an automatic rebalance instruction.")
+        render_rebalance_engine(active_df)
 
-    with right:
-        render_retirement_readiness_monitor(snapshot)
-        with st.expander("⚖️ Rebalance Command Center", expanded=True):
-            st.caption("Strategic target drift. Advisory only; not an automatic rebalance instruction.")
-            render_rebalance_engine(active_df)
+    return snapshot
 
 
 # =========================================================
 # PAGE
 # =========================================================
 
-def render_transaction_ledger_editor(transactions_df: pd.DataFrame) -> None:
+def render_transaction_ledger_editor(transactions_df: pd.DataFrame, user_id: str | None = None) -> None:
     """Maintenance editor for adding/saving portfolio transactions.
 
     v36 stability fix:
@@ -4862,10 +5138,13 @@ def render_transaction_ledger_editor(transactions_df: pd.DataFrame) -> None:
             )
 
         with file_col:
-            st.caption(f"Saved file: {TRANSACTIONS_FILE}")
+            if user_id:
+                st.caption("Storage: Supabase primary (user-scoped) with local emergency fallback.")
+            else:
+                st.caption(f"Saved file: {_transactions_file_for_user('')}")
 
     if save_clicked:
-        save_transactions(edited_transactions)
+        save_transactions(edited_transactions, user_id=user_id)
         st.session_state["private_portfolio_editor_version"] = editor_version + 1
         st.session_state["private_portfolio_ledger_open"] = True
         st.success("Transactions saved.")
@@ -4941,7 +5220,7 @@ def render_transaction_ledger_editor(transactions_df: pd.DataFrame) -> None:
 
         if delete_clicked and rows_to_delete > 0:
             remaining_df = delete_preview_df.loc[~delete_mask, TRANSACTION_COLUMNS].copy()
-            save_transactions(remaining_df)
+            save_transactions(remaining_df, user_id=user_id)
             st.session_state["private_portfolio_editor_version"] = editor_version + 1
             st.session_state["private_portfolio_ledger_open"] = True
             st.success(f"Deleted {rows_to_delete} transaction row(s) and saved the ledger.")
@@ -4982,6 +5261,18 @@ def run_page() -> None:
             .jfbp-link:hover {
                 text-decoration: underline !important;
             }
+            div[data-testid="stVerticalBlockBorderWrapper"] {
+                border: 1px solid #e5e7eb !important;
+                border-radius: 16px !important;
+                background: #ffffff !important;
+                box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04) !important;
+            }
+            div[data-testid="stVerticalBlockBorderWrapper"] > div {
+                padding: 0.78rem 0.86rem !important;
+            }
+            div[data-testid="stTabs"] {
+                margin-top: 0.15rem !important;
+            }
 
             /* Mobile stability pass: keep Streamlit grids/tables inside the viewport. */
             @media (max-width: 900px) {
@@ -5011,13 +5302,11 @@ def run_page() -> None:
         st.title("🏦 Private Portfolio")
         st.caption(
             "Family Office command center for personal portfolio value, income, allocation, ledger history, and retirement readiness. "
-            "Data is saved locally to data/private_portfolio_transactions.csv."
+            "Logged-in users use Supabase as primary storage with user-scoped persistence."
         )
         render_private_portfolio_help()
 
     with refresh_col:
-        st.write("")
-        st.write("")
         refresh = st.button(
             "Refresh Data",
             width="stretch",
@@ -5025,6 +5314,12 @@ def run_page() -> None:
 
     if refresh:
         st.rerun()
+
+    if bool(str(_current_saas_user_id() or "").strip()):
+        st.warning(
+            "Private Portfolio Supabase storage currently uses position snapshots from portfolio_positions, "
+            "not full transaction history. Ledger rows remain locally persisted as emergency fallback."
+        )
 
     with st.spinner("Loading private portfolio data..."):
         report = generate_market_reaction_report()
@@ -5037,7 +5332,8 @@ def run_page() -> None:
 
     market_df = normalize_market_df(source_portfolio_df)
     default_transactions_df = default_transactions_from_market(market_df)
-    transactions_df = load_transactions(default_transactions_df)
+    current_user_id = _current_saas_user_id()
+    transactions_df = load_transactions(default_transactions_df, user_id=current_user_id)
     saved_transactions_df = clean_transactions_df(transactions_df)
 
     requested_view = get_session_portfolio_view()
@@ -5086,7 +5382,7 @@ def run_page() -> None:
             "to build the selected portfolio dashboard."
         )
         with st.expander("🔧 Transaction Ledger", expanded=True):
-            render_transaction_ledger_editor(transactions_df)
+            render_transaction_ledger_editor(transactions_df, user_id=current_user_id)
         return
 
     realized_trades_df = build_realized_trades_table(dashboard_transactions_df)
@@ -5119,7 +5415,7 @@ def run_page() -> None:
 
     holding_count = len(active_df)
 
-    render_family_office_command_layer(
+    snapshot = render_family_office_command_layer(
         selected_account=selected_account,
         active_df=active_df,
         portfolio_value=portfolio_value,
@@ -5134,8 +5430,6 @@ def run_page() -> None:
         positive_count=positive_count,
         cash_flow_summary=cash_flow_summary,
     )
-
-    st.divider()
 
     render_portfolio_navigation_center(active_df)
 
@@ -5202,35 +5496,32 @@ def run_page() -> None:
     )
 
     with tab_accounts:
-        left_col, right_col = st.columns([1.12, 0.88], gap="large")
+        st.subheader("Account Balances")
+        st.caption(
+            "CAD-equivalent balances. TFSA, RRSP, and Non-Registered combine CAD and USD sub-accounts."
+        )
+        render_account_balance_cards(active_df)
 
-        with left_col:
-            st.subheader("Account Balances")
-            st.caption(
-                "CAD-equivalent balances. TFSA, RRSP, and Non-Registered combine CAD and USD sub-accounts."
-            )
-            render_account_balance_cards(active_df)
+        st.subheader("Holdings Snapshot")
+        st.caption(
+            "Broker-style holding cards sorted by market value. Day move is estimated from current value and daily percent move."
+        )
+        render_holding_cards(active_df)
 
-            st.subheader("Holdings Snapshot")
-            st.caption(
-                "Broker-style holding cards sorted by market value. Day move is estimated from current value and daily percent move."
-            )
-            render_holding_cards(active_df)
+        st.subheader("Portfolio Health")
+        st.caption(
+            "Score based on diversification, concentration, return, income, and currency exposure."
+        )
+        render_portfolio_health_cards(active_df)
 
-        with right_col:
-            st.subheader("Portfolio Health")
-            st.caption(
-                "Score based on diversification, concentration, return, income, and currency exposure."
-            )
-            render_portfolio_health_cards(active_df)
+        st.subheader("Portfolio Radar")
+        st.caption(
+            "Live portfolio signals: leaders, laggards, income, concentration, and strength."
+        )
+        render_portfolio_radar(active_df)
 
-            st.subheader("Portfolio Radar")
-            st.caption(
-                "Live portfolio signals: leaders, laggards, income, concentration, and strength."
-            )
-            render_portfolio_radar(active_df)
-
-            st.subheader("Portfolio Trend")
+        st.subheader("Portfolio Trend")
+        with st.container(border=True):
             st.caption(
                 "Current performance snapshot and largest holdings by current market value."
             )
@@ -5245,30 +5536,48 @@ def run_page() -> None:
             )
             render_portfolio_trend(active_df)
 
-    with tab_allocation:
-        left_col, right_col = st.columns([1.12, 0.88], gap="large")
-
-        with left_col:
-            st.subheader("Allocation Center")
+        with st.expander("🏆 Holdings Ranking & Family Office Scorecard", expanded=False):
             st.caption(
-                "Donuts show the big picture. Detail cards below provide exact asset-class and currency exposure."
+                "Advanced diagnostics for holding quality, income contribution, concentration, "
+                "growth, risk, and data quality."
             )
-            render_donut_dashboard(active_df)
+            render_private_holding_ranking_engine(active_df)
+            render_family_scorecard(snapshot, active_df)
 
-            with st.expander("Asset Allocation Details", expanded=True):
-                st.caption(
-                    "Detailed asset-allocation breakdown used by the dashboard. Shows the exact percentage and dollar exposure by asset class."
-                )
-                render_asset_allocation_cards(active_df)
+        with st.expander("📊 Portfolio Summary", expanded=False):
+            render_portfolio_summary_cards(
+                portfolio_value=portfolio_value,
+                total_gain=total_gain,
+                total_return_pct=total_return_pct,
+                time_weighted_return=time_weighted_return,
+                unrealized_gain=unrealized_gain,
+                total_dividends=total_dividends,
+                total_realized=total_realized,
+                weighted_move=weighted_move,
+                holding_count=holding_count,
+                positive_count=positive_count,
+            )
 
-        with right_col:
-            st.subheader("⚖️ Rebalance Command Center")
-            st.caption("Strategic target drift. Advisory only; not an automatic rebalance instruction.")
-            render_rebalance_engine(active_df)
+    with tab_allocation:
+        st.subheader("Allocation Center")
+        st.caption(
+            "Donuts show the big picture. Detail cards below provide exact asset-class and currency exposure."
+        )
+        render_donut_dashboard(active_df)
 
-            st.subheader("🏛️ Portfolio Grade")
-            st.caption("Institutional-style grade based on diversification, income, risk, and concentration.")
-            render_portfolio_grade(active_df)
+        with st.expander("Asset Allocation Details", expanded=True):
+            st.caption(
+                "Detailed asset-allocation breakdown used by the dashboard. Shows the exact percentage and dollar exposure by asset class."
+            )
+            render_asset_allocation_cards(active_df)
+
+        st.subheader("⚖️ Rebalance Command Center")
+        st.caption("Strategic target drift. Advisory only; not an automatic rebalance instruction.")
+        render_rebalance_engine(active_df)
+
+        st.subheader("🏛️ Portfolio Grade")
+        st.caption("Institutional-style grade based on diversification, income, risk, and concentration.")
+        render_portfolio_grade(active_df)
 
     with tab_income:
         st.subheader("💵 Income & Yield Dashboard")
@@ -5318,7 +5627,7 @@ def run_page() -> None:
             "🔧 Transaction Ledger",
             expanded=st.session_state.get("private_portfolio_ledger_open", False),
         ):
-            render_transaction_ledger_editor(transactions_df)
+            render_transaction_ledger_editor(transactions_df, user_id=current_user_id)
 
         with st.expander(f"📋 {selected_account} Performance & Income", expanded=False):
             st.caption(
@@ -5333,6 +5642,17 @@ def run_page() -> None:
         with st.expander("💾 Saved Transactions", expanded=False):
             st.caption("Permanent transaction history loaded from disk. This is the underlying database used to rebuild the portfolio.")
             st.dataframe(saved_transactions_df, width="stretch", hide_index=True)
+
+        with st.expander("🩺 Private Portfolio Persistence Health", expanded=False):
+            health = {
+                "Private Portfolio Supabase Loaded": bool(st.session_state.get("private_portfolio_supabase_loaded", False)),
+                "Private Portfolio Supabase Saved": bool(st.session_state.get("private_portfolio_supabase_saved", False)),
+                "Current User ID Present": bool(str(current_user_id or "").strip()),
+                "Record Count": int(st.session_state.get("private_portfolio_record_count", len(saved_transactions_df)) or 0),
+                "Last Persistence Error": st.session_state.get("private_portfolio_last_persistence_error", ""),
+            }
+            health_df = pd.DataFrame(list(health.items()), columns=["Metric", "Value"])
+            st.dataframe(health_df, width="stretch", hide_index=True)
 
     with tab_realized:
         st.subheader("Realized P&L Center")
