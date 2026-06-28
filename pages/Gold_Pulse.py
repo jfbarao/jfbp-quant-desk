@@ -92,6 +92,25 @@ def inject_gold_pulse_css() -> None:
                 width: 100%;
             }
 
+            .gold-briefing-grid {
+                display: grid;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 0.65rem;
+                margin: 0.35rem 0 0.75rem 0;
+                width: 100%;
+            }
+
+            .gold-briefing-card {
+                display: flex;
+                flex-direction: column;
+                min-height: 126px;
+                height: 100%;
+            }
+
+            .gold-briefing-card.featured {
+                min-height: 144px;
+            }
+
             .gold-card {
                 border: 1px solid;
                 border-radius: 14px;
@@ -137,7 +156,7 @@ def inject_gold_pulse_css() -> None:
             .gold-list-card {
                 border: 1px solid;
                 border-radius: 16px;
-                padding: 0.85rem 0.95rem;
+                padding: 0.90rem 1.0rem;
                 min-width: 0;
                 overflow: hidden;
             }
@@ -146,7 +165,7 @@ def inject_gold_pulse_css() -> None:
                 font-size: 1.02rem;
                 font-weight: 850;
                 color: #1f2937;
-                margin-bottom: 0.62rem;
+                margin-bottom: 0.70rem;
                 line-height: 1.2;
             }
 
@@ -155,7 +174,7 @@ def inject_gold_pulse_css() -> None:
                 grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.35fr);
                 gap: 0.65rem;
                 border-bottom: 1px solid rgba(148, 163, 184, 0.28);
-                padding: 0.38rem 0;
+                padding: 0.42rem 0;
             }
 
             .gold-list-row:last-child {
@@ -164,14 +183,35 @@ def inject_gold_pulse_css() -> None:
 
             .gold-list-label {
                 color: #64748b;
-                font-weight: 750;
+                font-weight: 780;
                 line-height: 1.28;
             }
 
             .gold-list-value {
                 color: #1f2937;
-                font-weight: 850;
+                font-weight: 900;
                 line-height: 1.28;
+            }
+
+            .gold-banner {
+                border: 1px solid;
+                border-radius: 16px;
+                padding: 0.72rem 0.85rem;
+                margin: 0.24rem 0 0.46rem 0;
+                box-sizing: border-box;
+            }
+
+            .gold-banner-title {
+                font-size: 0.78rem;
+                font-weight: 850;
+                letter-spacing: 0.045em;
+                text-transform: uppercase;
+                margin-bottom: 0.2rem;
+            }
+
+            .gold-banner-body {
+                font-size: 0.95rem;
+                line-height: 1.38;
             }
 
             @media (max-width: 1180px) {
@@ -251,6 +291,52 @@ def metric_grid(cards: List[Dict[str, Any]]) -> None:
 
     pieces.append('</div>')
     st.markdown("".join(pieces), unsafe_allow_html=True)
+
+
+def briefing_grid(cards: List[Dict[str, Any]]) -> None:
+    pieces = ['<div class="gold-briefing-grid">']
+
+    for card in cards:
+        background, border, value_color = tone_palette(str(card.get("tone", "neutral")))
+        featured = bool(card.get("featured", False))
+        card_class = "gold-card gold-briefing-card featured" if featured else "gold-card gold-briefing-card"
+        label = html.escape(str(card.get("label", "")))
+        value = html.escape(str(card.get("value", "")))
+        detail = html.escape(str(card.get("detail", "")))
+        detail_html = f'<div class="gold-detail">{detail}</div>' if detail else ""
+        pieces.append(
+            f'<div class="{card_class}" style="background:{background};border-color:{border};">'
+            f'<div class="gold-label">{label}</div>'
+            f'<div class="gold-value" style="color:{value_color};">{value}</div>'
+            f'{detail_html}'
+            f'</div>'
+        )
+
+    pieces.append('</div>')
+    st.markdown("".join(pieces), unsafe_allow_html=True)
+
+
+def section_heading(title: str, subtitle: str | None = None) -> None:
+    st.subheader(title)
+    if subtitle:
+        st.caption(subtitle)
+
+
+def institutional_banner(title: str, body: str, tone: str = "info", body_weight: int = 720) -> None:
+    background, border, value_color = tone_palette(tone)
+    st.markdown(
+        f"""
+        <div class="gold-banner" style="background:{background};border-color:{border};">
+            <div class="gold-banner-title" style="color:{value_color};">{html.escape(title)}</div>
+            <div class="gold-banner-body" style="color:{value_color};font-weight:{body_weight};">{html.escape(body)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def table_height(row_count: int, max_height: int = 320) -> int:
+    return min(max_height, max(132, 56 + row_count * 32))
 
 
 def list_grid(cards: List[Dict[str, Any]]) -> None:
@@ -792,16 +878,14 @@ def build_ai_gold_brief(
 
 
 def gold_market_clock_card(data_status: Dict[str, Any]) -> None:
-    local_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    utc_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    local_time = datetime.now().strftime("%H:%M")
+    utc_time = datetime.now(timezone.utc).strftime("%H:%M UTC")
     provider = str(data_status.get("provider", "yfinance"))
     interval = str(data_status.get("interval", "N/A"))
     period = str(data_status.get("period", "N/A"))
 
     st.info(
-        "🟢 Gold Market Status: Futures/ETF session dependent  |  "
-        f"Last Refresh: {local_time}  |  UTC: {utc_time}  |  "
-        f"Provider: {provider}  |  Lookback: {period}  |  Interval: {interval}"
+        f"● OPEN 24/5  |  Refresh {local_time} {utc_time}  |  Provider: {provider}  |  {period} • {interval}"
     )
 
 
@@ -824,7 +908,7 @@ def display_price_table(title: str, df: pd.DataFrame, max_rows: int | None = Non
     else:
         styled = view
 
-    st.dataframe(styled, width="stretch", hide_index=True, height=320)
+    st.dataframe(styled, width="stretch", hide_index=True, height=table_height(len(view)))
 
 
 def build_gold_playbook_cards(
@@ -949,23 +1033,17 @@ def run_page() -> None:
 
     st.title("🥇 Gold Pulse")
     st.caption(
-        "Live gold regime dashboard for gold, miners, silver, USD pressure, rates proxy, breadth, stress, and trade bias."
+        "Institutional gold command center for regime, macro leadership, breadth, and execution readiness."
     )
     st.caption(
-        "Build: Gold Pulse v1.1 STABLE — Market Clock · Macro Support · Miner Breadth · Opportunity Scanner · Gold Playbook · Market Cycle"
+        "Gold Pulse v2.0 — decision-first layout for market environment, research, execution, and diagnostics."
     )
 
-    c1, c2, c3 = st.columns([1, 1, 1])
-    with c1:
-        refresh = st.button("Refresh Gold Pulse Data", width="stretch")
-    with c2:
-        period = st.selectbox("Lookback", ["7d", "14d", "30d"], index=0)
-    with c3:
-        interval = st.selectbox("Interval", ["1h", "2h", "4h", "1d"], index=0)
+    st.session_state.setdefault("gold_pulse_period", "7d")
+    st.session_state.setdefault("gold_pulse_interval", "1h")
 
-    if refresh:
-        st.cache_data.clear()
-        st.rerun()
+    period = str(st.session_state.get("gold_pulse_period", "7d"))
+    interval = str(st.session_state.get("gold_pulse_interval", "1h"))
 
     if yf is None:
         st.error("yfinance is not available in this environment. Install yfinance to load live gold data.")
@@ -979,8 +1057,6 @@ def run_page() -> None:
     if gold_df.empty:
         st.error("Gold data could not be loaded. Check internet/data access and try again.")
         return
-
-    gold_market_clock_card({"provider": "yfinance", "period": period, "interval": interval})
 
     breadth = calculate_gold_breadth(gold_df)
     macro = calculate_gold_macro_pressure(gold_df)
@@ -1001,7 +1077,6 @@ def run_page() -> None:
     st.session_state["gold_pulse_macro_support"] = str(macro["state"])
     st.session_state["gold_pulse_market_cycle"] = str(market_cycle["cycle"])
 
-
     gold_pulse_bus_payload = publish_multi_asset_signal_bus(
         df=gold_df,
         regime=regime,
@@ -1012,258 +1087,290 @@ def run_page() -> None:
         extra={"macro_state": macro.get("state"), "macro_score": macro.get("score"), "market_cycle": market_cycle.get("cycle")},
     )
 
-    command_html = (
-        f'<div style="display:inline-flex;align-items:center;gap:0.55rem;background:{tone_palette(regime_tone(regime["regime"]))[0]};'
-        f'border:1px solid {tone_palette(regime_tone(regime["regime"]))[1]};'
-        f'color:{tone_palette(regime_tone(regime["regime"]))[2]};border-radius:999px;padding:0.35rem 0.75rem;'
-        f'font-weight:800;margin:0.25rem 0 0.75rem 0;">'
-        f'<span>{regime_icon(regime["regime"])}</span>'
-        f'<span>Gold Command Status: {html.escape(regime["regime"])}</span>'
-        f'<span style="color:#64748b;font-weight:650;">Stress {stress_score}/100</span>'
-        f'<span style="color:#64748b;font-weight:650;">Breadth {breadth["score"]:.1f}/100</span>'
-        '</div>'
-    )
-    st.markdown(command_html, unsafe_allow_html=True)
+    latest_timestamp = str(gold_df.get("Timestamp", pd.Series(dtype=str)).dropna().iloc[0]) if not gold_df.empty and "Timestamp" in gold_df.columns and not gold_df["Timestamp"].dropna().empty else "N/A"
+    volatility_proxy = 0.0
+    if not gold_df.empty and "24H %" in gold_df.columns:
+        volatility_proxy = float(pd.to_numeric(gold_df["24H %"], errors="coerce").abs().dropna().mean() or 0.0)
 
-    st.subheader("🤖 AI Gold Brief")
-    st.caption("What it means: 30-second read of the gold tape before looking at the full dashboard.")
+    top_score_global = 0.0
+    if not opportunity_df.empty:
+        try:
+            top_score_global = safe_float(opportunity_df.iloc[0].get("Opportunity Score"), 0.0)
+        except Exception:
+            top_score_global = 0.0
 
-    if ai_brief["tone"] == "good":
-        st.success(ai_brief["brief"])
-    elif ai_brief["tone"] == "warning":
-        st.warning(ai_brief["brief"])
-    elif ai_brief["tone"] == "risk":
-        st.error(ai_brief["brief"])
+    institutional_grade = "WAIT"
+    if regime.get("trade_allowed"):
+        institutional_grade = "READY" if top_score_global >= 65 else "PENDING CONFIRMATION"
+
+    if regime["regime"] in ("MINERS CONFIRMING", "GOLD BREAKOUT"):
+        execution_status = "BUY"
+    elif regime["regime"] == "SELECTIVE":
+        execution_status = "HOLD"
+    elif regime["regime"] == "CAUTIOUS":
+        execution_status = "WAIT"
     else:
-        st.info(ai_brief["brief"])
-    st.caption(ai_brief["playbook"])
+        execution_status = "AVOID"
 
-    left_col, right_col = st.columns([1, 1])
+    recommendation_sentence = regime["playbook"]
 
-    with left_col:
-        st.divider()
-        st.subheader("🚦 Gold Stress Dashboard")
-        st.caption("What it means: Measures whether gold/miner conditions are calm, mixed, or under pressure.")
+    tradable_df = gold_df[~gold_df["Symbol"].isin(MACRO_SYMBOLS)].copy()
+    strongest = tradable_df.sort_values("24H %", ascending=False, na_position="last").head(5)
+    weakest = tradable_df.sort_values("24H %", ascending=True, na_position="last").head(5)
 
-        metric_grid([
-            {"label": "Stress Score", "value": f"{stress_score}/100", "detail": "Overall gold risk.", "tone": stress_tone(stress_score)},
-            {"label": "Stress State", "value": stress_label, "detail": "Current gold condition.", "tone": stress_tone(stress_score)},
-            {"label": "Gold Regime", "value": f"{regime_icon(regime['regime'])} {regime['regime']}", "detail": "Trading mode.", "tone": regime_tone(regime["regime"])},
-            {"label": "Execution Multiplier", "value": f"{regime['execution_multiplier']:.2f}x", "detail": "Position-size adjustment.", "tone": "info"},
-        ])
+    participation_pct = (breadth["advancing"] / breadth["total"] * 100.0) if breadth["total"] else 0.0
+    summary_confidence_note = "Institutional confidence remains low." if top_score_global < 50 else "Institutional confidence is improving."
 
-        if stress_score >= 70:
-            st.error("Gold Stress Interpretation: defensive posture. Avoid broad miner exposure.")
-        elif stress_score >= 40:
-            st.warning("Gold Stress Interpretation: selective posture. Trade only clean gold/miner leaders.")
-        else:
-            st.success("Gold Stress Interpretation: conditions are calm enough for qualified setups.")
+    # Executive Briefing
+    section_heading("Executive Briefing", "Immediate read on the gold tape and the required posture.")
+    briefing_grid([
+        {"label": "Gold Regime", "value": regime["regime"], "detail": regime["playbook"], "tone": regime_tone(regime["regime"])},
+        {"label": "Risk Level", "value": stress_label, "detail": f"Stress {stress_score}/100", "tone": stress_tone(stress_score)},
+        {"label": "Institutional Grade", "value": institutional_grade, "detail": f"Confidence {top_score_global:.1f}/100", "tone": "good" if institutional_grade == "READY" else "warning" if institutional_grade in ("PENDING CONFIRMATION", "WAIT") else "risk"},
+        {"label": "Execution Status", "value": execution_status, "detail": "BUY / HOLD / WAIT / AVOID", "tone": "good" if execution_status == "BUY" else "warning" if execution_status in ("HOLD", "WAIT") else "risk"},
+        {"label": "Dollar / Macro Leadership", "value": macro["state"], "detail": f"Macro score {macro['score']}/100", "tone": macro["tone"]},
+        {"label": "Commander's Recommendation", "value": recommendation_sentence, "detail": "Primary desk instruction", "tone": regime_tone(regime["regime"]), "featured": True},
+    ])
 
-        help_text("Gold stress combines gold price, miners, USD pressure, macro proxy, and breadth deterioration.")
+    # Executive Summary
+    section_heading("Executive Summary", "Compact KPI read for the current gold tape.")
+    metric_grid([
+        {"label": "Market Regime", "value": regime["regime"], "detail": market_cycle["cycle"], "tone": regime_tone(regime["regime"])},
+        {"label": "Opportunity Score", "value": f"{top_score_global:.1f}/100", "detail": "Highest institutional score", "tone": "good" if top_score_global >= 65 else "warning" if top_score_global >= 45 else "risk"},
+        {"label": "Market Momentum", "value": format_pct(safe_float(tradable_df["24H %"].mean(), 0.0) if not tradable_df.empty and "24H %" in tradable_df.columns else 0.0), "detail": "Loaded universe average 24H move", "tone": "good" if safe_float(tradable_df["24H %"].mean(), 0.0) > 0 else "warning" if safe_float(tradable_df["24H %"].mean(), 0.0) == 0 else "risk"},
+        {"label": "Breadth / Participation", "value": f"{participation_pct:.0f}%", "detail": breadth["state"], "tone": breadth_tone(breadth["score"])},
+        {"label": "Volatility", "value": f"{volatility_proxy:.2f}%", "detail": "Average absolute 24H move", "tone": "warning" if volatility_proxy >= 1.5 else "neutral"},
+        {"label": "Institutional Confidence", "value": f"{top_score_global:.1f}/100", "detail": summary_confidence_note, "tone": "good" if top_score_global >= 70 else "warning" if top_score_global >= 50 else "risk"},
+    ])
 
-        st.divider()
-        st.subheader("📊 Gold Breadth Engine")
-        st.caption("What it means: Measures how many gold-related assets are participating in the move.")
+    # Market Environment
+    section_heading("Market Environment", "Macro tape, market status, and stress profile.")
+    gold_market_clock_card({"provider": "yfinance", "period": period, "interval": interval})
+    metric_grid([
+        {"label": "Gold Cycle", "value": market_cycle["cycle"], "detail": market_cycle["note"], "tone": market_cycle["tone"]},
+        {"label": "Liquidity", "value": macro["state"], "detail": f"{macro['score']}/100", "tone": macro["tone"]},
+        {"label": "Stress", "value": f"{stress_score}/100", "detail": stress_label, "tone": stress_tone(stress_score)},
+        {"label": "Dollar Strength", "value": format_pct(regime["uup_24h"]), "detail": "UUP proxy", "tone": "risk" if regime["uup_24h"] > 0 else "good" if regime["uup_24h"] < 0 else "warning"},
+    ])
 
-        metric_grid([
-            {"label": "Breadth Score", "value": f"{breadth['score']:.1f}/100", "detail": "Participation strength.", "tone": breadth_tone(breadth["score"])},
-            {"label": "Breadth State", "value": breadth["state"], "detail": "Gold participation.", "tone": breadth_tone(breadth["score"])},
-            {"label": "Advancers", "value": f"{breadth['advancing']}/{breadth['total']}", "detail": "Gold assets moving higher.", "tone": "info"},
-            {"label": "Miner Advance %", "value": f"{breadth['miner_advance_pct']:.0f}%", "detail": "Miner participation.", "tone": "good" if breadth["miner_advance_pct"] >= 60 else "warning" if breadth["miner_advance_pct"] >= 40 else "risk"},
-            {"label": "Average Move", "value": format_pct(breadth["average_move"]), "detail": "Average 24h move.", "tone": "good" if breadth["average_move"] > 0 else "risk" if breadth["average_move"] < -1.0 else "warning"},
-        ])
+    # Dollar & Macro Leadership
+    section_heading("Dollar & Macro Leadership", "Macro drivers behind the current gold posture.")
+    metric_grid([
+        {"label": "USD Performance", "value": format_pct(regime["uup_24h"]), "detail": "UUP 24H", "tone": "risk" if regime["uup_24h"] > 0 else "good" if regime["uup_24h"] < 0 else "warning"},
+        {"label": "Real Yields Proxy", "value": format_pct(macro.get("tlt_24h")), "detail": "TLT 24H", "tone": "good" if safe_float(macro.get("tlt_24h"), 0.0) > 0 else "warning"},
+        {"label": "Gold vs USD", "value": format_pct(-regime["uup_24h"] + regime["gold_24h"]), "detail": "Gold and dollar balance", "tone": macro["tone"]},
+        {"label": "Macro Read", "value": macro["state"], "detail": "Macro support posture", "tone": macro["tone"]},
+    ])
+    institutional_banner("Macro Read", f"{macro['state']}. {macro['note']}", tone=macro["tone"])
 
-        if breadth["score"] < 40:
-            st.error("Breadth Interpretation: weak participation. Gold/miner exposure should be reduced.")
-        elif breadth["score"] < 60:
-            st.warning("Breadth Interpretation: mixed participation. Asset selection matters.")
-        else:
-            st.success("Breadth Interpretation: healthy participation. Gold tape supports qualified setups.")
+    # Relative Strength
+    section_heading("Relative Strength", "Strongest and weakest precious-metal assets.")
+    st.markdown('<div style="margin-top:-0.22rem;"></div>', unsafe_allow_html=True)
+    l1, l2 = st.columns(2)
+    with l1:
+        display_price_table("Strongest Precious Assets", strongest, max_rows=5)
+    with l2:
+        display_price_table("Weakest Assets", weakest, max_rows=5)
 
-        help_text("Gold rallies are more trustworthy when gold, miners, silver, and macro support confirm together.")
+    # Market Breadth
+    section_heading("Market Breadth", "Participation quality across the loaded precious-metals universe.")
+    metric_grid([
+        {"label": "Breadth Score", "value": f"{breadth['score']:.1f}/100", "detail": breadth["state"], "tone": breadth_tone(breadth["score"])},
+        {"label": "Advancers", "value": f"{breadth['advancing']}/{breadth['total']}", "detail": "Assets moving higher", "tone": "info"},
+        {"label": "Decliners", "value": f"{breadth['declining']}/{breadth['total']}", "detail": "Assets moving lower", "tone": "warning" if breadth['declining'] else "neutral"},
+        {"label": "Participation", "value": f"{participation_pct:.0f}%", "detail": "Advancing share of universe", "tone": "good" if participation_pct >= 60 else "warning" if participation_pct >= 40 else "risk"},
+        {"label": "Average Move", "value": format_pct(breadth["average_move"]), "detail": "Average 24H move", "tone": "good" if breadth["average_move"] > 0 else "risk" if breadth["average_move"] < -1.0 else "warning"},
+    ])
+    institutional_banner("Institutional Breadth Read", "Broad participation supports cleaner gold trends; weak breadth favors selective and smaller positioning.", tone=breadth_tone(breadth["score"]))
 
-        st.divider()
-        st.subheader("📈 Leadership & Damage Report")
-        st.caption("What it means: Shows strongest and weakest gold-related assets in the current tape.")
-
-        tradable_df = gold_df[~gold_df["Symbol"].isin(MACRO_SYMBOLS)].copy()
-        strongest = tradable_df.sort_values("24H %", ascending=False, na_position="last").head(5)
-        weakest = tradable_df.sort_values("24H %", ascending=True, na_position="last").head(5)
-
-        l1, l2 = st.columns(2)
-        with l1:
-            display_price_table("Strongest 24H", strongest, max_rows=5)
-        with l2:
-            display_price_table("Weakest 24H", weakest, max_rows=5)
-
-        st.divider()
-        st.subheader("🔎 Gold Opportunity Scanner")
-        st.caption(
-            "What it means: Ranks gold ETFs, miners, royalty names, and silver proxies "
-            "by momentum, trend, relative strength versus gold, breadth support, and macro support."
+    # Watchlist
+    section_heading("Watchlist", "Ranked opportunities for immediate focus.")
+    if opportunity_df.empty:
+        st.info("No opportunity scores available yet.")
+    else:
+        watch_cols = ["Rank", "Symbol", "Group", "Directional Bias", "Opportunity Score", "Recommendation"]
+        watch_view = opportunity_df.head(8)[watch_cols].rename(columns={"Directional Bias": "Trend"})
+        styled_watch = watch_view.style.apply(
+            lambda row: ["background-color: #eff6ff; font-weight: 700;" if row.name == watch_view.index[0] else "" for _ in row],
+            axis=1,
         )
+        st.dataframe(styled_watch, width="stretch", hide_index=True, height=table_height(min(8, len(opportunity_df))))
 
-        if opportunity_df.empty:
-            st.info("No opportunity scores available yet.")
-        else:
-            top_opportunities = opportunity_df.head(8).copy()
-            display_cols = [
-                "Rank",
-                "Name",
-                "Symbol",
-                "Group",
-                "24H %",
-                "7D %",
-                "RS vs Gold",
-                "Directional Bias",
-                "Opportunity Score",
-                "Recommendation",
-            ]
-            styled_opportunities = top_opportunities[display_cols].style.map(
-                style_pct,
-                subset=["24H %", "7D %", "RS vs Gold"],
-            )
-            st.dataframe(styled_opportunities, width="stretch", hide_index=True, height=320)
+    # Research
+    section_heading("Research", "Institutional interpretation of the gold environment.")
+    macro_env = "Constructive" if regime["regime"] in ("MINERS CONFIRMING", "GOLD BREAKOUT") else "Mixed" if regime["regime"] == "SELECTIVE" else "Defensive"
+    market_sentiment = "Improving" if top_score_global >= 65 else "Neutral" if top_score_global >= 50 else "Defensive"
+    key_catalysts = ", ".join([macro["state"], market_cycle["cycle"], breadth["state"]])
+    list_grid([
+        {
+            "title": "Institutional Research Summary",
+            "tone": regime_tone(regime["regime"]),
+            "rows": [
+                ("Macro Environment", macro_env),
+                ("Dollar Leadership", format_pct(regime["uup_24h"])),
+                ("Participation", f"{participation_pct:.0f}% advancing"),
+                ("Liquidity", macro["state"]),
+                ("Market Sentiment", market_sentiment),
+                ("Key Catalysts", key_catalysts),
+            ],
+        }
+    ])
 
-            best_opportunity = top_opportunities.iloc[0].to_dict()
-            top_score = safe_float(best_opportunity.get("Opportunity Score"), 0.0)
-            top_recommendation = str(best_opportunity.get("Recommendation", "AVOID"))
+    # Technical Analysis
+    section_heading("Technical Analysis", "Structure and relative performance without redundant charts.")
+    if not opportunity_df.empty:
+        tech_view = opportunity_df.head(10)[["Symbol", "Directional Bias", "1H %", "24H %", "7D %", "RS vs Gold", "Recommendation"]].copy()
+        tech_view = tech_view.rename(columns={"Directional Bias": "Trend", "RS vs Gold": "Relative Strength"})
+        styled_tech = tech_view.style.map(style_pct, subset=["1H %", "24H %", "7D %", "Relative Strength"])
+        st.dataframe(styled_tech, width="stretch", hide_index=True, height=table_height(min(10, len(opportunity_df))))
+    else:
+        st.info("No technical structure available yet.")
 
-            if top_score >= 65:
-                st.success(
-                    f"Best Opportunity: {best_opportunity.get('Name')} ({best_opportunity.get('Symbol')}) — "
-                    f"Bias {best_opportunity.get('Directional Bias')} — "
-                    f"Score {top_score:.1f}/100 — {top_recommendation}"
-                )
-            else:
-                st.warning(
-                    "No Qualified Opportunities Currently Available\n\n"
-                    f"Highest Score: {top_score:.1f}/100 — "
-                    f"{best_opportunity.get('Name')} "
-                    f"({best_opportunity.get('Symbol')})\n\n"
-                    "No gold-related assets currently meet the minimum qualification threshold."
-                )
+    # Risk Assessment
+    section_heading("Risk Assessment", "How much risk the tape supports right now.")
+    risk_view = stress_score
+    metric_grid([
+        {"label": "Risk Score", "value": f"{risk_view}/100", "detail": stress_label, "tone": stress_tone(stress_score)},
+        {"label": "Stress", "value": f"{stress_score}/100", "detail": stress_label, "tone": stress_tone(stress_score)},
+        {"label": "Volatility", "value": f"{volatility_proxy:.2f}%", "detail": "Average absolute 24H move", "tone": "warning" if volatility_proxy >= 1.5 else "neutral"},
+        {"label": "Confidence", "value": f"{top_score_global:.1f}/100", "detail": summary_confidence_note, "tone": "good" if top_score_global >= 70 else "warning" if top_score_global >= 50 else "risk"},
+    ])
+    if risk_view >= 60:
+        institutional_banner("Risk Posture", "Defensive posture. Protect capital and avoid broad miner exposure.", tone="risk", body_weight=800)
+    elif risk_view >= 35:
+        institutional_banner("Risk Posture", "Selective posture. Trade only clean relative-strength setups.", tone="warning", body_weight=800)
+    else:
+        institutional_banner("Risk Posture", "Calm tape. Qualified setups can be considered with discipline.", tone="good", body_weight=800)
 
-        help_text("This is a ranking engine, not an order signal. Use it with chart structure and risk controls.")
+    # Execution Plan
+    section_heading("Execution Plan", "Decision-ready guidance for current gold conditions.")
+    if regime["regime"] == "GOLD BREAKDOWN":
+        direction = "AVOID"
+        size_guidance = "Reduced size"
+        entry_zone = "Only exceptional A+ setups"
+        stop_level = "Preserve capital"
+        target_zone = "Defensive / capital preservation"
+        rr = "Favor protection"
+    elif regime["regime"] in ("CAUTIOUS", "SELECTIVE"):
+        direction = "WAIT"
+        size_guidance = "Reduced size"
+        entry_zone = "Gold ETFs / strongest miners"
+        stop_level = "Below clear structure"
+        target_zone = "Directional continuation / pullbacks"
+        rr = "Moderate"
+    else:
+        direction = "BUY"
+        size_guidance = "Normal size"
+        entry_zone = "Gold/miner leaders"
+        stop_level = "Below structure"
+        target_zone = "Continuation / breakout"
+        rr = "Positive"
 
-    with right_col:
-        st.divider()
-        st.subheader("🎯 Gold Decision Center")
-        st.caption("What it means: Converts gold conditions into practical trading guidance.")
+    metric_grid([
+        {"label": "Trade Direction", "value": direction, "detail": regime["playbook"], "tone": regime_tone(regime["regime"])},
+        {"label": "Position Size", "value": size_guidance, "detail": f"Multiplier {regime['execution_multiplier']:.2f}x", "tone": "info"},
+        {"label": "Entry Zone", "value": entry_zone, "detail": "Execution guidance", "tone": "neutral"},
+        {"label": "Stop Level", "value": stop_level, "detail": "Risk boundary", "tone": "risk"},
+        {"label": "Target", "value": target_zone, "detail": "Profit objective", "tone": "good"},
+        {"label": "Risk/Reward", "value": rr, "detail": "Target versus risk", "tone": "info"},
+        {"label": "Institutional Grade", "value": institutional_grade, "detail": f"Confidence {top_score_global:.1f}/100", "tone": "good" if top_score_global >= 70 else "warning" if top_score_global >= 50 else "risk"},
+    ])
 
-        metric_grid([
-            {"label": "Regime", "value": f"{regime_icon(regime['regime'])} {regime['regime']}", "detail": regime["playbook"], "tone": regime_tone(regime["regime"])},
-            {"label": "Gold 24H", "value": format_pct(regime["gold_24h"]), "detail": "Core gold anchor.", "tone": "good" if regime["gold_24h"] > 0 else "risk" if regime["gold_24h"] < -1.0 else "warning"},
-            {"label": "GDX 24H", "value": format_pct(regime["gdx_24h"]), "detail": "Miner confirmation.", "tone": "good" if regime["gdx_24h"] > 0 else "risk" if regime["gdx_24h"] < -1.0 else "warning"},
-            {"label": "Miners vs Gold", "value": format_pct(regime["miner_vs_gold"]), "detail": "Miner relative strength.", "tone": "good" if regime["miner_vs_gold"] > 0 else "warning"},
-            {"label": "UUP 24H", "value": format_pct(regime["uup_24h"]), "detail": "USD pressure proxy.", "tone": "risk" if regime["uup_24h"] > 0 else "good" if regime["uup_24h"] < 0 else "warning"},
-            {"label": "Trade Allowed", "value": "YES" if regime["trade_allowed"] else "NO", "detail": "Gold scanner permission.", "tone": "good" if regime["trade_allowed"] else "risk"},
-            {"label": "Market Cycle", "value": f"{market_cycle['icon']} {market_cycle['cycle']}", "detail": market_cycle["note"], "tone": market_cycle["tone"]},
-            {"label": "Macro Support", "value": macro["state"], "detail": f"{macro['score']}/100", "tone": macro["tone"]},
-        ])
+    # Trade Management
+    section_heading("Trade Management", "How to manage the position if execution is approved.")
+    list_grid([
+        {
+            "title": "Management Framework",
+            "tone": "info",
+            "rows": [
+                ("Scale In", "Use confirmation only; do not average into weakness."),
+                ("Invalidation", "Exit on structure failure, not emotion."),
+                ("Review", "Reassess on each regime or breadth change."),
+                ("Profit Management", "Take partials into strength and trail the remainder."),
+            ],
+        },
+        {
+            "title": "Operational Discipline",
+            "tone": "warning" if regime["regime"] in ("CAUTIOUS", "SELECTIVE") else "good",
+            "rows": [
+                ("No Chase Rule", "Avoid extended entries after vertical moves."),
+                ("Liquidity", "Prefer the most liquid names in the universe."),
+                ("Exposure", "Respect the current regime multiplier."),
+                ("Time Stop", "If the move stalls, reduce or exit."),
+            ],
+        },
+    ])
 
-        if regime["trade_allowed"]:
-            st.info(regime["playbook"])
-        else:
-            st.error(regime["playbook"])
+    # Historical Context
+    section_heading("Historical Context", "Recent price action context for the current tape.")
+    seven_day_leaders = tradable_df.sort_values("7D %", ascending=False, na_position="last").head(5)
+    seven_day_laggards = tradable_df.sort_values("7D %", ascending=True, na_position="last").head(5)
+    h1, h2 = st.columns(2)
+    with h1:
+        display_price_table("Strongest Performers", seven_day_leaders, max_rows=5)
+    with h2:
+        display_price_table("Weakest Performers", seven_day_laggards, max_rows=5)
+    list_grid([
+        {
+            "title": "Historical Read",
+            "tone": "info",
+            "rows": [
+                ("Cycle", market_cycle["cycle"]),
+                ("Leadership", macro["state"]),
+                ("Breadth", breadth["state"]),
+                ("Confidence", f"{top_score_global:.1f} / 100"),
+            ],
+        }
+    ])
 
-        if regime["regime"] == "GOLD BREAKDOWN":
-            action_tone = "risk"
-            exposure = "25% - 50%"
-            preferred = "Cash / gold only"
-            avoid = "Broad miner exposure"
-            aggression = "Low"
-        elif regime["regime"] in ("CAUTIOUS", "SELECTIVE"):
-            action_tone = "warning"
-            exposure = "40% - 70%"
-            preferred = "Gold ETFs / strongest miners"
-            avoid = "Weak miners and laggards"
-            aggression = "Moderate"
-        else:
-            action_tone = "good"
-            exposure = "70% - 100%"
-            preferred = "Gold/miner leaders"
-            avoid = "Late entries and thin miners"
-            aggression = "Normal"
+    # Data Controls
+    section_heading("Data Controls", "Operational refresh controls kept below the decision flow.")
+    c1, c2, c3 = st.columns([1, 1, 1])
+    with c1:
+        if st.button("Refresh Gold Pulse Data", width="stretch"):
+            st.cache_data.clear()
+            st.rerun()
+    with c2:
+        st.selectbox("Lookback", ["7d", "14d", "30d"], index=["7d", "14d", "30d"].index(period) if period in ["7d", "14d", "30d"] else 0, key="gold_pulse_period")
+    with c3:
+        st.selectbox("Interval", ["1h", "2h", "4h", "1d"], index=["1h", "2h", "4h", "1d"].index(interval) if interval in ["1h", "2h", "4h", "1d"] else 0, key="gold_pulse_interval")
 
-        list_grid([
-            {
-                "title": "Action Plan",
-                "tone": action_tone,
-                "rows": [
-                    ("1", "Confirm gold direction first"),
-                    ("2", "Check USD pressure and rates proxy"),
-                    ("3", "Favor miners only when they confirm gold"),
-                    ("4", "Reduce size when miner breadth weakens"),
-                ],
-            },
-            {
-                "title": "Trade Bias",
-                "tone": action_tone,
-                "rows": [
-                    ("Exposure", exposure),
-                    ("Preferred Setup", preferred),
-                    ("Avoid", avoid),
-                    ("Aggression", aggression),
-                    ("Position Size", f"{regime['execution_multiplier']:.2f}x"),
-                ],
-            },
-        ])
+    # Diagnostics
+    section_heading("Diagnostics", "Technical and developer-oriented details are collapsed below.")
+    with st.expander("Raw API Responses", expanded=False):
+        st.dataframe(gold_df.head(12), width="stretch", hide_index=True, height=table_height(min(12, len(gold_df))))
+        if not opportunity_df.empty:
+            st.dataframe(opportunity_df.head(12), width="stretch", hide_index=True, height=table_height(min(12, len(opportunity_df))))
 
-        st.subheader("📘 Gold Playbook")
-        st.caption(
-            "What it means: Converts regime, macro support, breadth, stress, "
-            "miner confirmation, and market cycle into a practical gold playbook."
-        )
-        list_grid(build_gold_playbook_cards(regime, breadth, stress_score, macro, market_cycle))
-        st.info(market_cycle["note"])
-        st.caption(macro["note"])
+    with st.expander("Cache Status", expanded=False):
+        st.write({
+            "gold_pulse_bus_payload": gold_pulse_bus_payload,
+            "multi_asset_signal_bus": st.session_state.get("multi_asset_signal_bus", {}),
+            "gold_pulse_regime": st.session_state.get("gold_pulse_regime"),
+            "gold_pulse_market_cycle": st.session_state.get("gold_pulse_market_cycle"),
+            "gold_pulse_execution_multiplier": st.session_state.get("gold_pulse_execution_multiplier"),
+        })
 
-        help_text("Gold Pulse is informational only. It does not place trades and does not route orders.")
+    with st.expander("Debug Information", expanded=False):
+        st.write({
+            "regime": regime,
+            "breadth": breadth,
+            "stress_score": stress_score,
+            "stress_label": stress_label,
+            "macro": macro,
+            "market_cycle": market_cycle,
+        })
 
-        st.divider()
-        st.subheader("📌 Gold Snapshot")
-        st.caption("What it means: Quick read of gold, ETFs, miners, silver, and macro proxies.")
+    with st.expander("Timing Diagnostics", expanded=False):
+        st.write({
+            "period": period,
+            "interval": interval,
+            "last_refresh_local": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "last_refresh_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "latest_data_timestamp": latest_timestamp,
+        })
 
-        core_rows = gold_df[gold_df["Symbol"].isin(GOLD_CORE_SYMBOLS)].copy()
-        miner_rows = gold_df[gold_df["Symbol"].isin(MINER_SYMBOLS)].copy()
-        silver_rows = gold_df[gold_df["Symbol"].isin(SILVER_SYMBOLS)].copy()
-        macro_rows = gold_df[gold_df["Symbol"].isin(MACRO_SYMBOLS)].copy()
-
-        display_price_table("Gold Core", core_rows, max_rows=5)
-        display_price_table("Gold Miners / Royalty", miner_rows.sort_values("24H %", ascending=False, na_position="last"), max_rows=10)
-        display_price_table("Silver Complex", silver_rows.sort_values("24H %", ascending=False, na_position="last"), max_rows=5)
-        display_price_table("Macro Proxies", macro_rows, max_rows=5)
-
-        st.divider()
-        st.subheader("📚 Reference Center")
-        st.caption("What it means: Diagnostic data used to validate the current gold read.")
-
-        with st.expander("Gold Regime Details", expanded=False):
-            details_df = pd.DataFrame([
-                {"Metric": "Regime", "Reading": regime["regime"]},
-                {"Metric": "Stress", "Reading": f"{stress_score}/100 — {stress_label}"},
-                {"Metric": "Breadth", "Reading": f"{breadth['score']:.1f}/100 — {breadth['state']}"},
-                {"Metric": "Macro Support", "Reading": f"{macro['state']} — {macro['score']}/100"},
-                {"Metric": "Market Cycle", "Reading": f"{market_cycle['cycle']} — {market_cycle['note']}"},
-                {"Metric": "Gold 24H", "Reading": format_pct(regime["gold_24h"])},
-                {"Metric": "GDX 24H", "Reading": format_pct(regime["gdx_24h"])},
-                {"Metric": "UUP 24H", "Reading": format_pct(regime["uup_24h"])},
-                {"Metric": "Miners vs Gold", "Reading": format_pct(regime["miner_vs_gold"])},
-                {"Metric": "Trade Allowed", "Reading": "YES" if regime["trade_allowed"] else "NO"},
-                {"Metric": "Execution Multiplier", "Reading": f"{regime['execution_multiplier']:.2f}x"},
-            ])
-            st.dataframe(details_df, width="stretch", hide_index=True)
-
-        with st.expander("Data Status", expanded=False):
-            st.write({
-                "provider": "yfinance",
-                "period": period,
-                "interval": interval,
-                "assets_loaded": int(gold_df.shape[0]),
-                "last_refresh_local": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "last_refresh_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            })
+    help_text("Gold Pulse is informational only. It does not place trades and does not route orders.")
 
 
 if __name__ == "__main__":

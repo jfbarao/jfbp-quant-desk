@@ -149,6 +149,14 @@ div[data-testid="stDataFrame"] * { white-space: normal !important; overflow-wrap
 .tcc-ticket-table td:first-child { color:#64748b; font-weight:900; text-transform:uppercase; font-size:0.70rem; letter-spacing:0.04em; width:38%; }
 .tcc-gauge-wrap { background:#f1f5f9; border:1px solid #dbe3ef; border-radius:999px; height:0.72rem; overflow:hidden; margin:0.4rem 0 0.55rem 0; }
 .tcc-gauge-fill { height:100%; border-radius:999px; }
+.tcc-hero-badges { display:flex; flex-wrap:wrap; gap:0.46rem; margin:0.10rem 0 0.50rem 0; }
+.tcc-pill { display:inline-flex; align-items:center; gap:0.34rem; border-radius:999px; padding:0.30rem 0.58rem; border:1px solid; line-height:1.12; }
+.tcc-pill-label { font-size:0.68rem; font-weight:880; letter-spacing:0.05em; text-transform:uppercase; opacity:0.92; }
+.tcc-pill-value { font-size:0.82rem; font-weight:900; }
+.tcc-pill-status { background:#ecfdf3; border-color:#86efac; color:#166534; }
+.tcc-pill-grade { background:#eff6ff; border-color:#93c5fd; color:#1d4ed8; }
+.tcc-pill-direction { background:#f8fafc; border-color:#dbe3ef; color:#0f172a; }
+.tcc-pill-risk { background:#fffbeb; border-color:#fcd34d; color:#b45309; }
 
 @media (max-width:1180px) {
     div[data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; }
@@ -816,7 +824,7 @@ def run_page() -> None:
     inject_css()
 
     st.title("🎯 Trade Command Center")
-    st.caption("Trade Command Center v3.0 — Final Decision & Execution Center. Validate the setup, evaluate risk, confirm execution readiness, preview the OMS ticket, and prepare Journal records before OMS handoff. Advisory only.")
+    st.caption("Trade Command Center v7.0 — Institutional Trade Decision Framework. Validate setup quality, risk, readiness, and execution plan before OMS handoff. Advisory only.")
 
     st.markdown(
         """
@@ -878,244 +886,317 @@ def run_page() -> None:
     opp_grade, opp_tone, opp_detail = opportunity_grade(scanner_score, rating, signal)
     inst_grade, inst_tone, inst_detail = institutional_grade(decision, None, plan)
 
-    st.subheader("Phase 1 — Opportunity Assessment")
-    render_card_grid([
-        {"title": "Decision", "value": decision["label"], "detail": f"Trade Command Score {decision['score']}/100", "tone": decision["tone"]},
-        {"title": "Opportunity Grade", "value": opp_grade, "detail": opp_detail, "tone": opp_tone},
-        {"title": "Institutional Grade", "value": inst_grade, "detail": inst_detail, "tone": inst_tone},
-        {"title": "Symbol", "value": symbol or "Run Scanner", "detail": f"{sector} | Price {fmt_money(price) if safe_float(price, 0) else 'N/A'}", "tone": "info"},
-        {"title": "Scanner", "value": signal, "detail": f"Score {fmt_score(scanner_score)} | Rating {rating} | Leadership {leadership}", "tone": "good" if signal == "BUY" else "risk" if signal == "SELL" else "warning"},
-        {"title": "Conviction", "value": conviction, "detail": "Derived from score, rating, regime, and risk plan", "tone": conviction_tone},
-        {"title": "Options", "value": option_strategy, "detail": option_detail, "tone": option_tone},
-    ])
+    def professional_text(value: Any, fallback: str = "Not Available") -> str:
+        text = str(value or "").strip()
+        if text.upper() in {"", "N/A", "NA", "NONE", "NULL", "UNKNOWN", "-", "—"}:
+            return fallback
+        return text
 
-    st.info(grade_explainer())
-
-    top_reasons = top_decision_reasons(decision)
-    if top_reasons:
-        st.caption("Why this decision: " + " • ".join(top_reasons))
+    def recommendation_style(decision_label: str, decision_score_value: float, signal_value: str) -> str:
+        label = decision_label.upper()
+        sig = signal_value.upper()
+        if "BLOCKED" in label or sig == "SELL":
+            return "reject"
+        if "TRADE READY" in label and decision_score_value >= 80:
+            return "execute"
+        return "wait"
 
     mismatch_warning = scanner_plan_mismatch_warning(signal, plan)
     if mismatch_warning:
         st.warning(mismatch_warning)
 
-    left, right = st.columns([0.60, 0.40], gap="large")
+    decision_style = recommendation_style(str(decision.get("label", "")), safe_float(decision.get("score"), 0.0), signal)
+    direction_text = "Short" if signal == "SELL" else "Long"
+    trade_status = "Approved" if decision_style == "execute" else "Waiting" if decision_style == "wait" else "Rejected"
+    risk_classification = "Moderate" if decision_style == "execute" else "Elevated" if decision_style == "wait" else "High"
 
-    with left:
-        section_open("📋 Opportunity Brief", "The final one-symbol read before validating risk and building a ticket.")
+    if decision_style == "execute":
+        action_text = "Proceed With Trade"
+        action_color = "#166534"
+        recommendation_text = "Execute Trade"
+        recommendation_tone = "good"
+    elif decision_style == "wait":
+        action_text = "Wait For Better Entry"
+        action_color = "#b45309"
+        recommendation_text = "Wait For Better Entry"
+        recommendation_tone = "warning"
+    else:
+        action_text = "Reject Trade"
+        action_color = "#b91c1c"
+        recommendation_text = "Reject Trade"
+        recommendation_tone = "risk"
+
+    preview_rr = abs(levels["target_2"] - levels["entry"]) / max(abs(levels["entry"] - levels["stop"]), 0.01)
+    trend_text = professional_text(market.get("regime"), "Awaiting Confirmation")
+    rs_text = professional_text(row.get("rs_score"), "Pending")
+
+    section_open("1) Trade Brief", "Immediate institutional read before committing capital.")
+    st.markdown(
+        f"""
+        <div class="tcc-banner" style="background:#f8fafc;border-color:#dbe3ef;">
+            <div class="tcc-banner-label">Institutional Trade Brief</div>
+            <div class="tcc-banner-value" style="color:#111827;">Trade: {html.escape(symbol or 'Not Available')}</div>
+            <div class="tcc-hero-badges">
+                <div class="tcc-pill tcc-pill-status"><span class="tcc-pill-label">Status</span><span class="tcc-pill-value">{html.escape(trade_status)}</span></div>
+                <div class="tcc-pill tcc-pill-grade"><span class="tcc-pill-label">Grade</span><span class="tcc-pill-value">{html.escape(inst_grade)}</span></div>
+                <div class="tcc-pill tcc-pill-direction"><span class="tcc-pill-label">Direction</span><span class="tcc-pill-value">{html.escape(direction_text)}</span></div>
+                <div class="tcc-pill tcc-pill-risk"><span class="tcc-pill-label">Risk</span><span class="tcc-pill-value">{html.escape(risk_classification)}</span></div>
+            </div>
+            <div class="tcc-banner-detail" style="font-size:1rem; font-weight:900; color:{action_color};">Action: {html.escape(action_text)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    section_close()
+
+    section_open("2) Trade Readiness", "Institutional decision cards replacing metric walls.")
+    render_card_grid([
+        {"title": "Market Alignment", "value": trend_text, "detail": f"Stress {safe_int(market.get('stress_score'), 0)}/100", "tone": "good" if decision_style == "execute" else "warning"},
+        {"title": "Technical Alignment", "value": professional_text(signal, "Pending"), "detail": f"Rating {professional_text(rating, 'Pending')}", "tone": "good" if signal == "BUY" else "warning" if signal == "WATCH" else "risk"},
+        {"title": "Institutional Confirmation", "value": inst_grade, "detail": inst_detail, "tone": inst_tone},
+        {"title": "Relative Strength", "value": rs_text, "detail": f"Leadership {professional_text(leadership, 'Not Available')}", "tone": "info"},
+        {"title": "Risk / Reward", "value": f"{preview_rr:.2f}R", "detail": "Preview to Target 2", "tone": "good" if preview_rr >= 2 else "warning"},
+        {"title": "Entry Quality", "value": opp_grade, "detail": opp_detail, "tone": opp_tone},
+    ])
+    section_close()
+
+    section_open("3) Executive Recommendation")
+    rec_bg, rec_border, rec_color = tone_palette(recommendation_tone)
+    st.markdown(
+        f"""
+        <div style="text-align:center; padding:0.9rem 0.6rem; border:1px solid {rec_border}; border-radius:14px; background:{rec_bg};">
+            <div class="tcc-label">Today's Recommendation</div>
+            <div style="font-size:clamp(1.55rem, 2.8vw, 2.2rem); font-weight:950; color:{rec_color}; line-height:1.12;">
+                {html.escape(recommendation_text)}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    section_close()
+
+    section_open("4) Why?", "Concise institutional rationale for this recommendation.")
+    decision_reasons = top_decision_reasons(decision, 5)
+    if not decision_reasons:
+        decision_reasons = [
+            "Market regime is still being validated.",
+            "Current setup needs additional institutional confirmation.",
+            "Risk controls should remain primary before execution.",
+        ]
+    for reason in decision_reasons:
+        st.markdown(f"- {reason}")
+    section_close()
+
+    section_open("5) Risk Dashboard", "Executive risk snapshot before detailed trade planning.")
+    projected_qty = safe_float(plan.get("qty"), 0.0)
+    projected_entry = safe_float(levels.get("entry"), 0.0)
+    projected_stop = safe_float(levels.get("stop"), 0.0)
+    projected_exposure = projected_qty * projected_entry
+    projected_risk = projected_qty * abs(projected_entry - projected_stop)
+    projected_rr = abs(safe_float(levels.get("target_2"), 0.0) - projected_entry) / max(abs(projected_entry - projected_stop), 0.01)
+    gross_exposure = max(safe_float(execution.get("gross_exposure"), 0.0), 1.0)
+    projected_impact = (projected_exposure / gross_exposure) * 100.0 if projected_exposure > 0 else 0.0
+    render_card_grid([
+        {"title": "Position Size", "value": f"{int(projected_qty):,}" if projected_qty > 0 else "Pending", "detail": "Scanner/risk-plan projected quantity", "tone": "info"},
+        {"title": "Maximum Risk", "value": fmt_money(projected_risk), "detail": "Projected stop-based dollar risk", "tone": "warning" if projected_risk > 0 else "neutral"},
+        {"title": "Dollar Exposure", "value": fmt_money(projected_exposure), "detail": "Projected notional exposure", "tone": "info"},
+        {"title": "Risk / Reward", "value": f"{projected_rr:.2f}R", "detail": "Projected to Target 2", "tone": "good" if projected_rr >= 2 else "warning"},
+        {"title": "Stop Distance", "value": fmt_pct((abs(projected_entry - projected_stop) / projected_entry * 100.0) if projected_entry > 0 else 0.0), "detail": "Distance from projected entry", "tone": "warning"},
+        {"title": "Portfolio Impact", "value": f"{projected_impact:.1f}%", "detail": "Share of current gross exposure", "tone": "warning" if projected_impact >= 20 else "good"},
+    ])
+    section_close()
+
+    section_open("6) Trade Plan", "Execution bridge from validated setup to OMS handoff.")
+    sizing = build_sizing_plan(symbol or "MANUAL", signal, levels, market, plan)
+    planner_df = pd.DataFrame([{
+        "Symbol": symbol,
+        "Action": sizing["action"],
+        "Entry": fmt_money(sizing["entry"]),
+        "Stop": fmt_money(sizing["stop"]),
+        "Target": fmt_money(sizing["target_2"]),
+        "Position Size": sizing["qty"],
+        "Estimated Risk": fmt_money(sizing["dollar_risk"]),
+        "Estimated Reward": f"{sizing['rr_2']:.2f}R",
+    }])
+    st.dataframe(planner_df, width="stretch", hide_index=True)
+
+    checklist = build_checklist(decision, plan, sizing, execution, market)
+    risk_factors = build_risk_factors(row, market, plan, sizing, execution, checklist)
+    rec = final_recommendation(decision, checklist, risk_factors)
+
+    if decision_style == "reject":
+        action_left, action_right = st.columns(2)
+        with action_left:
+            if st.button("Continue Monitoring", width="stretch", key="tcc_continue_monitoring_v70"):
+                st.info("Monitoring mode active. No OMS routing action was triggered.")
+        with action_right:
+            if st.button("Save Trade to Journal", width="stretch", key="tcc_save_journal_v70"):
+                note = send_trade_plan_to_journal(symbol, sizing, decision, decision.get("reasons", []))
+                st.success(f"Trade plan note prepared for Journal: {symbol}")
+                st.json(note)
+    else:
+        if decision_style == "execute":
+            oms_bg = "#2563eb"
+            oms_text = "#ffffff"
+            oms_border = "#1d4ed8"
+            oms_hover = "#1e40af"
+        else:
+            oms_bg = "#f59e0b"
+            oms_text = "#111827"
+            oms_border = "#d97706"
+            oms_hover = "#b45309"
+
+        st.markdown(
+            f"""
+            <style>
+            .st-key-tcc_open_oms_primary_v70 button {{
+                background:{oms_bg} !important;
+                color:{oms_text} !important;
+                border:1px solid {oms_border} !important;
+            }}
+            .st-key-tcc_open_oms_primary_v70 button:hover {{
+                background:{oms_hover} !important;
+                color:{oms_text} !important;
+                border-color:{oms_border} !important;
+            }}
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        action_left, action_right = st.columns(2)
+        with action_left:
+            if st.button("Open OMS With Prepared Ticket", width="stretch", disabled=sizing["qty"] <= 0, key="tcc_open_oms_primary_v70", type="primary"):
+                prepare_oms_ticket(symbol, sizing, decision, row)
+                navigate_to("OMS Execution")
+        with action_right:
+            if st.button("Save Trade to Journal", width="stretch", key="tcc_save_journal_v70"):
+                note = send_trade_plan_to_journal(symbol, sizing, decision, decision.get("reasons", []))
+                st.success(f"Trade plan note prepared for Journal: {symbol}")
+                st.json(note)
+    section_close()
+
+    section_open("7) Trade Checklist", "Institutional confidence checklist before execution handoff.")
+    render_checklist(checklist)
+    readiness = readiness_status(checklist)
+    passed = sum(1 for _, ok in checklist if ok)
+    total = len(checklist)
+    if passed == total:
+        st.success(f"Checklist complete: {passed}/{total}")
+    elif passed >= total - 2:
+        st.warning(f"Checklist nearly complete: {passed}/{total}")
+    else:
+        st.error(f"Checklist incomplete: {passed}/{total}")
+    section_close()
+
+    st.subheader("8) Supporting Evidence")
+    st.caption("Secondary analytics are collapsed to preserve a decision-first execution workflow.")
+
+    with st.expander("▼ Trend Analysis", expanded=False):
         render_mini_grid([
-            ("Symbol", symbol or "N/A"),
-            ("Signal", signal),
-            ("Score", fmt_score(scanner_score)),
-            ("Rating", rating),
-            ("Sector", sector),
-            ("Market Regime", market.get("regime", "UNKNOWN")),
-            ("Risk State", execution.get("risk_state", "NORMAL")),
-            ("Conviction", conviction),
+            ("Market Regime", professional_text(market.get("regime"), "Awaiting Confirmation")),
+            ("Trend Bias", professional_text(signal, "Pending")),
+            ("Conviction", professional_text(conviction, "Pending")),
+            ("Decision", professional_text(decision.get("label"), "Pending")),
+        ])
+
+    with st.expander("▼ Momentum", expanded=False):
+        render_card_grid([
+            {"title": "Scanner Score", "value": fmt_score(scanner_score), "detail": "Opportunity momentum", "tone": "good" if scanner_score >= 80 else "warning"},
+            {"title": "Rating", "value": professional_text(rating, "Pending"), "detail": "Quality tier", "tone": "info"},
+            {"title": "Leadership", "value": professional_text(leadership, "Not Available"), "detail": "Leadership context", "tone": "info"},
+        ])
+
+    with st.expander("▼ Breadth", expanded=False):
+        render_mini_grid([
+            ("Breadth Score", f"{fmt_score(market.get('breadth_score'))}/100"),
+            ("Breadth State", professional_text(market.get("breadth_state"), "Not Available")),
+            ("Stress", f"{safe_int(market.get('stress_score'))}/100"),
+        ])
+
+    with st.expander("▼ Relative Strength", expanded=False):
+        render_mini_grid([
+            ("RS Score", rs_text),
             ("Opportunity Grade", opp_grade),
             ("Institutional Grade", inst_grade),
         ])
-        section_close()
 
-        section_open("📐 Phase 2 — Risk Validation", "Define account risk, entry, stop, and targets. Outputs are advisory sizing only.")
-        sizing = build_sizing_plan(symbol or "MANUAL", signal, levels, market, plan)
-        render_card_grid([
-            {"title": "Shares / Units", "value": sizing["qty"], "detail": "Risk and max-position constrained", "tone": "info"},
-            {"title": "Position Value", "value": fmt_money(sizing["position_value"]), "detail": f"Entry {fmt_money(sizing['entry'])}", "tone": "info"},
-            {"title": "Dollar Risk", "value": fmt_money(sizing["dollar_risk"]), "detail": f"{fmt_pct(sizing['risk_pct'])} actual account risk", "tone": "warning" if sizing["risk_pct"] > 1.5 else "good"},
-            {"title": "R/R to Target 2", "value": f"{sizing['rr_2']:.2f}R", "detail": f"Target 1: {sizing['rr_1']:.2f}R", "tone": "good" if sizing["rr_2"] >= 2 else "warning"},
-        ])
-        section_close()
-
-        section_open("🎯 Execution Plan", "Entry, stop, targets, sizing, and risk/reward trail.")
-        planner_df = pd.DataFrame([{
-            "Symbol": symbol,
-            "Action": sizing["action"],
-            "Entry": fmt_money(sizing["entry"]),
-            "Stop": fmt_money(sizing["stop"]),
-            "Target 1": fmt_money(sizing["target_1"]),
-            "Target 2": fmt_money(sizing["target_2"]),
-            "Qty": sizing["qty"],
-            "Position Value": fmt_money(sizing["position_value"]),
-            "Risk": fmt_money(sizing["dollar_risk"]),
-            "R/R 1": f"{sizing['rr_1']:.2f}R",
-            "R/R 2": f"{sizing['rr_2']:.2f}R",
-        }])
-        st.dataframe(planner_df, width="stretch", hide_index=True)
-        section_close()
-
-        section_open("🧾 Risk-Aware Plan")
-        if plan:
-            plan_view = {
-                "Symbol": symbol,
-                "Executable": "YES" if bool(plan.get("executable")) else "NO",
-                "Action": plan.get("execution_action") or plan.get("scanner_action") or plan.get("action") or signal,
-                "Qty": plan.get("qty", "N/A"),
-                "Position Action": plan.get("position_action", "N/A"),
-                "Sizing Status": plan.get("sizing_status", "N/A"),
-                "Overlay": plan.get("pulse_overlay") or plan.get("market_reaction_overlay") or plan.get("economic_calendar_overlay") or "N/A",
-            }
-            st.dataframe(pd.DataFrame([plan_view]), width="stretch", hide_index=True)
-        elif hold:
-            st.warning("This symbol is currently held/ignored by the risk-aware plan.")
-            st.dataframe(pd.DataFrame([hold]), width="stretch", hide_index=True)
-        else:
-            st.info("No risk-aware plan row found for this symbol yet. Run Scanner, then Build Plan.")
-        section_close()
-
-    with right:
-        section_open("🧠 Market + Execution Context", "Confirms current regime, stress, breadth, OMS mode, kill switch, and exposure before handoff.")
-        render_mini_grid([
-            ("Market Regime", market.get("regime", "UNKNOWN")),
-            ("Stress", f"{safe_int(market.get('stress_score'))}/100 ({market.get('stress_label', 'N/A')})"),
-            ("Breadth", f"{fmt_score(market.get('breadth_score'))}/100 ({market.get('breadth_state', 'N/A')})"),
-            ("Size Multiplier", f"{safe_float(market.get('execution_multiplier'), 1.0):.2f}x"),
-            ("OMS Mode", execution.get("mode", "SIM")),
-            ("Kill Switch", "ON" if execution.get("kill_switch") else "OFF"),
-            ("Pipeline", execution.get("pipeline", "MISSING")),
-            ("Gross Exposure", fmt_money(execution.get("gross_exposure", 0))),
-        ])
-        section_close()
-
-        section_open("✅ Phase 3 — Execution Readiness", "All boxes should be green before sending to OMS.")
-        checklist = build_checklist(decision, plan, sizing, execution, market)
-        opp_grade, opp_tone, opp_detail = opportunity_grade(scanner_score, rating, signal)
-        inst_grade, inst_tone, inst_detail = institutional_grade(decision, checklist, plan)
-        render_checklist(checklist)
-        passed = sum(1 for _, ok in checklist if ok)
-        total = len(checklist)
-        readiness = readiness_status(checklist)
-        if passed == total:
-            st.success(f"Checklist complete: {passed}/{total}")
-        elif passed >= total - 2:
-            st.warning(f"Checklist nearly complete: {passed}/{total}")
-        else:
-            st.error(f"Checklist incomplete: {passed}/{total}")
-        render_readiness_gauge(readiness)
-        section_close()
-
-        risk_factors = build_risk_factors(row, market, plan, sizing, execution, checklist)
-        rec = final_recommendation(decision, checklist, risk_factors)
-
-    # =====================================================
-    # FULL-WIDTH VALIDATION LANE
-    # Trader must see readiness, recommendation, risks, and reasons before OMS controls.
-    # This removes the tall-column gap and follows Analyze → Validate → Execute.
-    # =====================================================
-    st.markdown("---")
-    validate_left, validate_right = st.columns([0.60, 0.40], gap="large")
-
-    with validate_left:
-        section_open("🟨 Readiness Gauge", "Final readiness score before OMS controls are shown.")
-        render_readiness_gauge(readiness)
-        section_close()
-
-        section_open("🧭 Final Recommendation", "Commander decision before execution handoff.")
+    with st.expander("▼ Institutional Signals", expanded=False):
         render_recommendation_banner(rec)
-        section_close()
+        if mismatch_warning:
+            st.warning(mismatch_warning)
 
-    with validate_right:
-        section_open("⚠️ What Could Go Wrong?", "Risk factors visible before sending the trade to OMS.")
-        render_risk_factors(risk_factors)
-        section_close()
+    with st.expander("▼ Technical Details", expanded=False):
+        render_mini_grid([
+            ("Entry", fmt_money(sizing.get("entry", 0))),
+            ("Stop", fmt_money(sizing.get("stop", 0))),
+            ("Target 1", fmt_money(sizing.get("target_1", 0))),
+            ("Target 2", fmt_money(sizing.get("target_2", 0))),
+            ("Risk/Reward", f"{safe_float(sizing.get('rr_2'), 0.0):.2f}R"),
+            ("Per Share Risk", fmt_money(sizing.get("per_share_risk", 0))),
+        ])
 
-        section_open("Decision Reasons")
-        render_reason_panel(decision.get("reasons", []))
-        section_close()
+    with st.expander("▼ Statistics", expanded=False):
+        stats_left, stats_right = st.columns(2)
+        with stats_left:
+            st.markdown("##### Scanner Candidates")
+            rows = scanner_rows()
+            if not rows:
+                st.info("No Scanner rows found yet.")
+            else:
+                view_rows = []
+                for r in rows[:40]:
+                    view_rows.append({
+                        "Symbol": row_symbol(r),
+                        "Signal": normalize_signal(r.get("trade_recommendation") or r.get("scanner_action") or r.get("signal")),
+                        "Score": safe_float(r.get("opportunity_score_pct"), 0.0),
+                        "Rating": r.get("overall_rating", "N/A"),
+                        "Sector": r.get("sector", "N/A"),
+                        "Leadership": r.get("leadership_tier", "N/A"),
+                    })
+                st.dataframe(pd.DataFrame(view_rows), width="stretch", hide_index=True, height=320)
 
-    # =====================================================
-    # EXECUTION LANE
-    # OMS handoff appears only after validation and decision reasons.
-    # =====================================================
+        with stats_right:
+            st.markdown("##### Diagnostics")
+            st.write({
+                "Selected Row": row,
+                "Risk Plan Row": plan,
+                "Hold Row": hold,
+                "Market Snapshot": market,
+                "Risk Snapshot": risk,
+                "Execution Snapshot": execution,
+                "Prepared OMS Ticket": st.session_state.get("tcc_prepared_oms_ticket", {}),
+                "Version": "Trade Command Center v7.0",
+                "Updated": now_iso(),
+            })
+
     st.markdown("---")
-    section_open("📤 Phase 4 — Trade Deployment", "Prepare the advisory OMS ticket and move to execution controls.")
-    preview_ticket = prepare_oms_ticket(symbol, sizing, decision, row) if sizing["qty"] > 0 else {}
-    handoff_left, handoff_right = st.columns([0.60, 0.40], gap="large")
-
-    with handoff_left:
-        if preview_ticket:
-            st.markdown("##### 📋 OMS Ticket Preview")
-            render_ticket_preview(preview_ticket)
-        else:
-            st.info("No OMS ticket preview available until sizing produces a quantity greater than zero.")
-
-    with handoff_right:
-        st.markdown("##### Execution Controls")
-        if st.button("Prepare OMS Ticket", width="stretch", disabled=sizing["qty"] <= 0, key="tcc_prepare_oms_v22"):
-            ticket = prepare_oms_ticket(symbol, sizing, decision, row)
-            st.success(f"Prepared OMS ticket for {symbol}.")
-            st.json(ticket)
-        if st.button("Send to OMS Execution", width="stretch", disabled=sizing["qty"] <= 0, key="tcc_send_oms_v22"):
-            prepare_oms_ticket(symbol, sizing, decision, row)
-            navigate_to("OMS Execution")
-        if st.button("Send Plan to Journal", width="stretch", key="tcc_send_journal_v22"):
-            note = send_trade_plan_to_journal(symbol, sizing, decision, decision.get("reasons", []))
-            st.success(f"Trade plan note prepared for Journal: {symbol}")
-            st.json(note)
-        if st.button("Open Position Command Center", width="stretch", key="tcc_open_position_v22"):
-            st.session_state["position_center_refresh"] = True
-            navigate_to("Position Command Center")
-    section_close()
-
-    section_open("📝 Phase 5 — Journal Prep", "Prepare the trade record before execution so the reason, risk, and plan are preserved.")
-    journal_items = [
-        ("Symbol", symbol or "N/A"),
-        ("Decision", decision.get("label", "N/A")),
-        ("Trade Command Score", f"{decision.get('score', 0)}/100"),
-        ("Final Recommendation", rec.get("value", "N/A")),
-        ("Opportunity Grade", opp_grade),
-        ("Institutional Grade", inst_grade),
-        ("Planned Action", sizing.get("action", "N/A")),
-        ("Planned Qty", sizing.get("qty", 0)),
-        ("Risk", fmt_money(sizing.get("dollar_risk", 0))),
-        ("R/R to Target 2", f"{safe_float(sizing.get('rr_2'), 0.0):.2f}R"),
-    ]
-    render_mini_grid(journal_items)
-    st.caption("Journal note will include the decision reasons, risk factors, sizing plan, and OMS ticket preview.")
-    section_close()
-
-    st.subheader("Phase 5 — Documentation & Next Action")
-    a1, a2, a3, a4, a5 = st.columns(5)
-    with a1:
-        if st.button("Send to Research Stock", width="stretch", key="tcc_send_research_v21"):
-            st.session_state["research_ticker"] = symbol
-            st.session_state["research_ticker_input"] = symbol
-            st.session_state["research_last_analyze"] = True
-            navigate_to("Research Stock")
-    with a2:
-        if st.button("Send to Options Center", width="stretch", key="tcc_send_options_v21"):
-            st.session_state["options_manual_symbol"] = symbol
-            st.session_state["trade_command_symbol"] = symbol
-            navigate_to("Options Center")
-    with a3:
-        if st.button("Open OMS Execution", width="stretch", key="tcc_open_oms_bottom_v21"):
-            prepare_oms_ticket(symbol, sizing, decision, row)
-            navigate_to("OMS Execution")
-    with a4:
-        if st.button("Open Journal", width="stretch", key="tcc_open_journal_v21"):
-            navigate_to("Journal")
-    with a5:
-        if st.button("Refresh", width="stretch", key="tcc_refresh_v21"):
-            st.rerun()
-
-    with st.expander("Scanner Candidates", expanded=False):
-        rows = scanner_rows()
-        if not rows:
-            st.info("No Scanner rows found yet.")
-        else:
-            view_rows = []
-            for r in rows[:40]:
-                view_rows.append({
-                    "Symbol": row_symbol(r),
-                    "Signal": normalize_signal(r.get("trade_recommendation") or r.get("scanner_action") or r.get("signal")),
-                    "Score": safe_float(r.get("opportunity_score_pct"), 0.0),
-                    "Rating": r.get("overall_rating", "N/A"),
-                    "Sector": r.get("sector", "N/A"),
-                    "Leadership": r.get("leadership_tier", "N/A"),
-                })
-            st.dataframe(pd.DataFrame(view_rows), width="stretch", hide_index=True, height=360)
+    with st.expander("▼ Quick Navigation", expanded=False):
+        a1, a2, a3, a4, a5 = st.columns(5)
+        with a1:
+            if st.button("Send to Research Stock", width="stretch", key="tcc_send_research_v21"):
+                st.session_state["research_ticker"] = symbol
+                st.session_state["research_ticker_input"] = symbol
+                st.session_state["research_last_analyze"] = True
+                navigate_to("Research Stock")
+        with a2:
+            if st.button("Send to Options Center", width="stretch", key="tcc_send_options_v21"):
+                st.session_state["options_manual_symbol"] = symbol
+                st.session_state["trade_command_symbol"] = symbol
+                navigate_to("Options Center")
+        with a3:
+            if st.button("Open OMS Execution", width="stretch", key="tcc_open_oms_bottom_v21"):
+                prepare_oms_ticket(symbol, sizing, decision, row)
+                navigate_to("OMS Execution")
+        with a4:
+            if st.button("Open Journal", width="stretch", key="tcc_open_journal_v21"):
+                navigate_to("Journal")
+        with a5:
+            if st.button("Refresh", width="stretch", key="tcc_refresh_v21"):
+                st.rerun()
 
     with st.expander("Developer Diagnostics", expanded=False):
+        rows = scanner_rows()
         st.write({
             "Selected Row": row,
             "Risk Plan Row": plan,
@@ -1124,7 +1205,7 @@ def run_page() -> None:
             "Risk Snapshot": risk,
             "Execution Snapshot": execution,
             "Prepared OMS Ticket": st.session_state.get("tcc_prepared_oms_ticket", {}),
-            "Version": "Trade Command Center v3.0",
+            "Version": "Trade Command Center v7.0",
             "Updated": now_iso(),
         })
 

@@ -1,8 +1,8 @@
 # =========================================================
-# ₿ CRYPTO PULSE PAGE — v1.2
+# ₿ CRYPTO PULSE PAGE — v2.0
 # JFBP Quant Desk
-# Crypto Regime + Breadth + Stress + Leadership Dashboard
-# v1.2: Market Clock + BTC Leadership Score + Stablecoin Liquidity Proxy
+# Crypto Regime + Breadth + Stress + Leadership Command Center
+# v2.0: Market Clock + BTC Leadership Score + Stablecoin Liquidity Proxy
 #       Opportunity Scanner + Crypto Playbook + Crypto Market Cycle
 # =========================================================
 
@@ -59,9 +59,14 @@ def inject_crypto_pulse_css() -> None:
         """
         <style>
             .block-container {
-                padding-top: 1.4rem;
-                padding-bottom: 2.5rem;
+                padding-top: 1.15rem;
+                padding-bottom: 1.9rem;
                 max-width: 1500px;
+            }
+
+            h1, h2, h3 {
+                margin-top: 0.42rem !important;
+                margin-bottom: 0.20rem !important;
             }
 
             div[data-testid="stDataFrame"] {
@@ -82,15 +87,30 @@ def inject_crypto_pulse_css() -> None:
             .crypto-grid {
                 display: grid;
                 grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
-                gap: 0.65rem;
-                margin: 0.35rem 0 0.75rem 0;
+                gap: 0.55rem;
+                margin: 0.20rem 0 0.42rem 0;
                 width: 100%;
+            }
+
+            .crypto-briefing-grid {
+                display: grid;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 0.55rem;
+                margin: 0.20rem 0 0.42rem 0;
+                width: 100%;
+            }
+
+            .crypto-briefing-grid .crypto-card {
+                display: flex;
+                flex-direction: column;
+                min-height: 122px;
+                height: 100%;
             }
 
             .crypto-card {
                 border: 1px solid;
                 border-radius: 14px;
-                padding: 0.72rem 0.82rem;
+                padding: 0.66rem 0.76rem;
                 min-width: 0;
                 width: 100%;
                 box-sizing: border-box;
@@ -125,14 +145,14 @@ def inject_crypto_pulse_css() -> None:
             .crypto-list-grid {
                 display: grid;
                 grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
-                gap: 0.75rem;
-                margin: 0.45rem 0 0.85rem 0;
+                gap: 0.62rem;
+                margin: 0.22rem 0 0.46rem 0;
             }
 
             .crypto-list-card {
                 border: 1px solid;
                 border-radius: 16px;
-                padding: 0.85rem 0.95rem;
+                padding: 0.80rem 0.92rem;
                 min-width: 0;
                 overflow: hidden;
             }
@@ -141,7 +161,7 @@ def inject_crypto_pulse_css() -> None:
                 font-size: 1.02rem;
                 font-weight: 850;
                 color: #1f2937;
-                margin-bottom: 0.62rem;
+                margin-bottom: 0.48rem;
                 line-height: 1.2;
             }
 
@@ -150,7 +170,7 @@ def inject_crypto_pulse_css() -> None:
                 grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.35fr);
                 gap: 0.65rem;
                 border-bottom: 1px solid rgba(148, 163, 184, 0.28);
-                padding: 0.38rem 0;
+                padding: 0.42rem 0;
             }
 
             .crypto-list-row:last-child {
@@ -165,7 +185,7 @@ def inject_crypto_pulse_css() -> None:
 
             .crypto-list-value {
                 color: #1f2937;
-                font-weight: 850;
+                font-weight: 900;
                 line-height: 1.28;
             }
 
@@ -204,6 +224,28 @@ def inject_crypto_pulse_css() -> None:
                 }
 
                 h1 { font-size: 1.65rem !important; }
+            }
+
+            .crypto-banner {
+                border: 1px solid;
+                border-radius: 16px;
+                padding: 0.72rem 0.85rem;
+                margin: 0.24rem 0 0.46rem 0;
+                box-sizing: border-box;
+            }
+
+            .crypto-banner-title {
+                font-size: 0.78rem;
+                font-weight: 850;
+                letter-spacing: 0.045em;
+                text-transform: uppercase;
+                margin-bottom: 0.2rem;
+            }
+
+            .crypto-banner-body {
+                font-size: 0.95rem;
+                line-height: 1.38;
+                font-weight: 720;
             }
         </style>
         """,
@@ -247,6 +289,46 @@ def metric_grid(cards: List[Dict[str, Any]]) -> None:
     st.markdown("".join(pieces), unsafe_allow_html=True)
 
 
+def briefing_grid(cards: List[Dict[str, Any]]) -> None:
+    pieces = ['<div class="crypto-briefing-grid">']
+
+    for card in cards:
+        background, border, value_color = tone_palette(str(card.get("tone", "neutral")))
+        label = html.escape(str(card.get("label", "")))
+        value = html.escape(str(card.get("value", "")))
+        detail = html.escape(str(card.get("detail", "")))
+        detail_html = f'<div class="crypto-detail">{detail}</div>' if detail else ""
+        pieces.append(
+            f'<div class="crypto-card" style="background:{background};border-color:{border};">'
+            f'<div class="crypto-label">{label}</div>'
+            f'<div class="crypto-value" style="color:{value_color};">{value}</div>'
+            f'{detail_html}'
+            f'</div>'
+        )
+
+    pieces.append('</div>')
+    st.markdown("".join(pieces), unsafe_allow_html=True)
+
+
+def section_heading(title: str, subtitle: str | None = None) -> None:
+    st.subheader(title)
+    if subtitle:
+        st.caption(subtitle)
+
+
+def institutional_banner(title: str, body: str, tone: str = "info", body_weight: int = 720) -> None:
+    background, border, value_color = tone_palette(tone)
+    st.markdown(
+        f"""
+        <div class="crypto-banner" style="background:{background};border-color:{border};">
+            <div class="crypto-banner-title" style="color:{value_color};">{html.escape(title)}</div>
+            <div class="crypto-banner-body" style="color:{value_color};font-weight:{body_weight};">{html.escape(body)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def list_grid(cards: List[Dict[str, Any]]) -> None:
     pieces = ['<div class="crypto-list-grid">']
 
@@ -272,6 +354,10 @@ def list_grid(cards: List[Dict[str, Any]]) -> None:
 
     pieces.append('</div>')
     st.markdown("".join(pieces), unsafe_allow_html=True)
+
+
+def table_height(row_count: int, max_height: int = 320) -> int:
+    return min(max_height, max(132, 56 + row_count * 32))
 
 
 # =========================================================
@@ -660,12 +746,12 @@ def display_price_table(title: str, df: pd.DataFrame, max_rows: int | None = Non
     else:
         styled = view
 
-    st.dataframe(styled, width="stretch", hide_index=True, height=320)
+    st.dataframe(styled, width="stretch", hide_index=True, height=table_height(len(view)))
 
 
 
 # =========================================================
-# v1.2 CRYPTO INTELLIGENCE HELPERS
+# v2.0 CRYPTO INTELLIGENCE HELPERS
 # =========================================================
 
 def crypto_market_clock_card(data_status: Dict[str, Any]) -> None:
@@ -676,9 +762,7 @@ def crypto_market_clock_card(data_status: Dict[str, Any]) -> None:
     period = str(data_status.get("period", "N/A"))
 
     st.info(
-        "🟢 Crypto Market Status: OPEN 24/7  |  "
-        f"Last Refresh: {local_time}  |  UTC: {utc_time}  |  "
-        f"Provider: {provider}  |  Lookback: {period}  |  Interval: {interval}"
+        f"● OPEN 24/7  |  Refresh {local_time}  |  Provider: {provider}  |  {period} • {interval}"
     )
 
 
@@ -1000,23 +1084,17 @@ def run_page() -> None:
 
     st.title("₿ Crypto Pulse")
     st.caption(
-        "Live crypto regime dashboard for BTC, ETH, altcoin breadth, stress, leadership, and trade bias."
+        "Institutional crypto command center for regime, breadth, leadership, and execution readiness."
     )
     st.caption(
-        "Build: Crypto Pulse v1.2 — Market Clock · BTC Leadership Score · Stablecoin Liquidity Proxy · Opportunity Scanner · Crypto Playbook · Market Cycle"
+        "Crypto Pulse v2.0 — decision-first layout for market environment, research, execution, and diagnostics."
     )
 
-    c1, c2, c3 = st.columns([1, 1, 1])
-    with c1:
-        refresh = st.button("Refresh Crypto Pulse Data", width="stretch")
-    with c2:
-        period = st.selectbox("Lookback", ["7d", "14d", "30d"], index=0)
-    with c3:
-        interval = st.selectbox("Interval", ["1h", "2h", "4h", "1d"], index=0)
+    st.session_state.setdefault("crypto_pulse_period", "7d")
+    st.session_state.setdefault("crypto_pulse_interval", "1h")
 
-    if refresh:
-        st.cache_data.clear()
-        st.rerun()
+    period = str(st.session_state.get("crypto_pulse_period", "7d"))
+    interval = str(st.session_state.get("crypto_pulse_interval", "1h"))
 
     if yf is None:
         st.error("yfinance is not available in this environment. Install yfinance to load live crypto data.")
@@ -1030,8 +1108,6 @@ def run_page() -> None:
     if crypto_df.empty:
         st.error("Crypto data could not be loaded. Check internet/data access and try again.")
         return
-
-    crypto_market_clock_card({"provider": "yfinance", "period": period, "interval": interval})
 
     breadth = calculate_crypto_breadth(crypto_df)
     stress_score, stress_label = calculate_crypto_stress(crypto_df, breadth)
@@ -1054,7 +1130,6 @@ def run_page() -> None:
     st.session_state["crypto_pulse_liquidity_proxy"] = str(liquidity["state"])
     st.session_state["crypto_pulse_market_cycle"] = str(market_cycle["cycle"])
 
-
     crypto_pulse_bus_payload = publish_multi_asset_signal_bus(
         df=crypto_df,
         regime=regime,
@@ -1065,245 +1140,326 @@ def run_page() -> None:
         extra={"btc_dominance_trend": btc_dominance.get("trend"), "btc_dominance_proxy": btc_dominance.get("dominance_proxy"), "liquidity_state": liquidity.get("state"), "liquidity_score": liquidity.get("score"), "market_cycle": market_cycle.get("cycle")},
     )
 
-    command_html = (
-        f'<div style="display:inline-flex;align-items:center;gap:0.55rem;background:{tone_palette(regime_tone(regime["regime"]))[0]};'
-        f'border:1px solid {tone_palette(regime_tone(regime["regime"]))[1]};'
-        f'color:{tone_palette(regime_tone(regime["regime"]))[2]};border-radius:999px;padding:0.35rem 0.75rem;'
-        f'font-weight:800;margin:0.25rem 0 0.75rem 0;">'
-        f'<span>{regime_icon(regime["regime"])}</span>'
-        f'<span>Crypto Command Status: {html.escape(regime["regime"])}</span>'
-        f'<span style="color:#64748b;font-weight:650;">Stress {stress_score}/100</span>'
-        f'<span style="color:#64748b;font-weight:650;">Breadth {breadth["score"]:.1f}/100</span>'
-        '</div>'
+    latest_timestamp = str(crypto_df.get("Timestamp", pd.Series(dtype=str)).dropna().iloc[0]) if not crypto_df.empty and "Timestamp" in crypto_df.columns and not crypto_df["Timestamp"].dropna().empty else "N/A"
+    volatility_proxy = 0.0
+    if not crypto_df.empty and "24H %" in crypto_df.columns:
+        volatility_proxy = float(pd.to_numeric(crypto_df["24H %"], errors="coerce").abs().dropna().mean() or 0.0)
+
+    confidence_score = max(
+        0.0,
+        min(
+            100.0,
+            round(
+                (safe_float(breadth.get("score"), 50.0) * 0.40)
+                + (safe_float(liquidity.get("score"), 50.0) * 0.30)
+                + (max(0.0, 100.0 - float(stress_score)) * 0.30),
+                1,
+            ),
+        ),
     )
-    st.markdown(command_html, unsafe_allow_html=True)
 
-    st.subheader("🤖 AI Crypto Brief")
-    st.caption("What it means: 30-second read of the crypto tape before looking at the full dashboard.")
-
-    if ai_brief["tone"] == "good":
-        st.success(ai_brief["brief"])
-    elif ai_brief["tone"] == "warning":
-        st.warning(ai_brief["brief"])
-    elif ai_brief["tone"] == "risk":
-        st.error(ai_brief["brief"])
+    if confidence_score >= 80:
+        institutional_grade = "A"
+    elif confidence_score >= 65:
+        institutional_grade = "B"
+    elif confidence_score >= 50:
+        institutional_grade = "C"
     else:
-        st.info(ai_brief["brief"])
-    st.caption(ai_brief["playbook"])
+        institutional_grade = "D"
 
-    left_col, right_col = st.columns([1, 1])
+    btc_leadership_score = safe_float(btc_dominance.get("dominance_proxy"), 0.0)
+    trend_strength = max(0.0, min(100.0, round(50.0 + (safe_float(regime.get("btc_24h"), 0.0) + safe_float(regime.get("eth_24h"), 0.0)) * 2.25 + (safe_float(breadth.get("score"), 50.0) - 50.0) * 0.35, 1)))
+    momentum_proxy = safe_float(crypto_df["24H %"].mean(), 0.0) if not crypto_df.empty and "24H %" in crypto_df.columns else 0.0
 
-    with left_col:
-        st.divider()
-        st.subheader("🚦 Crypto Stress Dashboard")
-        st.caption("What it means: Measures whether crypto conditions are calm, mixed, or risk-off.")
+    if regime["regime"] == "RISK-OFF":
+        execution_status = "AVOID"
+        recommendation_sentence = "Defend capital, keep exposure minimal, and restrict activity to the strongest core assets only."
+    elif regime["regime"] in ("CAUTIOUS", "SELECTIVE"):
+        execution_status = "WAIT"
+        recommendation_sentence = "Stay selective and trade only the cleanest relative-strength setups with disciplined sizing."
+    elif regime["regime"] == "ALTCOIN RISK-ON":
+        execution_status = "BUY"
+        recommendation_sentence = "Crypto leadership is broadening; favor liquid leaders and allow altcoin momentum to confirm entries."
+    else:
+        execution_status = "HOLD"
+        recommendation_sentence = "Conditions are constructive but selective; hold a disciplined bias and wait for high-quality confirmation."
 
-        metric_grid([
-            {"label": "Stress Score", "value": f"{stress_score}/100", "detail": "Overall crypto risk.", "tone": stress_tone(stress_score)},
-            {"label": "Stress State", "value": stress_label, "detail": "Current crypto condition.", "tone": stress_tone(stress_score)},
-            {"label": "Crypto Regime", "value": f"{regime_icon(regime['regime'])} {regime['regime']}", "detail": "Trading mode.", "tone": regime_tone(regime["regime"])},
-            {"label": "Execution Multiplier", "value": f"{regime['execution_multiplier']:.2f}x", "detail": "Position-size adjustment.", "tone": "info"},
-        ])
+    # Executive Briefing
+    section_heading("Executive Briefing", "Immediate read on the crypto tape and the required posture.")
+    briefing_grid([
+        {"label": "Crypto Regime", "value": regime["regime"], "detail": regime["playbook"], "tone": regime_tone(regime["regime"])},
+        {"label": "Risk Level", "value": stress_label, "detail": f"Stress {stress_score}/100", "tone": stress_tone(stress_score)},
+        {"label": "Institutional Grade", "value": institutional_grade, "detail": f"Confidence {confidence_score:.1f}/100", "tone": "good" if institutional_grade in ("A", "B") else "warning" if institutional_grade == "C" else "risk"},
+        {"label": "Execution Status", "value": execution_status, "detail": "BUY / HOLD / WAIT / AVOID", "tone": "good" if execution_status == "BUY" else "warning" if execution_status in ("HOLD", "WAIT") else "risk"},
+        {"label": "BTC Leadership", "value": btc_dominance.get("trend", "MIXED"), "detail": f"Leadership score {btc_leadership_score:.2f}%", "tone": "good" if btc_dominance.get("trend") in ("BTC LEADING", "ALT EXPANSION") else "warning"},
+    ])
+    institutional_banner("Commander’s Recommendation", recommendation_sentence, tone=regime_tone(regime["regime"]))
 
-        if stress_score >= 70:
-            st.error("Crypto Stress Interpretation: defensive posture. Avoid broad altcoin exposure.")
-        elif stress_score >= 40:
-            st.warning("Crypto Stress Interpretation: selective posture. Trade only clean relative-strength leaders.")
-        else:
-            st.success("Crypto Stress Interpretation: conditions are calm enough for qualified setups.")
+    # Executive Summary
+    section_heading("Executive Summary", "Compact KPI read for the current crypto tape.")
+    summary_confidence_note = "Institutional confidence remains low." if confidence_score < 50 else "Institutional confidence is improving."
+    metric_grid([
+        {"label": "Market Regime", "value": regime["regime"], "detail": market_cycle["cycle"], "tone": regime_tone(regime["regime"])},
+        {"label": "Trend Strength", "value": f"{trend_strength:.1f}/100", "detail": "BTC/ETH and breadth alignment", "tone": "good" if trend_strength >= 65 else "warning" if trend_strength >= 45 else "risk"},
+        {"label": "Momentum", "value": format_pct(momentum_proxy), "detail": "Loaded universe average 24H move", "tone": "good" if momentum_proxy > 0 else "warning" if momentum_proxy == 0 else "risk"},
+        {"label": "Breadth", "value": f"{breadth['score']:.1f}/100", "detail": breadth["state"], "tone": breadth_tone(breadth["score"])},
+        {"label": "Volatility", "value": f"{volatility_proxy:.2f}%", "detail": "Average absolute 24H move", "tone": "warning" if volatility_proxy >= 5 else "neutral"},
+        {"label": "Institutional Confidence", "value": f"{confidence_score:.1f}/100", "detail": summary_confidence_note, "tone": "good" if confidence_score >= 70 else "warning" if confidence_score >= 50 else "risk"},
+    ])
 
-        help_text("Crypto stress combines BTC, ETH, altcoin performance, and breadth deterioration.")
+    # Market Environment
+    section_heading("Market Environment", "Macro tape, liquidity, and crypto stress.")
+    crypto_market_clock_card({"provider": "yfinance", "period": period, "interval": interval})
+    metric_grid([
+        {"label": "Market Cycle", "value": market_cycle["cycle"], "detail": market_cycle["note"], "tone": market_cycle["tone"]},
+        {"label": "Liquidity Proxy", "value": liquidity["state"], "detail": f"{liquidity['score']}/100", "tone": liquidity["tone"]},
+        {"label": "Stress", "value": f"{stress_score}/100", "detail": stress_label, "tone": stress_tone(stress_score)},
+        {"label": "BTC Dominance Proxy", "value": f"{btc_leadership_score:.2f}%", "detail": btc_dominance["trend"], "tone": "info"},
+    ])
 
-        st.divider()
-        st.subheader("📊 Crypto Breadth Engine")
-        st.caption("What it means: Measures how many crypto assets are participating in the move.")
+    # Bitcoin Leadership
+    section_heading("Bitcoin Leadership", "BTC remains the anchor for the rest of the crypto tape.")
+    metric_grid([
+        {"label": "BTC 24H", "value": format_pct(regime.get("btc_24h")), "detail": "Core market anchor", "tone": "good" if safe_float(regime.get("btc_24h"), 0.0) > 0 else "risk" if safe_float(regime.get("btc_24h"), 0.0) < -2 else "warning"},
+        {"label": "ETH 24H", "value": format_pct(regime.get("eth_24h")), "detail": "Smart-contract leader", "tone": "good" if safe_float(regime.get("eth_24h"), 0.0) > 0 else "risk" if safe_float(regime.get("eth_24h"), 0.0) < -2 else "warning"},
+        {"label": "ETH vs BTC", "value": format_pct(regime.get("eth_vs_btc")), "detail": "Relative strength", "tone": "good" if safe_float(regime.get("eth_vs_btc"), 0.0) > 0 else "warning"},
+        {"label": "Leadership Trend", "value": btc_dominance.get("trend", "MIXED"), "detail": btc_dominance["interpretation"], "tone": "good" if btc_dominance.get("trend") in ("BTC LEADING", "ALT EXPANSION") else "warning"},
+    ])
 
-        metric_grid([
-            {"label": "Breadth Score", "value": f"{breadth['score']:.1f}/100", "detail": "Participation strength.", "tone": breadth_tone(breadth["score"])},
-            {"label": "Breadth State", "value": breadth["state"], "detail": "Crypto participation.", "tone": breadth_tone(breadth["score"])},
-            {"label": "Advancers", "value": f"{breadth['advancing']}/{breadth['total']}", "detail": "Coins moving higher.", "tone": "info"},
-            {"label": "Alt Advance %", "value": f"{breadth['alt_advance_pct']:.0f}%", "detail": "Altcoin participation.", "tone": "good" if breadth["alt_advance_pct"] >= 60 else "warning" if breadth["alt_advance_pct"] >= 40 else "risk"},
-            {"label": "Average Move", "value": format_pct(breadth["average_move"]), "detail": "Average 24h move.", "tone": "good" if breadth["average_move"] > 0 else "risk" if breadth["average_move"] < -2 else "warning"},
-        ])
+    # Altcoin Strength
+    section_heading("Altcoin Strength", "Relative altcoin participation and leadership quality.")
+    alt_rows = crypto_df[crypto_df["Symbol"].isin(ALT_SYMBOLS)].copy()
+    alt_top = alt_rows.sort_values("24H %", ascending=False, na_position="last").head(5)
+    alt_weak = alt_rows.sort_values("24H %", ascending=True, na_position="last").head(5)
+    l1, l2 = st.columns(2)
+    with l1:
+        display_price_table("Strongest Altcoins", alt_top, max_rows=5)
+    with l2:
+        display_price_table("Weakest Altcoins", alt_weak, max_rows=5)
 
-        if breadth["score"] < 40:
-            st.error("Breadth Interpretation: weak participation. New crypto exposure should be reduced.")
-        elif breadth["score"] < 60:
-            st.warning("Breadth Interpretation: mixed participation. Leadership selection matters.")
-        else:
-            st.success("Breadth Interpretation: healthy participation. Crypto tape supports qualified setups.")
+    # Market Breadth
+    section_heading("Market Breadth", "Participation quality across the loaded crypto universe.")
+    metric_grid([
+        {"label": "Breadth Score", "value": f"{breadth['score']:.1f}/100", "detail": breadth["state"], "tone": breadth_tone(breadth["score"])},
+        {"label": "Advancers", "value": f"{breadth['advancing']}/{breadth['total']}", "detail": "Symbols moving higher", "tone": "info"},
+        {"label": "Decliners", "value": f"{breadth['declining']}/{breadth['total']}", "detail": "Symbols moving lower", "tone": "warning" if breadth['declining'] else "neutral"},
+        {"label": "Alt Advance %", "value": f"{breadth['alt_advance_pct']:.0f}%", "detail": "Altcoin participation", "tone": "good" if breadth["alt_advance_pct"] >= 60 else "warning" if breadth["alt_advance_pct"] >= 40 else "risk"},
+        {"label": "Average Move", "value": format_pct(breadth["average_move"]), "detail": "Average 24H move", "tone": "good" if breadth["average_move"] > 0 else "risk" if breadth["average_move"] < -2 else "warning"},
+    ])
+    institutional_banner("Breadth Read", "Broad participation supports a cleaner crypto tape; weak breadth favors selectivity and smaller size.", tone=breadth_tone(breadth["score"]))
 
-        help_text("Crypto rallies are more trustworthy when BTC, ETH, and several altcoins participate together.")
-
-        st.divider()
-        st.subheader("📈 Leadership & Damage Report")
-        st.caption("What it means: Shows strongest and weakest crypto assets in the current tape.")
-
-        strongest = crypto_df.sort_values("24H %", ascending=False, na_position="last").head(5)
-        weakest = crypto_df.sort_values("24H %", ascending=True, na_position="last").head(5)
-
-        l1, l2 = st.columns(2)
-        with l1:
-            display_price_table("Strongest 24H", strongest, max_rows=5)
-        with l2:
-            display_price_table("Weakest 24H", weakest, max_rows=5)
-
-        st.divider()
-        st.subheader("🔎 Crypto Opportunity Scanner")
-        st.caption(
-            "What it means: Ranks the loaded crypto universe by momentum, "
-            "relative strength versus BTC, trend, and breadth support."
+    # Watchlist
+    section_heading("Watchlist", "Ranked opportunities for immediate focus.")
+    if opportunity_df.empty:
+        st.info("No opportunity scores available yet.")
+    else:
+        best_opportunity = opportunity_df.head(1).iloc[0].to_dict()
+        recommendation_text = str(best_opportunity.get("Recommendation", ""))
+        institutional_banner(
+            "Primary Watchlist Candidate",
+            f"{best_opportunity.get('Name')} ({best_opportunity.get('Symbol')}) — Score {best_opportunity.get('Opportunity Score')}/100 — {recommendation_text}",
+            tone="good" if recommendation_text.upper() in ("BUY", "STRONG WATCH") else "warning" if recommendation_text.upper() in ("HOLD", "WAIT", "NEUTRAL") else "risk" if recommendation_text.upper() == "AVOID" else "neutral",
         )
+        watch_cols = ["Rank", "Name", "Symbol", "Group", "24H %", "7D %", "RS vs BTC", "Opportunity Score", "Recommendation"]
+        styled_watch = opportunity_df.head(8)[watch_cols].style.map(style_pct, subset=["24H %", "7D %", "RS vs BTC"])
+        st.dataframe(styled_watch, width="stretch", hide_index=True, height=table_height(min(8, len(opportunity_df))))
 
-        if opportunity_df.empty:
-            st.info("No opportunity scores available yet.")
-        else:
-            top_opportunities = opportunity_df.head(8).copy()
-            display_cols = [
-                "Rank",
-                "Name",
-                "Symbol",
-                "Group",
-                "24H %",
-                "7D %",
-                "RS vs BTC",
-                "Opportunity Score",
-                "Recommendation",
-            ]
-            styled_opportunities = top_opportunities[display_cols].style.map(
-                style_pct,
-                subset=["24H %", "7D %", "RS vs BTC"],
-            )
-            st.dataframe(styled_opportunities, width="stretch", hide_index=True, height=320)
+    # Research
+    section_heading("Research", "Institutional interpretation of the crypto environment.")
+    macro_env = "Constructive" if regime["regime"] in ("RISK-ON", "ALTCOIN RISK-ON") else "Mixed" if regime["regime"] == "SELECTIVE" else "Defensive"
+    market_sentiment = "Improving" if confidence_score >= 65 else "Neutral" if confidence_score >= 50 else "Defensive"
+    stablecoin_flow = liquidity["state"]
+    key_catalysts = ", ".join([btc_dominance["trend"], market_cycle["cycle"], breadth["state"]])
+    list_grid([
+        {
+            "title": "Institutional Research Summary",
+            "tone": regime_tone(regime["regime"]),
+            "rows": [
+                ("Macro Crypto Environment", macro_env),
+                ("Bitcoin Leadership", btc_dominance["interpretation"]),
+                ("Altcoin Participation", f"{breadth['alt_advance_pct']:.0f}% advancing across the alt basket"),
+                ("Stablecoin Flow", stablecoin_flow),
+                ("Market Sentiment", market_sentiment),
+                ("Key Catalysts", key_catalysts),
+            ],
+        }
+    ])
 
-            best_opportunity = top_opportunities.iloc[0].to_dict()
-            st.success(
-                f"Best Opportunity: {best_opportunity.get('Name')} ({best_opportunity.get('Symbol')}) — "
-                f"Score {best_opportunity.get('Opportunity Score')}/100 — {best_opportunity.get('Recommendation')}"
-            )
+    # Technical Analysis
+    section_heading("Technical Analysis", "Structure and relative performance without redundant charts.")
+    tech_cols = ["Name", "Symbol", "Group", "1H %", "24H %", "7D %", "RS vs BTC", "Recommendation"]
+    if not opportunity_df.empty:
+        tech_view = opportunity_df.head(10)[tech_cols].copy()
+        styled_tech = tech_view.style.map(style_pct, subset=["1H %", "24H %", "7D %", "RS vs BTC"])
+        st.dataframe(styled_tech, width="stretch", hide_index=True, height=table_height(min(10, len(opportunity_df))))
+    else:
+        st.info("No technical structure available yet.")
 
-        help_text("This is a ranking engine, not an order signal. Use it with chart structure and risk controls.")
+    # Risk Assessment
+    section_heading("Risk Assessment", "How much risk the tape supports right now.")
+    risk_view = max(0.0, min(100.0, round((stress_score * 0.55) + (volatility_proxy * 4.0) + (max(0.0, 100.0 - confidence_score) * 0.25), 1)))
+    metric_grid([
+        {"label": "Risk Score", "value": f"{risk_view:.1f}/100", "detail": "Composite presentation risk", "tone": "risk" if risk_view >= 60 else "warning" if risk_view >= 35 else "good"},
+        {"label": "Stress", "value": f"{stress_score}/100", "detail": stress_label, "tone": stress_tone(stress_score)},
+        {"label": "Volatility", "value": f"{volatility_proxy:.2f}%", "detail": "Average absolute 24H move", "tone": "warning" if volatility_proxy >= 5 else "neutral"},
+        {"label": "Confidence", "value": f"{confidence_score:.1f}/100", "detail": "Institutional confidence", "tone": "good" if confidence_score >= 70 else "warning" if confidence_score >= 50 else "risk"},
+    ])
 
-    with right_col:
-        st.divider()
-        st.subheader("🎯 Crypto Decision Center")
-        st.caption("What it means: Converts crypto conditions into practical trading guidance.")
+    if risk_view >= 60:
+        institutional_banner("Risk Posture", "Defensive posture. Protect capital and avoid broad high-beta crypto exposure.", tone="risk", body_weight=800)
+    elif risk_view >= 35:
+        institutional_banner("Risk Posture", "Selective posture. Trade only clean relative-strength setups.", tone="warning", body_weight=800)
+    else:
+        institutional_banner("Risk Posture", "Calm tape. Qualified setups can be considered with discipline.", tone="good", body_weight=800)
 
-        btc = get_move(crypto_df, "BTC-USD")
-        eth = get_move(crypto_df, "ETH-USD")
+    # Execution Plan
+    section_heading("Execution Plan", "Decision-ready guidance for current crypto conditions.")
+    if execution_status == "BUY":
+        direction = "BUY"
+        size_guidance = "Normal size, leaders only"
+        entry_zone = "Pullback or breakout confirmation"
+        stop_level = "Below structure / leader invalidation"
+        target_zone = "Prior resistance or measured move"
+        rr = "1.8:1 or better"
+    elif execution_status == "HOLD":
+        direction = "HOLD"
+        size_guidance = "Reduced size"
+        entry_zone = "Only on confirmation"
+        stop_level = "Tighter than normal"
+        target_zone = "Near-term mean reversion / breakout retest"
+        rr = "1.5:1 or better"
+    elif execution_status == "WAIT":
+        direction = "WAIT"
+        size_guidance = "No broad exposure"
+        entry_zone = "Leader confirmation only"
+        stop_level = "Protective and tight"
+        target_zone = "Selective mean reversion"
+        rr = "2.0:1 preferred"
+    else:
+        direction = "AVOID"
+        size_guidance = "Cash / BTC only"
+        entry_zone = "No new risk until tape improves"
+        stop_level = "N/A"
+        target_zone = "N/A"
+        rr = "N/A"
 
-        metric_grid([
-            {"label": "Regime", "value": f"{regime_icon(regime['regime'])} {regime['regime']}", "detail": regime["playbook"], "tone": regime_tone(regime["regime"])},
-            {"label": "BTC 24H", "value": format_pct(btc), "detail": "Core crypto anchor.", "tone": "good" if safe_float(btc) > 0 else "risk" if safe_float(btc) < -2 else "warning"},
-            {"label": "ETH 24H", "value": format_pct(eth), "detail": "Smart-contract leader.", "tone": "good" if safe_float(eth) > 0 else "risk" if safe_float(eth) < -2 else "warning"},
-            {"label": "ETH vs BTC", "value": format_pct(regime["eth_vs_btc"]), "detail": "ETH relative strength.", "tone": "good" if regime["eth_vs_btc"] > 0 else "warning"},
-            {"label": "Alt Avg 24H", "value": format_pct(regime["alt_avg_24h"]), "detail": "Altcoin basket.", "tone": "good" if regime["alt_avg_24h"] > 0 else "risk" if regime["alt_avg_24h"] < -2 else "warning"},
-            {"label": "Buy Allowed", "value": "YES" if regime["buy_allowed"] else "NO", "detail": "Crypto scanner permission.", "tone": "good" if regime["buy_allowed"] else "risk"},
-            {"label": "Market Cycle", "value": f"{market_cycle['icon']} {market_cycle['cycle']}", "detail": market_cycle["note"], "tone": market_cycle["tone"]},
-            {"label": "BTC Leadership Score", "value": f"{btc_dominance['dominance_proxy']:.2f}%", "detail": btc_dominance["trend"], "tone": "info"},
-            {"label": "Liquidity Proxy", "value": liquidity["state"], "detail": f"{liquidity['score']}/100", "tone": liquidity["tone"]},
-        ])
+    metric_grid([
+        {"label": "Trade Direction", "value": direction, "detail": regime["playbook"], "tone": regime_tone(regime["regime"])},
+        {"label": "Position Size Guidance", "value": size_guidance, "detail": f"Multiplier {regime['execution_multiplier']:.2f}x", "tone": "info"},
+        {"label": "Entry Zone", "value": entry_zone, "detail": "Execution guidance", "tone": "neutral"},
+        {"label": "Stop Level", "value": stop_level, "detail": "Risk boundary", "tone": "risk"},
+        {"label": "Target Zone", "value": target_zone, "detail": "Profit objective", "tone": "good"},
+        {"label": "Risk/Reward", "value": rr, "detail": "Target versus risk", "tone": "info"},
+        {"label": "Confidence Score", "value": f"{confidence_score:.1f}/100", "detail": f"Institutional grade {institutional_grade}", "tone": "good" if confidence_score >= 70 else "warning" if confidence_score >= 50 else "risk"},
+    ])
 
-        if regime["buy_allowed"]:
-            st.info(regime["playbook"])
-        else:
-            st.error(regime["playbook"])
+    # Trade Management
+    section_heading("Trade Management", "How to manage the position if execution is approved.")
+    list_grid([
+        {
+            "title": "Management Framework",
+            "tone": "info",
+            "rows": [
+                ("Scale In", "Use confirmation only; do not average into weakness."),
+                ("Invalidation", "Exit on structure failure, not emotion."),
+                ("Review Cadence", "Reassess on each regime or breadth change."),
+                ("Profit Management", "Take partials into strength and trail the remainder."),
+            ],
+        },
+        {
+            "title": "Operational Discipline",
+            "tone": "warning" if execution_status in ("WAIT", "HOLD") else "good",
+            "rows": [
+                ("No Chase Rule", "Avoid extended entries after vertical moves."),
+                ("Liquidity", "Prefer the most liquid names in the universe."),
+                ("Exposure", "Respect the current regime multiplier."),
+                ("Time Stop", "If the move stalls, reduce or exit."),
+            ],
+        },
+    ])
 
-        if regime["regime"] == "RISK-OFF":
-            action_tone = "risk"
-            exposure = "25% - 50%"
-            preferred = "Cash / BTC only"
-            avoid = "Broad altcoin exposure"
-            aggression = "Low"
-        elif regime["regime"] in ("CAUTIOUS", "SELECTIVE"):
-            action_tone = "warning"
-            exposure = "40% - 70%"
-            preferred = "BTC / ETH / strongest leaders"
-            avoid = "Weak altcoins"
-            aggression = "Moderate"
-        else:
-            action_tone = "good"
-            exposure = "70% - 100%"
-            preferred = "Relative-strength leaders"
-            avoid = "Extended laggards"
-            aggression = "Normal"
+    # Historical Context
+    section_heading("Historical Context", "Recent price action context for the current tape.")
+    seven_day_leaders = crypto_df.sort_values("7D %", ascending=False, na_position="last").head(5)
+    seven_day_laggards = crypto_df.sort_values("7D %", ascending=True, na_position="last").head(5)
+    h1, h2 = st.columns(2)
+    with h1:
+        display_price_table("Relative Strength Leaders", seven_day_leaders, max_rows=5)
+    with h2:
+        display_price_table("Relative Strength Laggards", seven_day_laggards, max_rows=5)
+    list_grid([
+        {
+            "title": "Historical Read",
+            "tone": "info",
+            "rows": [
+                ("Cycle", market_cycle["cycle"]),
+                ("Leadership", btc_dominance["trend"]),
+                ("Breadth", breadth["state"]),
+                ("Confidence", f"{confidence_score:.1f} / 100"),
+            ],
+        }
+    ])
 
-        list_grid([
-            {
-                "title": "Action Plan",
-                "tone": action_tone,
-                "rows": [
-                    ("1", "Confirm BTC direction first"),
-                    ("2", "Check ETH relative strength"),
-                    ("3", "Favor coins above the alt basket"),
-                    ("4", "Reduce size when breadth weakens"),
-                ],
-            },
-            {
-                "title": "Trade Bias",
-                "tone": action_tone,
-                "rows": [
-                    ("Exposure", exposure),
-                    ("Preferred Setup", preferred),
-                    ("Avoid", avoid),
-                    ("Aggression", aggression),
-                    ("Position Size", f"{regime['execution_multiplier']:.2f}x"),
-                ],
-            },
-        ])
+    # Data Controls
+    section_heading("Data Controls", "Operational refresh controls kept below the decision flow.")
+    c1, c2, c3 = st.columns([1, 1, 1])
+    with c1:
+        if st.button("Refresh Crypto Pulse Data", width="stretch"):
+            st.cache_data.clear()
+            st.rerun()
+    with c2:
+        st.selectbox("Lookback", ["7d", "14d", "30d"], index=["7d", "14d", "30d"].index(period) if period in ["7d", "14d", "30d"] else 0, key="crypto_pulse_period")
+    with c3:
+        st.selectbox("Interval", ["1h", "2h", "4h", "1d"], index=["1h", "2h", "4h", "1d"].index(interval) if interval in ["1h", "2h", "4h", "1d"] else 0, key="crypto_pulse_interval")
 
-        st.subheader("📘 Crypto Playbook")
-        st.caption(
-            "What it means: Converts regime, liquidity, dominance, breadth, "
-            "stress, and market cycle into a practical crypto playbook."
-        )
-        list_grid(build_crypto_playbook_cards(regime, breadth, stress_score, btc_dominance, liquidity, market_cycle))
-        st.info(btc_dominance["interpretation"])
-        st.caption(liquidity["note"])
-        st.caption(f"Market Cycle: {market_cycle['cycle']} — {market_cycle['note']}")
+    # Diagnostics
+    section_heading("Diagnostics", "Technical and developer-oriented details are collapsed below.")
+    with st.expander("Raw API Responses", expanded=False):
+        st.dataframe(crypto_df.head(12), width="stretch", hide_index=True, height=table_height(min(12, len(crypto_df))))
+        if not opportunity_df.empty:
+            st.dataframe(opportunity_df.head(12), width="stretch", hide_index=True, height=table_height(min(12, len(opportunity_df))))
 
-        help_text("Crypto Pulse is informational only. It does not place trades and does not route orders.")
+    with st.expander("Cache Details", expanded=False):
+        st.write({
+            "crypto_pulse_bus_payload": crypto_pulse_bus_payload,
+            "multi_asset_signal_bus": st.session_state.get("multi_asset_signal_bus", {}),
+            "crypto_pulse_regime": st.session_state.get("crypto_pulse_regime"),
+            "crypto_pulse_market_cycle": st.session_state.get("crypto_pulse_market_cycle"),
+            "crypto_pulse_execution_multiplier": st.session_state.get("crypto_pulse_execution_multiplier"),
+        })
 
-        st.divider()
-        st.subheader("📌 Crypto Snapshot")
-        st.caption("What it means: Quick read of core coins and high-beta altcoins.")
+    with st.expander("Debug Information", expanded=False):
+        st.write({
+            "regime": regime,
+            "breadth": breadth,
+            "stress_score": stress_score,
+            "stress_label": stress_label,
+            "liquidity": liquidity,
+            "market_cycle": market_cycle,
+            "btc_dominance": btc_dominance,
+        })
 
-        core_rows = crypto_df[crypto_df["Symbol"].isin(CORE_SYMBOLS)].copy()
-        alt_rows = crypto_df[crypto_df["Symbol"].isin(ALT_SYMBOLS)].copy()
+    with st.expander("Timing Diagnostics", expanded=False):
+        st.write({
+            "period": period,
+            "interval": interval,
+            "last_refresh_local": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "last_refresh_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "latest_data_timestamp": latest_timestamp,
+        })
 
-        display_price_table("Core Crypto", core_rows, max_rows=5)
-        display_price_table("Altcoin Basket", alt_rows.sort_values("24H %", ascending=False, na_position="last"), max_rows=12)
+    with st.expander("Data Quality Checks", expanded=False):
+        quality = {
+            "rows_loaded": int(crypto_df.shape[0]),
+            "missing_price_rows": int(crypto_df["Price"].isna().sum()) if "Price" in crypto_df.columns else 0,
+            "missing_24h_rows": int(crypto_df["24H %"].isna().sum()) if "24H %" in crypto_df.columns else 0,
+            "missing_7d_rows": int(crypto_df["7D %"].isna().sum()) if "7D %" in crypto_df.columns else 0,
+            "opportunity_rows": int(opportunity_df.shape[0]) if isinstance(opportunity_df, pd.DataFrame) else 0,
+        }
+        st.write(quality)
 
-        st.divider()
-        st.subheader("📚 Reference Center")
-        st.caption("What it means: Diagnostic data used to validate the current crypto read.")
+    help_text("Crypto Pulse is informational only. It does not place trades and does not route orders.")
 
-        with st.expander("Crypto Regime Details", expanded=False):
-            details_df = pd.DataFrame([
-                {"Metric": "Regime", "Reading": regime["regime"]},
-                {"Metric": "Stress", "Reading": f"{stress_score}/100 — {stress_label}"},
-                {"Metric": "Breadth", "Reading": f"{breadth['score']:.1f}/100 — {breadth['state']}"},
-                {"Metric": "BTC 24H", "Reading": format_pct(regime["btc_24h"])},
-                {"Metric": "ETH 24H", "Reading": format_pct(regime["eth_24h"])},
-                {"Metric": "ETH vs BTC", "Reading": format_pct(regime["eth_vs_btc"])},
-                {"Metric": "Alt Avg 24H", "Reading": format_pct(regime["alt_avg_24h"])},
-                {"Metric": "Buy Allowed", "Reading": "YES" if regime["buy_allowed"] else "NO"},
-                {"Metric": "Execution Multiplier", "Reading": f"{regime['execution_multiplier']:.2f}x"},
-                {"Metric": "BTC Leadership Score", "Reading": f"{btc_dominance['dominance_proxy']:.2f}% — {btc_dominance['trend']}"},
-                {"Metric": "Stablecoin Liquidity Proxy", "Reading": f"{liquidity['state']} — {liquidity['score']}/100"},
-                {"Metric": "Market Cycle", "Reading": f"{market_cycle['cycle']} — {market_cycle['note']}"},
-            ])
-            st.dataframe(details_df, width="stretch", hide_index=True)
-
-        with st.expander("Data Status", expanded=False):
-            st.write({
-                "provider": "yfinance",
-                "period": period,
-                "interval": interval,
-                "assets_loaded": int(crypto_df.shape[0]),
-                "last_refresh_local": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "last_refresh_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            })
 
 
 if __name__ == "__main__":

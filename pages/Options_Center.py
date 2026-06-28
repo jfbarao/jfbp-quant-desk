@@ -1235,15 +1235,14 @@ def now_iso() -> str:
 
 
 def section_open(title: str, caption: str = "") -> None:
-    st.markdown('<div class="ocx-section-card">', unsafe_allow_html=True)
     if title:
         st.markdown(f"### {title}")
     if caption:
-        st.markdown(f'<div class="ocx-tight-caption">{html.escape(str(caption))}</div>', unsafe_allow_html=True)
+        st.caption(caption)
 
 
 def section_close() -> None:
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.divider()
 
 
 def render_summary_strip(items: List[Tuple[str, Any]]) -> None:
@@ -1569,8 +1568,7 @@ def run_page() -> None:
 )
 
     st.info(
-    "Workflow: Scanner → Options Analysis → Strike Builder → "
-    "Wheel Review → Research / Trade Command → OMS"
+    "Workflow: Market Context -> Volatility -> Premium Environment -> Probability -> Strategy -> Execution"
 )
 
     with st.expander("ℹ️ How to use Options Center", expanded=False):
@@ -1580,7 +1578,7 @@ def run_page() -> None:
 
             1. Run **Market Pulse** and **Scanner** first.
             2. Return here and select an options candidate.
-            3. Review the **Command Summary**, Wheel score, strike builder, strategy ranking, and risk/volatility checks.
+            3. Review the institutional decision flow from market regime through execution readiness.
             4. Prepare an advisory OMS ticket only after confirming live broker option chain, liquidity, bid/ask spread, IV, cash/margin, and assignment risk.
             """
         )
@@ -1621,129 +1619,262 @@ def run_page() -> None:
     current_wheel_score = wheel_candidate_score(row, ctx, vol_ctx, event_ctx, 0.0)["total"]
     oms_ready = "YES" if st.session_state.get("pipeline") or st.session_state.get("mode", "SIM") == "SIM" else "REVIEW"
 
-    st.subheader("Command Summary")
-    render_summary_strip([
-        ("Best Strategy", ctx["strategy"]),
-        ("Opportunity Grade", opp_grade),
-        ("Institutional Grade", inst_grade),
-        ("Options Score", f"{scorecard['total']}/100"),
-        ("Wheel Score", f"{current_wheel_score}/100"),
-        ("CSP Candidates", csp_count),
-        ("Covered Calls", cc_count),
-        ("Market Regime", ctx["regime"]),
-        ("OMS Ready", oms_ready),
-    ])
+    def ui_value(value: Any, unknown_label: str = "Pending Analysis") -> str:
+        text = str(value or "").strip()
+        if text.upper() in {"", "UNKNOWN", "UNKNOWN VOL"}:
+            return unknown_label
+        if text.upper() in {"N/A", "NONE", "NULL"}:
+            return "Awaiting Data"
+        return text
 
-    st.subheader("Options Command Brief")
+    vol_regime = str(vol_ctx.get("regime") or "UNKNOWN").upper().strip()
+    vol_regime_display = ui_value(vol_regime, "Pending Analysis")
+    premium_bias = str(vol_ctx.get("premium_bias") or "UNKNOWN")
+    premium_bias_display = ui_value(premium_bias, "Pending Analysis")
+    regime_display = ui_value(str(ctx.get("regime") or "UNKNOWN"), "Pending Analysis")
+    breadth_display = ui_value(str(market.get("breadth_state") or "N/A"), "Pending Analysis")
+    iv_proxy_display = ui_value(vol_ctx.get("iv_proxy", "N/A"), "Awaiting Data")
+    strategy_name = str(ctx.get("strategy") or "Pending Confirmation")
+    blocked_strategies = {"No options structure", "No Options Trade", "No New Long Premium"}
+    primary_structure = strategy_name if strategy_name not in blocked_strategies else "Pending Confirmation"
+
+    if not ctx.get("optionable"):
+        options_env = "POOR"
+        options_env_detail = "Underlying is not optionable for this workflow."
+        options_env_tone = "risk"
+    elif vol_regime == "HIGH VOL":
+        options_env = "HIGH IV / PREMIUM RICH"
+        options_env_detail = "Premium-selling structures may have edge if risk is controlled."
+        options_env_tone = "warning"
+    elif vol_regime == "LOW VOL":
+        options_env = "LOW IV / PREMIUM CHEAP"
+        options_env_detail = "Long premium or defined-risk directional structures may improve expectancy."
+        options_env_tone = "info"
+    elif vol_regime == "NORMAL VOL":
+        options_env = "GOOD"
+        options_env_detail = "Balanced volatility regime for selective deployment."
+        options_env_tone = "good"
+    else:
+        options_env = "NEUTRAL"
+        options_env_detail = "Volatility context is incomplete; keep execution selective."
+        options_env_tone = "info"
+
+    pop_proxy = max(5, min(95, safe_int(scorecard.get("total"), 0)))
+    probability_band = "High" if pop_proxy >= 75 else "Medium" if pop_proxy >= 55 else "Low"
+    theta_advantage = "Positive" if strategy_name in {"Cash-Secured Put", "Covered Call"} else "Mixed" if "Spread" in strategy_name else "Negative"
+    risk_reward = "Defined Risk" if "Spread" in strategy_name else "Open-Ended" if strategy_name in {"Cash-Secured Put", "Covered Call"} else "Premium at Risk"
+
+    decision = "WAIT"
+    decision_tone = "warning"
+    if (not ctx.get("optionable")) or strategy_name in blocked_strategies:
+        decision = "AVOID"
+        decision_tone = "risk"
+    elif safe_int(scorecard.get("total"), 0) >= 75 and "READY" in str(inst_grade).upper() and not str(event_ctx.get("status") or "").startswith("🔴"):
+        decision = "EXECUTE"
+        decision_tone = "good"
+    elif safe_int(scorecard.get("total"), 0) < 50:
+        decision = "AVOID"
+        decision_tone = "risk"
+
+    confidence_reasons = [
+        part.strip()
+        for part in str(strategy_confidence_reasons(ctx, market, scorecard)).split("|")
+        if str(part).strip()
+    ]
+    confidence_reasons = confidence_reasons[:3]
+
+    def score_to_grade(score_value: Any) -> str:
+        s = safe_int(score_value, 0)
+        if s >= 85:
+            return "A"
+        if s >= 75:
+            return "A-"
+        if s >= 65:
+            return "B+"
+        if s >= 55:
+            return "B"
+        if s >= 45:
+            return "C"
+        return "D"
+
+    section_open("Institutional Executive Briefing", "Is there an options trade worth executing today?")
     render_card_grid([
-        {"title": "Candidate", "value": ctx["symbol"], "detail": f"{ctx['sector']} | Signal {ctx['signal']} | Rating {ctx['rating']} | Score {fmt_score(ctx['score'])}", "tone": ctx["tone"]},
-        {"title": "Opportunity Grade", "value": opp_grade, "detail": opp_detail, "tone": opp_tone},
+        {"title": "Market Regime", "value": regime_display, "detail": f"Stress {safe_int(ctx.get('stress'), 0)}/100 | Buy allowed: {'YES' if market.get('buy_allowed', True) else 'NO'}", "tone": "risk" if safe_int(ctx.get("stress"), 0) >= 70 else "warning" if str(ctx.get("regime")) in {"SELECTIVE", "UNKNOWN"} else "good"},
+        {"title": "Options Environment", "value": options_env, "detail": options_env_detail, "tone": options_env_tone},
+        {"title": "Primary Structure", "value": primary_structure, "detail": "Candidate strategy if conditions improve.", "tone": "good" if decision == "EXECUTE" else "warning" if decision == "WAIT" else "risk"},
+        {"title": "Today's Decision", "value": decision, "detail": "No executable options trade at this time." if decision != "EXECUTE" else "Conditions currently support execution.", "tone": "good" if decision == "EXECUTE" else "warning" if decision == "WAIT" else "risk"},
+    ])
+    st.info(
+        f"Market context is {regime_display} with stress {safe_int(ctx.get('stress'), 0)}/100. "
+        f"Volatility regime is {vol_regime_display} and premium environment is {premium_bias_display}. "
+        f"Primary structure is {primary_structure} with institutional status {inst_grade}."
+    )
+    section_close()
+
+    section_open("Market Context")
+    render_mini_grid([
+        ("Regime", regime_display),
+        ("Stress Score", f"{safe_int(ctx.get('stress'), 0)}/100"),
+        ("Breadth", breadth_display),
+        ("Execution Multiplier", f"{safe_float(ctx.get('multiplier'), 1.0):.2f}x"),
+        ("Institutional Grade", inst_grade),
+        ("Execution Status", decision),
+    ])
+    section_close()
+
+    section_open("Volatility Assessment")
+    render_mini_grid([
+        ("IV Proxy", f"{iv_proxy_display}%" if iv_proxy_display != "Awaiting Data" else "Awaiting Data"),
+        ("IV Regime", vol_regime_display),
+        ("Premium Bias", premium_bias_display),
+        ("Expected Move", "Use ATR/price proxy until live chain IV is connected"),
+    ])
+    st.caption(str(vol_ctx.get("note") or ""))
+    section_close()
+
+    section_open("Premium Environment")
+    render_card_grid([
+        {"title": "Premium Environment", "value": options_env, "detail": options_env_detail, "tone": options_env_tone},
+        {"title": "Earnings / Event", "value": event_ctx.get("status"), "detail": f"Label {ui_value(event_ctx.get('label'), 'Pending Analysis')} | Days: {event_ctx.get('days_until') if event_ctx.get('days_until') is not None else 'Awaiting Data'}", "tone": event_ctx.get("tone", "info")},
+        {"title": "Risk Assessment", "value": ui_value(ctx.get("risk"), "Pending Analysis"), "detail": "Event, market, and structure checks combined.", "tone": "risk" if decision == "AVOID" else "warning" if decision == "WAIT" else "good"},
+    ])
+    section_close()
+
+    section_open("Probability Assessment")
+    render_mini_grid([
+        ("Probability of Profit", f"{pop_proxy}% ({probability_band})"),
+        ("Risk / Reward", risk_reward),
+        ("Break-even", "Derived from selected strike and premium"),
+        ("Theta Advantage", theta_advantage),
+    ])
+    section_close()
+
+    section_open("Strategy Selection")
+    render_card_grid([
+        {"title": "Trade Quality", "value": f"{safe_int(scorecard.get('total'), 0)}/100", "detail": scorecard.get("label", ""), "tone": scorecard.get("tone", "info")},
+        {"title": "Confidence", "value": decision, "detail": f"Scanner Score: {safe_int(ctx.get('score'), 0)}/100", "tone": "info"},
         {"title": "Institutional Grade", "value": inst_grade, "detail": inst_detail, "tone": inst_tone},
-        {"title": "Recommended Structure", "value": ctx["strategy"], "detail": ctx["alternative"], "tone": ctx["tone"]},
-        {"title": "Market Filter", "value": ctx["regime"], "detail": f"Stress {safe_int(ctx['stress'])}/100 | Size {ctx['multiplier']:.2f}x | Buy allowed: {'YES' if market.get('buy_allowed', True) else 'NO'}", "tone": "risk" if safe_float(ctx["stress"]) >= 70 else "warning" if ctx["regime"] in {"SELECTIVE", "UNKNOWN"} else "good"},
-        {"title": "Options Readiness", "value": "Ready" if ctx["optionable"] else "Not Optionable", "detail": ctx["risk"], "tone": "info" if ctx["optionable"] else "neutral"},
+        {"title": "Execution Status", "value": decision, "detail": "Final gate before OMS preparation.", "tone": decision_tone},
+    ])
+    st.markdown("**Reasons**")
+    for reason in confidence_reasons:
+        st.markdown(f"- {reason}")
+
+    strategy_compare = ranking_df.copy()
+    strategy_compare["Institutional Grade"] = strategy_compare["Score"].apply(score_to_grade)
+    strategy_compare["Probability"] = strategy_compare["Score"].apply(lambda s: "High" if safe_int(s, 0) >= 75 else "Medium" if safe_int(s, 0) >= 55 else "Low")
+    strategy_compare["Best Use"] = strategy_compare["Use Case"]
+    strategy_compare = strategy_compare[["Strategy", "Institutional Grade", "Probability", "Best Use", "Status"]]
+    st.caption("Strategy Comparison")
+    render_static_table(strategy_compare, height="compact")
+    section_close()
+
+    strike_rows = strike_plan.get("rows", []) if isinstance(strike_plan, dict) else []
+
+    def strike_value(fields: List[str], default: str = "Awaiting Data") -> str:
+        for item in strike_rows:
+            field_name = str(item.get("Field") or "").strip()
+            if field_name in fields:
+                return str(item.get("Value") or default)
+        return default
+
+    position_builder = {
+        "Primary Structure": primary_structure,
+        "Strike": strike_value(["Target Strike", "Buy Call", "Buy Put", "Sell Call", "Sell Put", "Target Call", "Target Put"], "To be confirmed with live chain"),
+        "Expiration": strike_value(["Target DTE"], "30–60 DTE"),
+        "Premium": premium_bias,
+        "Buying Power": strike_value(["Max Assignment Cost", "Spread Width"], "Confirm with broker margin"),
+        "Max Risk": strike_value(["Risk", "Max Assignment Cost", "Spread Width"], "Defined by selected structure"),
+        "Max Reward": strike_value(["Spread Width", "Upside Cap"], "Depends on strike and premium"),
+        "Probability": f"{pop_proxy}% ({probability_band})",
+    }
+
+    section_open("Execution Panel")
+    render_mini_grid([
+        ("Primary Structure", position_builder["Primary Structure"]),
+        ("Today's Decision", decision),
+        ("Strike", position_builder["Strike"]),
+        ("Expiration", position_builder["Expiration"]),
+        ("Premium", position_builder["Premium"]),
+        ("Buying Power", position_builder["Buying Power"]),
+        ("Max Risk", position_builder["Max Risk"]),
+        ("Max Reward", position_builder["Max Reward"]),
+        ("Probability", position_builder["Probability"]),
     ])
 
-    st.info(grade_explainer())
+    h1, h2, h3, h4 = st.columns(4)
+    with h1:
+        if st.button("Send to Trade Command", width="stretch", key="ocx60_tcc"):
+            st.session_state["trade_command_symbol"] = ctx.get("symbol")
+            st.session_state["jfbp_main_navigation"] = "Trade Command Center"
+            st.rerun()
+    with h2:
+        if st.button("Send to Research", width="stretch", key="ocx60_research"):
+            st.session_state["research_ticker"] = ctx.get("symbol")
+            st.session_state["research_ticker_input"] = ctx.get("symbol")
+            st.session_state["research_symbol"] = ctx.get("symbol")
+            st.session_state["jfbp_main_navigation"] = "Research Stock"
+            st.rerun()
+    with h3:
+        if st.button("Prepare OMS Ticket", width="stretch", key="ocx60_ticket"):
+            ticket = prepare_options_oms_ticket(ctx.get("symbol"), ctx.get("strategy"), strike_plan, ctx)
+            st.success(f"Prepared advisory options OMS ticket for {ticket.get('symbol')}.")
+    with h4:
+        if st.button("Open OMS", width="stretch", key="ocx60_oms"):
+            prepare_options_oms_ticket(ctx.get("symbol"), ctx.get("strategy"), strike_plan, ctx)
+            st.session_state["jfbp_main_navigation"] = "OMS Execution"
+            st.rerun()
+    section_close()
 
-    score_left, score_right = st.columns([0.62, 0.38])
-    with score_left:
-        section_open("🎯 Opportunity Grade Score")
-        render_static_table(pd.DataFrame(scorecard["components"]), height="compact")
-        section_close()
-    with score_right:
-        section_open("Strategy Confidence")
-        render_card_grid([
-            {"title": "Opportunity Grade", "value": opp_grade, "detail": f"Options Score {scorecard['total']}/100 | {scorecard['label']}", "tone": opp_tone},
-            {"title": "Institutional Grade", "value": inst_grade, "detail": inst_detail, "tone": inst_tone},
-            {"title": "Primary Structure", "value": ctx["strategy"], "detail": strategy_confidence_reasons(ctx, market, scorecard), "tone": scorecard["tone"]},
-        ])
-        section_close()
+    section_open("COMMAND DECISION", "Final institutional go/no-go determination.")
+    render_card_grid([
+        {"title": "Trade Recommendation", "value": decision, "detail": f"Primary structure: {primary_structure}", "tone": decision_tone},
+    ])
+    decision_note = (
+        f"Why: {strategy_confidence_reasons(ctx, market, scorecard)}.\n\n"
+        f"What changed: Regime {ctx.get('regime')} | Volatility {vol_regime} | Event {event_ctx.get('status')}.\n\n"
+        f"Primary risk: {ctx.get('risk')}.\n\n"
+        f"Expected edge: {opp_detail}"
+    )
+    if decision_tone == "good":
+        st.success(decision_note)
+    elif decision_tone == "warning":
+        st.warning(decision_note)
+    else:
+        st.error(decision_note)
+    section_close()
 
-    left_col, right_col = st.columns([0.70, 0.30], gap="large")
-    with left_col:
-        render_options_handoff_panel(ctx, strike_plan)
+    with st.expander("Executive Footer", expanded=True):
+        st.markdown("#### Institutional Notes")
+        st.markdown("- Opportunity grade and institutional grade are aligned with options-readiness filters.")
+        st.markdown("- Strategy ranking compares structures under the same market and event context.")
+        st.markdown("- Use broker option-chain liquidity and spreads as final pre-trade confirmation.")
 
-        section_open("🧱 Strike Builder Engine", "Builds the advisory strike framework before any Wheel or OMS workflow.")
-        if strike_plan.get("cards"):
-            render_card_grid(strike_plan["cards"])
-        render_static_table(pd.DataFrame(strike_plan["rows"]), height="compact")
-        section_close()
+        st.markdown("#### Execution Checklist")
+        st.markdown("- Confirm live option chain, bid/ask spread, and open interest.")
+        st.markdown("- Confirm buying power, assignment exposure, and size limits.")
+        st.markdown("- Confirm event calendar and market-regime alignment.")
 
-        render_wheel_management(ctx, row, vol_ctx, event_ctx)
+        st.markdown("#### Risk Reminder")
+        st.markdown("- Advisory only: no direct live routing from this page.")
+        st.markdown("- Defined-risk structures are preferred when event risk or stress is elevated.")
 
-        with st.expander("Scanner Candidates → Options Structures", expanded=False):
-            candidates = build_candidates_table()
-            if candidates.empty:
-                st.info("No Scanner rows found yet. Open Scanner, run a stock or ETF universe, then return here.")
-            else:
-                render_static_table(candidates, height="medium")
-
-        with st.expander("📊 Live Option Chain Preview", expanded=False):
-            st.caption("Convenience preview only. Broker option-chain data is the source of truth before any real trade.")
-            if ctx["optionable"]:
-                if st.button("Load Option Chain Preview", width="stretch", key="ocx42_chain"):
-                    chain_df, note = option_chain_preview(ctx["symbol"])
-                    st.info(note)
-                    if chain_df.empty:
-                        st.warning("No option-chain rows available from the preview provider.")
-                    else:
-                        render_static_table(chain_df, height="medium")
-            else:
-                st.info("This symbol is not supported because it is not a US stock/ETF option candidate.")
-
-        with st.expander("Options Center Guardrails", expanded=False):
-            st.markdown(
-                """
-                - **BUY + strong score:** Prefer defined-risk bullish structures first.
-                - **WATCH:** Prefer income/entry structures only if you are willing to own the stock.
-                - **SELL:** Prefer defined-risk bearish structures or hedges.
-                - **Risk-Off / high stress:** Avoid new long premium unless there is a very specific hedge thesis.
-                - **No live routing:** Options Center v5.1 prepares advisory OMS tickets only. Execution stays controlled by OMS and broker confirmations.
-                """
-            )
-
-        with st.expander("Developer Diagnostics", expanded=False):
-            st.write({
-                "Context": ctx,
-                "Market Snapshot": market,
-                "Risk Snapshot": risk,
-                "Scanner Rows": len(scanner_rows()),
-                "Risk Plan Rows": len(risk_plan_rows()),
-                "Options Opportunity Score": scorecard,
-                "Volatility Context": vol_ctx,
-                "Earnings/Event Context": event_ctx,
-                "Strike Plan": strike_plan,
-                "Prepared OMS Ticket": st.session_state.get("options_prepared_oms_ticket", {}),
-                "Options Best Opportunity": st.session_state.get("options_best_opportunity", {}),
-                "Version": "Options Center v5.1 freezer-ready compressed 70/30 scroll-safe layout",
-                "Updated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            })
-
-    with right_col:
-        with st.expander("🏆 Strategy Library", expanded=False):
-            st.caption("Strategy Ranking + Playbook")
-            render_static_table(ranking_df, height="compact")
-            render_static_table(build_strategy_table(ctx), height="compact")
-
-        with st.expander("📊 Advanced Analytics", expanded=False):
-            st.markdown("##### Greeks Dashboard")
-            render_static_table(greek_profile(ctx["strategy"]), height="compact")
-            st.markdown("##### IV / Volatility + Earnings Risk")
-            render_card_grid([
-                {"title": "Volatility Regime", "value": vol_ctx["regime"], "detail": f"Proxy IV {vol_ctx['iv_proxy']}% | {vol_ctx['premium_bias']}", "tone": "warning" if vol_ctx["regime"] == "HIGH VOL" else "info" if vol_ctx["regime"] == "UNKNOWN" else "good"},
-                {"title": "Earnings / Event Risk", "value": event_ctx["status"], "detail": f"Label {event_ctx['label']} | Days: {event_ctx['days_until'] if event_ctx['days_until'] is not None else 'N/A'} | {event_ctx['guidance']}", "tone": event_ctx["tone"]},
-            ])
-            st.caption(vol_ctx["note"])
-            st.markdown("##### Risk & Structure Rules")
-            render_mini_grid([
-                ("Underlying Price", fmt_money(ctx["price"]) if ctx["price"] else "N/A"),
-                ("Preferred DTE", "30–60 days"),
-                ("Max Premium Risk", "Small defined-risk debit"),
-                ("Avoid", "Wide spreads / no volume"),
-                ("Risk Engine", risk.get("risk_state", "N/A")),
-                ("Gross Exposure", fmt_money(risk.get("gross_exposure", 0))),
-            ])
+    with st.expander("Detailed Diagnostics", expanded=False):
+        st.write({
+            "Context": ctx,
+            "Market Snapshot": market,
+            "Risk Snapshot": risk,
+            "Scanner Rows": len(scanner_rows()),
+            "Risk Plan Rows": len(risk_plan_rows()),
+            "Options Opportunity Score": scorecard,
+            "Volatility Context": vol_ctx,
+            "Earnings/Event Context": event_ctx,
+            "Strike Plan": strike_plan,
+            "Prepared OMS Ticket": st.session_state.get("options_prepared_oms_ticket", {}),
+            "Options Best Opportunity": st.session_state.get("options_best_opportunity", {}),
+            "Version": "Options Center v6.0 Institutional Decision Console",
+            "Updated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        })
 
 def page() -> None:
     run_page()

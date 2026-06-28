@@ -763,12 +763,31 @@ def combined_research_event_context(
     }
 
 
+def open_trade_command_from_research(symbol: str) -> None:
+    """Deterministic handoff from Research Stock to Trade Command Center."""
+
+    symbol = str(symbol or "").upper().strip()
+
+    if not symbol:
+        st.warning("Enter a symbol before opening Trade Command Center.")
+        return
+
+    # Safe handoff keys only. Do not touch widget-bound input keys.
+    st.session_state["research_ticker"] = symbol
+    st.session_state["selected_symbol"] = symbol
+    st.session_state["trade_command_symbol"] = symbol
+    st.session_state["tcc_selected_symbol"] = symbol
+    st.session_state["jfbp_main_navigation"] = "Trade Command Center"
+
+    st.rerun()
+
+
 def run_page():
 
     inject_responsive_css()
     inject_card_css()
 
-    st.title("📈 Research Stock Analysis")
+    st.title("Research Stock")
 
     # =====================================================
     # RESPONSIVE UI LAYER (v89)
@@ -860,6 +879,23 @@ h2 {
 .research-exec-card {background:#ffffff;border:1px solid #e5eaf3;border-radius:18px;padding:1rem 1.05rem;margin:0.75rem 0 1rem 0;box-shadow:0 1px 2px rgba(15,23,42,.04);}
 .research-exec-title {font-size:1.08rem;font-weight:900;color:#1f2937;margin-bottom:.45rem;}
 .research-exec-text {font-size:.94rem;line-height:1.5;color:#334155;}
+.institutional-chapter {font-size:1.22rem;font-weight:900;letter-spacing:.01em;color:#0f172a;margin:1.35rem 0 .55rem 0;padding-top:.15rem;}
+.pf-decision-card {background:#ffffff;border:1px solid #d6dce8;border-radius:18px;padding:1rem 1.1rem;margin:.55rem 0 .85rem 0;box-shadow:0 1px 1px rgba(15,23,42,.03);}
+.pf-grid {display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;}
+.pf-cell {padding:.15rem 1rem .2rem 1rem;}
+.pf-cell + .pf-cell {border-left:1px solid #d9dee8;}
+.pf-label {font-size:.84rem;font-weight:800;color:#1f2937;text-transform:none;margin-bottom:.25rem;}
+.pf-value {font-size:1.95rem;font-weight:900;color:#0f172a;line-height:1.05;margin:.2rem 0 .2rem 0;}
+.pf-sub {font-size:.9rem;color:#667085;line-height:1.35;}
+.pf-role-value-bad {color:#dc2626;}
+.pf-role-value-good {color:#0f9f6e;}
+.pf-review-value {font-size:1.05rem;font-weight:800;color:#2563eb;line-height:1.25;margin:.35rem 0 .25rem 0;}
+.pf-interpretation {background:#eff6ff;border:1px solid #bfdbfe;border-radius:14px;padding:.75rem .95rem;color:#1d4ed8;line-height:1.45;margin:0 0 .8rem 0;}
+
+@media (max-width: 900px) {
+    .pf-grid {grid-template-columns:1fr;}
+    .pf-cell + .pf-cell {border-left:none;border-top:1px solid #d9dee8;padding-top:.85rem;margin-top:.6rem;}
+}
 
 /* Small phones: reduce title and metric pressure further. */
 @media (max-width: 520px) {
@@ -889,15 +925,16 @@ h2 {
         unsafe_allow_html=True,
     )
 
+    st.subheader("Institutional Security Analysis")
     st.caption(
-        "Research Stock v93 Institutional Intelligence Edition — decision-ready research workflow combining price action, relative strength, sector leadership, event risk, and institutional factors into one clear research decision. Advisory only."
+        "Analyze a company the same way a professional portfolio manager would, from market regime to technicals, quality, risk, and final allocation decision."
     )
 
     st.markdown(
         """
         <div class="research-flow">
             <strong>Workflow:</strong><br>
-            Scanner → Research Stock → Opportunity Center → Trade Command Center → OMS Execution → Position Command Center → Journal
+            Scanner → Research Stock → Trade Command Center → OMS Execution → Position Command Center → Journal
         </div>
         """,
         unsafe_allow_html=True,
@@ -913,7 +950,7 @@ h2 {
             Focus first on setup status, research score, relative strength, event risk, and trade bias.
 
             **3. Review the intelligence layer**  
-            Confirm the Stock Intelligence Brief, Investment Thesis, Opportunity Scorecard, and Institutional Review.
+            Confirm the Institutional Research Brief, Technical Analysis, Portfolio Fit recommendation, and Institutional Review.
 
             **4. Decide the next step**  
             BUY candidates move to **Trade Command Center**. WATCH candidates stay under review. SELL / AVOID means no new long action.
@@ -933,7 +970,7 @@ h2 {
 
     profile = JFBP_UNIVERSE.get(ticker, {})
 
-    colA, colB, colC = responsive_columns(3)
+    colA, colB, colC, colD = responsive_columns(4)
 
     with colA:
         analyze = st.button(
@@ -956,6 +993,13 @@ h2 {
             key="research_clear_btn",
         )
 
+    with colD:
+        open_trade_command = st.button(
+            "Open Trade Command Center",
+            width="stretch",
+            key="research_open_trade_command_btn",
+        )
+
     if refresh:
         st.cache_data.clear()
         st.session_state["research_last_analyze"] = True
@@ -966,6 +1010,9 @@ h2 {
         st.session_state["research_last_analyze"] = False
         st.cache_data.clear()
         st.rerun()
+
+    if open_trade_command:
+        open_trade_command_from_research(ticker)
 
     if analyze:
         st.session_state["research_last_analyze"] = True
@@ -1833,6 +1880,10 @@ h2 {
         else "Economic Event"
     )
 
+    st.markdown(
+        '<div class="institutional-chapter">Executive Research Verdict</div>',
+        unsafe_allow_html=True,
+    )
     st.subheader("🎯 Executive Summary")
     st.caption(
         "What it means: One compact research read before moving to Trade Command Center."
@@ -2011,117 +2062,50 @@ h2 {
     )
 
     st.divider()
-    st.subheader("🧠 Stock Intelligence Brief")
+    st.markdown(
+        '<div class="institutional-chapter">Institutional Research Brief</div>',
+        unsafe_allow_html=True,
+    )
     st.caption(
-        "What it means: A summary-first read of the stock using trend, "
-        "relative strength, sector leadership, event risk, and market regime."
+        "What it means: A single institutional narrative for positioning, conviction, and risk framing."
     )
 
-    # Responsive layout:
-    # Row 1 = main decision.
-    # Row 2 = supporting context.
-    brief_row_1 = responsive_columns(3)
+    brief_cols = responsive_columns(2)
 
-    with brief_row_1[0]:
+    with brief_cols[0]:
         st.metric(
-            "Trade Confidence",
-            f"{stock_confidence}/100",
-        )
-
-    with brief_row_1[1]:
-        st.metric(
-            "Reading",
-            stock_confidence_label,
-        )
-
-    with brief_row_1[2]:
-        st.metric(
-            "Action Bias",
-            brief_action_bias,
-        )
-
-    brief_row_2 = responsive_columns(2)
-
-    with brief_row_2[0]:
-        st.metric(
-            "Leadership",
-            sector_leadership_status,
-            leadership_rank_text,
+            "Overall Rating",
+            research_score_label,
+            f"Research {research_score_pct}%",
             delta_color="off",
         )
-
-    with brief_row_2[1]:
         st.metric(
-            "Event Risk",
-            brief_combined_label,
+            "Confidence",
+            f"{stock_confidence}/100",
+            stock_confidence_label,
+            delta_color="off",
         )
+        st.markdown("**Bull Case**")
+        st.markdown(f"- Trend profile: {trend}.")
+        st.markdown(f"- Relative strength versus SPY: {market_rs_label}.")
+        st.markdown(f"- Sector leadership: {sector_leadership_status} ({leadership_rank_text}).")
+        st.markdown("**Catalysts**")
+        st.markdown(f"- Earnings window: {earnings_ribbon_label}.")
+        st.markdown(f"- Highest macro event: {economic_ribbon_label} ({economic_date_label}).")
 
-    intelligence_lines = []
-
-    if trend == "BULLISH":
-        intelligence_lines.append(
-            f"{ticker} has a constructive bullish trend."
+    with brief_cols[1]:
+        st.markdown("**Bear Case**")
+        st.markdown(f"- Combined event risk: {brief_combined_label}.")
+        st.markdown(f"- Market regime: {brief_market_regime}.")
+        st.markdown(f"- Sector-relative strength: {sector_rs_label}.")
+        st.markdown("**Key Risks**")
+        st.markdown(f"- Event-risk badge: {header_event_ctx.get('combined_badge', '🟢 NONE')}.")
+        st.markdown(f"- Earnings risk label: {earnings_ctx.get('risk_label', 'NONE')}.")
+        st.markdown("**Bottom Line**")
+        st.info(
+            f"{brief_action_bias} bias with {stock_confidence_label.lower()} conviction. "
+            f"Current regime is {brief_market_regime}; event risk is {brief_combined_label}."
         )
-    elif trend == "BEARISH":
-        intelligence_lines.append(
-            f"{ticker} remains under bearish technical pressure."
-        )
-    else:
-        intelligence_lines.append(
-            f"{ticker} is in a neutral technical zone."
-        )
-
-    if market_rs_label == "STRONG" and sector_rs_label == "STRONG":
-        intelligence_lines.append(
-            f"Relative strength is strong versus both SPY and {sector_benchmark_symbol}."
-        )
-    elif market_rs_label == "STRONG":
-        intelligence_lines.append(
-            f"Relative strength is strong versus SPY, while sector-relative strength is {sector_rs_label}."
-        )
-    elif market_rs_label == "WEAK":
-        intelligence_lines.append(
-            "Relative strength versus SPY is weak, so conviction should be reduced."
-        )
-    else:
-        intelligence_lines.append(
-            f"Relative strength is {market_rs_label} versus SPY and {sector_rs_label} versus {sector_benchmark_symbol}."
-        )
-
-    if sector_rank is not None and sector_total:
-        intelligence_lines.append(
-            f"Sector leadership ranks {sector_rank}/{sector_total}, classified as {sector_leadership_status}."
-        )
-    else:
-        intelligence_lines.append(
-            "Sector leadership rank is unavailable for this symbol."
-        )
-
-    if brief_combined_label in ("HIGH", "EXTREME"):
-        intelligence_lines.append(
-            f"Combined event risk is {brief_combined_label}, so timing and sizing require caution."
-        )
-    else:
-        intelligence_lines.append(
-            f"Combined event risk is {brief_combined_label}."
-        )
-
-    intelligence_lines.append(
-        f"Market regime is {brief_market_regime}."
-    )
-
-    intelligence_summary = (
-        f"**Action Bias:** {brief_action_bias}  \n"
-        f"**Confidence:** {stock_confidence_label}  \n\n"
-        + " ".join(intelligence_lines)
-    )
-
-    if stock_confidence_tone == "success":
-        st.success(intelligence_summary)
-    elif stock_confidence_tone == "warning":
-        st.warning(intelligence_summary)
-    else:
-        st.error(intelligence_summary)
         
     # =====================================================
     # BALANCED PRICE + LEVELS LAYOUT (v86 CLEAN LEVELS PANEL)
@@ -2137,9 +2121,14 @@ h2 {
 
     chart_left, chart_right = responsive_columns([2.3, 1.2])
 
+    st.markdown(
+        '<div class="institutional-chapter">Technical Analysis</div>',
+        unsafe_allow_html=True,
+    )
+
     with chart_left:
 
-        st.subheader("Price Chart")
+        st.subheader("Technical Snapshot")
 
         st.line_chart(
             chart_df,
@@ -2811,6 +2800,11 @@ h2 {
     
     dashboard_left, dashboard_right = responsive_columns([2.3, 1.2])
 
+    st.markdown(
+        '<div class="institutional-chapter">Market Context</div>',
+        unsafe_allow_html=True,
+    )
+
     with dashboard_left:
 
         st.subheader("🏆 Relative Strength & Sector Leadership")
@@ -3050,6 +3044,10 @@ h2 {
                 )
 
         st.divider()
+        st.markdown(
+            '<div class="institutional-chapter">Risk Assessment</div>',
+            unsafe_allow_html=True,
+        )
         st.subheader("🏛 Institutional Review")
         st.caption(
             "What it means: Scores the setup using institutional-style "
@@ -3184,7 +3182,11 @@ h2 {
 
     with dashboard_right:
 
-        st.subheader("📌 Investment Thesis")
+        st.markdown(
+            '<div class="institutional-chapter">Fundamental Quality</div>',
+            unsafe_allow_html=True,
+        )
+        st.subheader("📌 Fundamental Quality Review")
         st.caption(
             "What it means: Summarizes whether the stock currently has "
             "a strong enough setup to deserve attention."
@@ -3280,10 +3282,75 @@ h2 {
         else:
             st.info(thesis_summary + "\n\n" + thesis_conclusion)
 
+        st.markdown(
+            '<div class="institutional-chapter">Portfolio Fit</div>',
+            unsafe_allow_html=True,
+        )
         st.subheader("🧮 Opportunity Scorecard")
         st.caption(
             "What it means: Converts the research factors into one "
             "institutional opportunity score."
+        )
+
+        portfolio_role = "Not a Fit"
+        portfolio_role_class = "pf-role-value-bad"
+        portfolio_role_note = "Not suitable for current portfolio"
+        suggested_allocation = "0%"
+        suggested_allocation_note = "No allocation recommended"
+        review_again = "After strength improves"
+        review_again_note = "Reassess when technical and RS improve"
+
+        if trade_recommendation in ("BUY", "STRONG BUY") and combined_label not in ("HIGH", "EXTREME"):
+            portfolio_role = "Selective Fit"
+            portfolio_role_class = "pf-role-value-good"
+            portfolio_role_note = "Suitable for risk-controlled entry"
+            suggested_allocation = "2% - 4%"
+            suggested_allocation_note = "Starter size with risk controls"
+            review_again = "After catalyst window"
+            review_again_note = "Reassess after earnings and regime shift"
+        elif trade_recommendation == "WATCH":
+            portfolio_role = "Watchlist"
+            portfolio_role_class = "pf-role-value-bad"
+            portfolio_role_note = "Not suitable for current portfolio"
+
+        interpretation_text = (
+            f"This stock is {portfolio_role.lower()} for the current portfolio. "
+            f"{suggested_allocation_note}. Review after relative strength and technical setup improve."
+        )
+        if portfolio_role == "Selective Fit":
+            interpretation_text = (
+                "This stock is a selective fit for the current portfolio. "
+                "Use starter sizing and reassess after catalyst and regime updates."
+            )
+
+        st.markdown(
+            f"""
+            <div class="pf-decision-card">
+                <div class="pf-grid">
+                    <div class="pf-cell">
+                        <div class="pf-label">Portfolio Role</div>
+                        <div class="pf-value {portfolio_role_class}">{portfolio_role}</div>
+                        <div class="pf-sub">{portfolio_role_note}</div>
+                    </div>
+                    <div class="pf-cell">
+                        <div class="pf-label">Suggested Allocation</div>
+                        <div class="pf-value">{suggested_allocation}</div>
+                        <div class="pf-sub">{suggested_allocation_note}</div>
+                    </div>
+                    <div class="pf-cell">
+                        <div class="pf-label">Review Again</div>
+                        <div class="pf-review-value">{review_again}</div>
+                        <div class="pf-sub">{review_again_note}</div>
+                    </div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        st.markdown(
+            f"<div class=\"pf-interpretation\"><strong>Interpretation:</strong> {interpretation_text}</div>",
+            unsafe_allow_html=True,
         )
 
         sc1, sc2 = responsive_columns(2)
@@ -3342,6 +3409,10 @@ h2 {
                     hide_index=True,
                 )
 
+        st.markdown(
+            '<div class="institutional-chapter">Commander Notes</div>',
+            unsafe_allow_html=True,
+        )
         st.subheader("🎯 Trade Recommendation")
         st.caption(
             "What it means: Final action generated from the research model, "
@@ -3447,3 +3518,38 @@ h2 {
         st.info(
             " ".join(summary_lines)
         )
+
+    st.markdown(
+        '<div class="institutional-chapter">Detailed Diagnostics</div>',
+        unsafe_allow_html=True,
+    )
+    with st.expander("Detailed Diagnostics", expanded=False):
+        st.markdown("#### Opportunity Scorecard")
+        st.dataframe(
+            scorecard_df,
+            width="stretch",
+            hide_index=True,
+        )
+
+        st.markdown("#### Buy Checklist")
+        st.dataframe(
+            checklist_display,
+            width="stretch",
+            hide_index=True,
+        )
+
+        if "leadership_df" in locals() and not leadership_df.empty:
+            st.markdown("#### Peer Leadership")
+            st.dataframe(
+                leadership_df.head(10),
+                width="stretch",
+                hide_index=True,
+            )
+
+        if "table_df" in locals():
+            st.markdown("#### Model Table")
+            st.dataframe(
+                table_df.head(12),
+                width="stretch",
+                hide_index=True,
+            )

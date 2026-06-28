@@ -89,6 +89,21 @@ def inject_forex_pulse_css() -> None:
                 width: 100%;
             }
 
+            .forex-briefing-grid {
+                display: grid;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 0.65rem;
+                margin: 0.35rem 0 0.75rem 0;
+                width: 100%;
+            }
+
+            .forex-briefing-card {
+                display: flex;
+                flex-direction: column;
+                min-height: 126px;
+                height: 100%;
+            }
+
             .forex-card {
                 border: 1px solid;
                 border-radius: 14px;
@@ -134,7 +149,7 @@ def inject_forex_pulse_css() -> None:
             .forex-list-card {
                 border: 1px solid;
                 border-radius: 16px;
-                padding: 0.85rem 0.95rem;
+                padding: 0.90rem 1.0rem;
                 min-width: 0;
                 overflow: hidden;
             }
@@ -143,7 +158,7 @@ def inject_forex_pulse_css() -> None:
                 font-size: 1.02rem;
                 font-weight: 850;
                 color: #1f2937;
-                margin-bottom: 0.62rem;
+                margin-bottom: 0.70rem;
                 line-height: 1.2;
             }
 
@@ -152,7 +167,7 @@ def inject_forex_pulse_css() -> None:
                 grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.35fr);
                 gap: 0.65rem;
                 border-bottom: 1px solid rgba(148, 163, 184, 0.28);
-                padding: 0.38rem 0;
+                padding: 0.42rem 0;
             }
 
             .forex-list-row:last-child {
@@ -161,14 +176,35 @@ def inject_forex_pulse_css() -> None:
 
             .forex-list-label {
                 color: #64748b;
-                font-weight: 750;
+                font-weight: 780;
                 line-height: 1.28;
             }
 
             .forex-list-value {
                 color: #1f2937;
-                font-weight: 850;
+                font-weight: 900;
                 line-height: 1.28;
+            }
+
+            .forex-banner {
+                border: 1px solid;
+                border-radius: 16px;
+                padding: 0.72rem 0.85rem;
+                margin: 0.24rem 0 0.46rem 0;
+                box-sizing: border-box;
+            }
+
+            .forex-banner-title {
+                font-size: 0.78rem;
+                font-weight: 850;
+                letter-spacing: 0.045em;
+                text-transform: uppercase;
+                margin-bottom: 0.2rem;
+            }
+
+            .forex-banner-body {
+                font-size: 0.95rem;
+                line-height: 1.38;
             }
 
             @media (max-width: 1180px) {
@@ -247,6 +283,50 @@ def metric_grid(cards: List[Dict[str, Any]]) -> None:
 
     pieces.append('</div>')
     st.markdown("".join(pieces), unsafe_allow_html=True)
+
+
+def briefing_grid(cards: List[Dict[str, Any]]) -> None:
+    pieces = ['<div class="forex-briefing-grid">']
+
+    for card in cards:
+        background, border, value_color = tone_palette(str(card.get("tone", "neutral")))
+        label = html.escape(str(card.get("label", "")))
+        value = html.escape(str(card.get("value", "")))
+        detail = html.escape(str(card.get("detail", "")))
+        detail_html = f'<div class="forex-detail">{detail}</div>' if detail else ""
+        pieces.append(
+            f'<div class="forex-card forex-briefing-card" style="background:{background};border-color:{border};">'
+            f'<div class="forex-label">{label}</div>'
+            f'<div class="forex-value" style="color:{value_color};">{value}</div>'
+            f'{detail_html}'
+            f'</div>'
+        )
+
+    pieces.append('</div>')
+    st.markdown("".join(pieces), unsafe_allow_html=True)
+
+
+def section_heading(title: str, subtitle: str | None = None) -> None:
+    st.subheader(title)
+    if subtitle:
+        st.caption(subtitle)
+
+
+def institutional_banner(title: str, body: str, tone: str = "info", body_weight: int = 720) -> None:
+    background, border, value_color = tone_palette(tone)
+    st.markdown(
+        f"""
+        <div class="forex-banner" style="background:{background};border-color:{border};">
+            <div class="forex-banner-title" style="color:{value_color};">{html.escape(title)}</div>
+            <div class="forex-banner-body" style="color:{value_color};font-weight:{body_weight};">{html.escape(body)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def table_height(row_count: int, max_height: int = 320) -> int:
+    return min(max_height, max(132, 56 + row_count * 32))
 
 
 def list_grid(cards: List[Dict[str, Any]]) -> None:
@@ -822,16 +902,13 @@ def build_ai_forex_brief(
 
 
 def forex_market_clock_card(data_status: Dict[str, Any]) -> None:
-    local_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    utc_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    provider = str(data_status.get("provider", "yfinance"))
+    local_time = datetime.now().strftime("%H:%M")
+    utc_time = datetime.now(timezone.utc).strftime("%H:%M UTC")
     interval = str(data_status.get("interval", "N/A"))
     period = str(data_status.get("period", "N/A"))
 
     st.info(
-        "🟢 Forex Market Status: 24/5  |  "
-        f"Last Refresh: {local_time}  |  UTC: {utc_time}  |  "
-        f"Provider: {provider}  |  Lookback: {period}  |  Interval: {interval}"
+        f"● OPEN 24/5  |  Refresh {local_time} {utc_time}  |  {period} • {interval}"
     )
 
 
@@ -854,7 +931,7 @@ def display_price_table(title: str, df: pd.DataFrame, max_rows: int | None = Non
     else:
         styled = view
 
-    st.dataframe(styled, width="stretch", hide_index=True, height=320)
+    st.dataframe(styled, width="stretch", hide_index=True, height=table_height(len(view)))
 
 
 def build_forex_playbook_cards(
@@ -979,23 +1056,17 @@ def run_page() -> None:
 
     st.title("💱 Forex Pulse")
     st.caption(
-        "Live forex regime dashboard for USD strength, majors, crosses, carry risk, breadth, stress, and trade bias."
+        "Institutional FX command center for regime, leadership, breadth, and execution readiness."
     )
     st.caption(
-        "Build: Forex Pulse v1.1 STABLE — Market Clock · USD Strength · FX Liquidity Proxy · Opportunity Scanner · Forex Playbook · Market Cycle"
+        "Forex Pulse v2.0 — decision-first layout for market environment, research, execution, and diagnostics."
     )
 
-    c1, c2, c3 = st.columns([1, 1, 1])
-    with c1:
-        refresh = st.button("Refresh Forex Pulse Data", width="stretch")
-    with c2:
-        period = st.selectbox("Lookback", ["7d", "14d", "30d"], index=0)
-    with c3:
-        interval = st.selectbox("Interval", ["1h", "2h", "4h", "1d"], index=0)
+    st.session_state.setdefault("forex_pulse_period", "7d")
+    st.session_state.setdefault("forex_pulse_interval", "1h")
 
-    if refresh:
-        st.cache_data.clear()
-        st.rerun()
+    period = str(st.session_state.get("forex_pulse_period", "7d"))
+    interval = str(st.session_state.get("forex_pulse_interval", "1h"))
 
     if yf is None:
         st.error("yfinance is not available in this environment. Install yfinance to load live forex data.")
@@ -1009,8 +1080,6 @@ def run_page() -> None:
     if forex_df.empty:
         st.error("Forex data could not be loaded. Check internet/data access and try again.")
         return
-
-    forex_market_clock_card({"provider": "yfinance", "period": period, "interval": interval})
 
     usd = calculate_usd_strength(forex_df)
     breadth = calculate_forex_breadth(forex_df)
@@ -1033,7 +1102,6 @@ def run_page() -> None:
     st.session_state["forex_pulse_liquidity_proxy"] = str(liquidity["state"])
     st.session_state["forex_pulse_market_cycle"] = str(market_cycle["cycle"])
 
-
     forex_pulse_bus_payload = publish_multi_asset_signal_bus(
         df=forex_df,
         regime=regime,
@@ -1044,288 +1112,287 @@ def run_page() -> None:
         extra={"usd_strength": usd.get("state"), "usd_score": usd.get("score"), "liquidity_state": liquidity.get("state"), "liquidity_score": liquidity.get("score"), "market_cycle": market_cycle.get("cycle")},
     )
 
-    command_html = (
-        f'<div style="display:inline-flex;align-items:center;gap:0.55rem;background:{tone_palette(regime_tone(regime["regime"]))[0]};'
-        f'border:1px solid {tone_palette(regime_tone(regime["regime"]))[1]};'
-        f'color:{tone_palette(regime_tone(regime["regime"]))[2]};border-radius:999px;padding:0.35rem 0.75rem;'
-        f'font-weight:800;margin:0.25rem 0 0.75rem 0;">'
-        f'<span>{regime_icon(regime["regime"])}</span>'
-        f'<span>Forex Command Status: {html.escape(regime["regime"])}</span>'
-        f'<span style="color:#64748b;font-weight:650;">Stress {stress_score}/100</span>'
-        f'<span style="color:#64748b;font-weight:650;">Breadth {breadth["score"]:.1f}/100</span>'
-        '</div>'
-    )
-    st.markdown(command_html, unsafe_allow_html=True)
+    latest_timestamp = str(forex_df.get("Timestamp", pd.Series(dtype=str)).dropna().iloc[0]) if not forex_df.empty and "Timestamp" in forex_df.columns and not forex_df["Timestamp"].dropna().empty else "N/A"
+    volatility_proxy = 0.0
+    if not forex_df.empty and "24H %" in forex_df.columns:
+        volatility_proxy = float(pd.to_numeric(forex_df["24H %"], errors="coerce").abs().dropna().mean() or 0.0)
 
-    st.subheader("🤖 AI Forex Brief")
-    st.caption("What it means: 30-second read of the forex tape before looking at the full dashboard.")
+    top_score_global = 0.0
+    if not opportunity_df.empty:
+        try:
+            top_score_global = safe_float(opportunity_df.iloc[0].get("Opportunity Score"), 0.0)
+        except Exception:
+            top_score_global = 0.0
 
-    if ai_brief["tone"] == "good":
-        st.success(ai_brief["brief"])
-    elif ai_brief["tone"] == "warning":
-        st.warning(ai_brief["brief"])
-    elif ai_brief["tone"] == "risk":
-        st.error(ai_brief["brief"])
+    institutional_grade = "BLOCKED"
+    if regime.get("trade_allowed"):
+        institutional_grade = "READY" if top_score_global >= 65 else "PENDING CONFIRMATION"
+
+    execution_status = "AVOID"
+    if regime["regime"] == "CARRY RISK-ON":
+        execution_status = "BUY"
+    elif regime["regime"] in ("USD TREND", "SELECTIVE"):
+        execution_status = "HOLD"
+    elif regime["regime"] == "CAUTIOUS":
+        execution_status = "WAIT"
+
+    recommendation_sentence = regime["playbook"]
+
+    # Executive Briefing
+    section_heading("Executive Briefing", "Immediate read on the FX tape and the required posture.")
+    briefing_grid([
+        {"label": "FX Regime", "value": regime["regime"], "detail": regime["playbook"], "tone": regime_tone(regime["regime"])},
+        {"label": "Risk Level", "value": stress_label, "detail": f"Stress {stress_score}/100", "tone": stress_tone(stress_score)},
+        {"label": "Institutional Grade", "value": institutional_grade, "detail": f"Confidence {top_score_global:.1f}/100", "tone": "good" if institutional_grade == "READY" else "warning" if "PENDING" in institutional_grade else "risk"},
+        {"label": "Execution Status", "value": execution_status, "detail": "BUY / HOLD / WAIT / AVOID", "tone": "good" if execution_status == "BUY" else "warning" if execution_status in ("HOLD", "WAIT") else "risk"},
+        {"label": "Dollar Leadership", "value": usd["state"], "detail": f"USD score {usd['score']}/100", "tone": usd["tone"]},
+        {"label": "Commander's Recommendation", "value": recommendation_sentence, "detail": "Primary desk instruction", "tone": regime_tone(regime["regime"])},
+    ])
+
+    # Executive Summary
+    section_heading("Executive Summary", "Compact KPI read for the current FX tape.")
+    summary_confidence_note = "Institutional confidence remains low." if top_score_global < 50 else "Institutional confidence is improving."
+    metric_grid([
+        {"label": "Market Regime", "value": regime["regime"], "detail": market_cycle["cycle"], "tone": regime_tone(regime["regime"])},
+        {"label": "Trend Strength", "value": f"{top_score_global:.1f}/100", "detail": "Top opportunity score", "tone": "good" if top_score_global >= 65 else "warning" if top_score_global >= 45 else "risk"},
+        {"label": "Directional Participation", "value": f"{(breadth['advancing'] / breadth['total'] * 100.0 if breadth['total'] else 0.0):.0f}%", "detail": "Pairs advancing in current tape", "tone": "good" if (breadth['advancing'] / breadth['total'] * 100.0 if breadth['total'] else 0.0) >= 60 else "warning" if (breadth['advancing'] / breadth['total'] * 100.0 if breadth['total'] else 0.0) >= 40 else "risk"},
+        {"label": "Breadth", "value": f"{breadth['score']:.1f}/100", "detail": breadth["state"], "tone": breadth_tone(breadth["score"])},
+        {"label": "Volatility", "value": f"{volatility_proxy:.2f}%", "detail": "Average absolute 24H move", "tone": "warning" if volatility_proxy >= 1 else "neutral"},
+        {"label": "Institutional Confidence", "value": f"{top_score_global:.1f}/100", "detail": summary_confidence_note, "tone": "good" if top_score_global >= 70 else "warning" if top_score_global >= 50 else "risk"},
+    ])
+
+    # Market Environment
+    section_heading("Market Environment", "Macro FX tape, liquidity, and stress.")
+    forex_market_clock_card({"provider": "yfinance", "period": period, "interval": interval})
+    metric_grid([
+        {"label": "Market Cycle", "value": market_cycle["cycle"], "detail": market_cycle["note"], "tone": market_cycle["tone"]},
+        {"label": "Liquidity", "value": liquidity["state"], "detail": f"{liquidity['score']}/100", "tone": liquidity["tone"]},
+        {"label": "Stress", "value": f"{stress_score}/100", "detail": stress_label, "tone": stress_tone(stress_score)},
+        {"label": "Dollar Strength", "value": usd["state"], "detail": f"{usd['score']}/100", "tone": usd["tone"]},
+    ])
+
+    # Dollar Leadership
+    section_heading("Dollar Leadership", "USD direction and relative leadership versus the FX basket.")
+    metric_grid([
+        {"label": "DXY Performance", "value": format_pct(usd.get("avg_usd_move")), "detail": "Dollar basket proxy", "tone": usd["tone"]},
+        {"label": "EUR Performance", "value": format_pct(regime["eur_usd_24h"]), "detail": "EUR/USD move", "tone": "good" if regime["eur_usd_24h"] > 0 else "risk" if regime["eur_usd_24h"] < -0.5 else "warning"},
+        {"label": "Relative USD Leadership", "value": usd["state"], "detail": f"{usd['score']}/100", "tone": usd["tone"]},
+        {"label": "Institutional Read", "value": usd["state"], "detail": "Dollar-led or carry-led tape", "tone": usd["tone"]},
+    ])
+    institutional_banner("Institutional Read", usd["state"], tone=usd["tone"])
+
+    # Currency Strength
+    section_heading("Currency Strength", "Strongest and weakest FX pairs.")
+    strongest = forex_df.sort_values("24H %", ascending=False, na_position="last").head(5)
+    weakest = forex_df.sort_values("24H %", ascending=True, na_position="last").head(5)
+    l1, l2 = st.columns(2)
+    with l1:
+        display_price_table("Strongest FX Pairs", strongest, max_rows=5)
+    with l2:
+        display_price_table("Weakest FX Pairs", weakest, max_rows=5)
+
+    # Market Breadth
+    section_heading("Market Breadth", "Participation quality across the loaded FX universe.")
+    participation_pct = (breadth["advancing"] / breadth["total"] * 100.0) if breadth["total"] else 0.0
+    metric_grid([
+        {"label": "Breadth Score", "value": f"{breadth['score']:.1f}/100", "detail": breadth["state"], "tone": breadth_tone(breadth["score"])},
+        {"label": "Advancers", "value": f"{breadth['advancing']}/{breadth['total']}", "detail": "Pairs moving higher", "tone": "info"},
+        {"label": "Decliners", "value": f"{breadth['declining']}/{breadth['total']}", "detail": "Pairs moving lower", "tone": "warning" if breadth['declining'] else "neutral"},
+        {"label": "Participation %", "value": f"{participation_pct:.0f}%", "detail": "Advancing pairs as share of the universe", "tone": "good" if participation_pct >= 60 else "warning" if participation_pct >= 40 else "risk"},
+        {"label": "Average Move", "value": format_pct(breadth["average_move"]), "detail": "Average 24H move", "tone": "good" if breadth["average_move"] > 0 else "risk" if breadth["average_move"] < -0.5 else "warning"},
+    ])
+    institutional_banner("Breadth Read", "Broad participation supports a cleaner FX tape; weak breadth favors selectivity and smaller size.", tone=breadth_tone(breadth["score"]))
+
+    # Watchlist
+    section_heading("Watchlist", "Ranked opportunities for immediate focus.")
+    if opportunity_df.empty:
+        st.info("No opportunity scores available yet.")
     else:
-        st.info(ai_brief["brief"])
-    st.caption(ai_brief["playbook"])
-
-    left_col, right_col = st.columns([1, 1])
-
-    with left_col:
-        st.divider()
-        st.subheader("🚦 Forex Stress Dashboard")
-        st.caption("What it means: Measures whether FX conditions are calm, mixed, or risk-off.")
-
-        metric_grid([
-            {"label": "Stress Score", "value": f"{stress_score}/100", "detail": "Overall FX risk.", "tone": stress_tone(stress_score)},
-            {"label": "Stress State", "value": stress_label, "detail": "Current FX condition.", "tone": stress_tone(stress_score)},
-            {"label": "Forex Regime", "value": f"{regime_icon(regime['regime'])} {regime['regime']}", "detail": "Trading mode.", "tone": regime_tone(regime["regime"])},
-            {"label": "Execution Multiplier", "value": f"{regime['execution_multiplier']:.2f}x", "detail": "Position-size adjustment.", "tone": "info"},
-        ])
-
-        if stress_score >= 70:
-            st.error("Forex Stress Interpretation: defensive posture. Avoid broad carry/risk FX exposure.")
-        elif stress_score >= 40:
-            st.warning("Forex Stress Interpretation: selective posture. Trade only clean directional leaders.")
-        else:
-            st.success("Forex Stress Interpretation: conditions are calm enough for qualified setups.")
-
-        help_text("Forex stress combines carry crosses, USD behavior, majors, and breadth deterioration.")
-
-        st.divider()
-        st.subheader("📊 Forex Breadth Engine")
-        st.caption("What it means: Measures how many FX pairs are participating in the move.")
-
-        metric_grid([
-            {"label": "Breadth Score", "value": f"{breadth['score']:.1f}/100", "detail": "Participation strength.", "tone": breadth_tone(breadth["score"])},
-            {"label": "Breadth State", "value": breadth["state"], "detail": "FX participation.", "tone": breadth_tone(breadth["score"])},
-            {"label": "Advancers", "value": f"{breadth['advancing']}/{breadth['total']}", "detail": "Pairs moving higher.", "tone": "info"},
-            {"label": "Risk Cross Advance %", "value": f"{breadth['risk_advance_pct']:.0f}%", "detail": "Carry/risk participation.", "tone": "good" if breadth["risk_advance_pct"] >= 60 else "warning" if breadth["risk_advance_pct"] >= 40 else "risk"},
-            {"label": "Average Move", "value": format_pct(breadth["average_move"]), "detail": "Average 24h move.", "tone": "good" if breadth["average_move"] > 0 else "risk" if breadth["average_move"] < -0.5 else "warning"},
-        ])
-
-        if breadth["score"] < 40:
-            st.error("Breadth Interpretation: weak participation. FX exposure should be reduced.")
-        elif breadth["score"] < 60:
-            st.warning("Breadth Interpretation: mixed participation. Pair selection matters.")
-        else:
-            st.success("Breadth Interpretation: healthy participation. FX tape supports qualified setups.")
-
-        help_text("Forex moves are more trustworthy when USD direction, majors, and risk crosses confirm together.")
-
-        st.divider()
-        st.subheader("📈 Leadership & Damage Report")
-        st.caption("What it means: Shows strongest and weakest FX pairs in the current tape.")
-
-        strongest = forex_df.sort_values("24H %", ascending=False, na_position="last").head(5)
-        weakest = forex_df.sort_values("24H %", ascending=True, na_position="last").head(5)
-
-        l1, l2 = st.columns(2)
-        with l1:
-            display_price_table("Strongest 24H", strongest, max_rows=5)
-        with l2:
-            display_price_table("Weakest 24H", weakest, max_rows=5)
-
-        st.divider()
-        st.subheader("🔎 Forex Opportunity Scanner")
-        st.caption(
-            "What it means: Ranks the loaded FX universe by momentum, trend, "
-            "USD direction, breadth support, and directional clarity."
+        watch_cols = ["Rank", "Name", "Symbol", "Group", "24H %", "7D %", "Directional Bias", "Opportunity Score", "Recommendation"]
+        watch_view = opportunity_df.head(8)[watch_cols]
+        styled_watch = watch_view.style.map(style_pct, subset=["24H %", "7D %"]).apply(
+            lambda row: ["background-color: #eff6ff; font-weight: 700;" if row.name == watch_view.index[0] else "" for _ in row],
+            axis=1,
         )
+        st.dataframe(styled_watch, width="stretch", hide_index=True, height=table_height(min(8, len(opportunity_df))))
 
-        # determine top score for UI-grade mapping
-        top_score_global = 0.0
-        if opportunity_df.empty:
-            st.info("No opportunity scores available yet.")
-        else:
-            try:
-                top_score_global = safe_float(opportunity_df.iloc[0].get("Opportunity Score"), 0.0)
-            except Exception:
-                top_score_global = 0.0
-        
-            top_opportunities = opportunity_df.head(8).copy()
-            display_cols = [
-                "Rank",
-                "Name",
-                "Symbol",
-                "Group",
-                "24H %",
-                "7D %",
-                "Directional Bias",
-                "Opportunity Score",
-                "Recommendation",
-            ]
-            styled_opportunities = top_opportunities[display_cols].style.map(
-                style_pct,
-                subset=["24H %", "7D %"],
-            )
-            st.dataframe(styled_opportunities, width="stretch", hide_index=True, height=320)
+    # Research
+    section_heading("Research", "Institutional interpretation of the FX environment.")
+    macro_env = "Constructive" if regime["regime"] in ("CARRY RISK-ON", "USD TREND") else "Mixed" if regime["regime"] == "SELECTIVE" else "Defensive"
+    market_sentiment = "Improving" if top_score_global >= 65 else "Neutral" if top_score_global >= 50 else "Defensive"
+    key_catalysts = ", ".join([usd["state"], market_cycle["cycle"], breadth["state"]])
+    list_grid([
+        {
+            "title": "Institutional Research Summary",
+            "tone": regime_tone(regime["regime"]),
+            "rows": [
+                ("Macro Environment", macro_env),
+                ("Dollar Leadership", usd["state"]),
+                ("Participation", f"{participation_pct:.0f}% advancing"),
+                ("Liquidity", liquidity["state"]),
+                ("Market Sentiment", market_sentiment),
+                ("Key Catalysts", key_catalysts),
+            ],
+        }
+    ])
 
-            best_opportunity = top_opportunities.iloc[0].to_dict()
-            top_score = safe_float(best_opportunity.get("Opportunity Score"), 0.0)
-            top_recommendation = str(best_opportunity.get("Recommendation", "AVOID"))
+    # Technical Analysis
+    section_heading("Technical Analysis", "Structure and relative performance without redundant charts.")
+    if not opportunity_df.empty:
+        tech_view = opportunity_df.head(10)[["Name", "Symbol", "Directional Bias", "1H %", "24H %", "7D %", "Opportunity Score", "Recommendation"]].copy()
+        tech_view = tech_view.rename(columns={"Name": "Pair", "Directional Bias": "Trend", "Opportunity Score": "Relative Strength"})
+        styled_tech = tech_view.style.map(style_pct, subset=["1H %", "24H %", "7D %"])
+        st.dataframe(styled_tech, width="stretch", hide_index=True, height=table_height(min(10, len(opportunity_df))))
+    else:
+        st.info("No technical structure available yet.")
 
-            # UI-only: if research says AVOID but market/regime allows trading, present as Pending Confirmation
-            display_recommendation = top_recommendation
-            try:
-                if str(top_recommendation).strip().upper() == "AVOID" and regime.get("trade_allowed"):
-                    display_recommendation = "Pending Confirmation"
-            except Exception:
-                display_recommendation = top_recommendation
+    # Risk Assessment
+    section_heading("Risk Assessment", "How much risk the tape supports right now.")
+    risk_view = stress_score
+    metric_grid([
+        {"label": "Risk Score", "value": f"{risk_view}/100", "detail": stress_label, "tone": stress_tone(stress_score)},
+        {"label": "Stress", "value": f"{stress_score}/100", "detail": stress_label, "tone": stress_tone(stress_score)},
+        {"label": "Volatility", "value": f"{volatility_proxy:.2f}%", "detail": "Average absolute 24H move", "tone": "warning" if volatility_proxy >= 1 else "neutral"},
+        {"label": "Confidence", "value": f"{top_score_global:.1f}/100", "detail": summary_confidence_note, "tone": "good" if top_score_global >= 70 else "warning" if top_score_global >= 50 else "risk"},
+    ])
+    if risk_view >= 60:
+        institutional_banner("Risk Posture", "Defensive posture. Protect capital and avoid broad carry exposure.", tone="risk", body_weight=800)
+    elif risk_view >= 35:
+        institutional_banner("Risk Posture", "Selective posture. Trade only clean relative-strength setups.", tone="warning", body_weight=800)
+    else:
+        institutional_banner("Risk Posture", "Calm tape. Qualified setups can be considered with discipline.", tone="good", body_weight=800)
 
-            # Compute an institutional grade for the top opportunity (UI-only mapping)
-            institutional_grade = "BLOCKED"
-            if regime.get("trade_allowed"):
-                institutional_grade = "READY" if top_score >= 65 else "PENDING CONFIRMATION"
+    # Execution Plan
+    section_heading("Execution Plan", "Decision-ready guidance for current FX conditions.")
+    if regime["regime"] == "RISK-OFF":
+        direction = "AVOID"
+        size_guidance = "Reduced size"
+        entry_zone = "Only exceptional A+ setups"
+        stop_level = "Preserve capital"
+        target_zone = "Defensive / capital preservation"
+        rr = "Favor protection"
+    elif regime["regime"] in ("CAUTIOUS", "SELECTIVE"):
+        direction = "WAIT"
+        size_guidance = "Reduced size"
+        entry_zone = "Majors / strongest directional pairs"
+        stop_level = "Below clear structure"
+        target_zone = "Directional continuation / pullbacks"
+        rr = "Moderate"
+    elif regime["regime"] == "USD TREND":
+        direction = "HOLD"
+        size_guidance = "Normal size"
+        entry_zone = "Dollar continuation setups"
+        stop_level = "Below trend support"
+        target_zone = "Trend continuation"
+        rr = "Positive"
+    else:
+        direction = "BUY"
+        size_guidance = "Normal size"
+        entry_zone = "Trend leaders"
+        stop_level = "Below structure"
+        target_zone = "Continuation / breakout"
+        rr = "Positive"
 
-            if top_score >= 65:
-                st.success(
-                    f"Best Opportunity: {best_opportunity.get('Name')} ({best_opportunity.get('Symbol')}) — "
-                    f"Bias {best_opportunity.get('Directional Bias')} — "
-                    f"Score {top_score:.1f}/100 — {display_recommendation}"
-                )
-            else:
-                st.warning(
-                    "No Qualified Opportunities Currently Available\n\n"
-                    f"Highest Score: {top_score:.1f}/100 — "
-                    f"{best_opportunity.get('Name')} "
-                    f"({best_opportunity.get('Symbol')})\n\n"
-                    "No pairs currently meet the minimum qualification threshold."
-                )
+    metric_grid([
+        {"label": "Trade Direction", "value": direction, "detail": regime["playbook"], "tone": regime_tone(regime["regime"])},
+        {"label": "Position Size", "value": size_guidance, "detail": f"Multiplier {regime['execution_multiplier']:.2f}x", "tone": "info"},
+        {"label": "Entry Zone", "value": entry_zone, "detail": "Execution guidance", "tone": "neutral"},
+        {"label": "Stop Level", "value": stop_level, "detail": "Risk boundary", "tone": "risk"},
+        {"label": "Target", "value": target_zone, "detail": "Profit objective", "tone": "good"},
+        {"label": "Risk/Reward", "value": rr, "detail": "Target versus risk", "tone": "info"},
+        {"label": "Institutional Grade", "value": institutional_grade, "detail": f"Confidence {top_score_global:.1f}/100", "tone": "good" if top_score_global >= 70 else "warning" if top_score_global >= 50 else "risk"},
+    ])
 
-        help_text("This is a ranking engine, not an order signal. Use it with chart structure and risk controls.")
+    # Trade Management
+    section_heading("Trade Management", "How to manage the position if execution is approved.")
+    list_grid([
+        {
+            "title": "Management Framework",
+            "tone": "info",
+            "rows": [
+                ("Scale In", "Use confirmation only; do not average into weakness."),
+                ("Invalidation", "Exit on structure failure, not emotion."),
+                ("Review", "Reassess on each regime or breadth change."),
+                ("Profit Management", "Take partials into strength and trail the remainder."),
+            ],
+        },
+        {
+            "title": "Operational Discipline",
+            "tone": "warning" if regime["regime"] in ("CAUTIOUS", "SELECTIVE") else "good",
+            "rows": [
+                ("No Chase Rule", "Avoid extended entries after vertical moves."),
+                ("Liquidity", "Prefer the most liquid pairs in the universe."),
+                ("Exposure", "Respect the current regime multiplier."),
+                ("Time Stop", "If the move stalls, reduce or exit."),
+            ],
+        },
+    ])
 
-    with right_col:
-        st.divider()
-        st.subheader("🎯 Forex Decision Center")
-        st.caption("What it means: Converts FX conditions into practical trading guidance.")
+    # Historical Context
+    section_heading("Historical Context", "Recent price action context for the current tape.")
+    major_rows = forex_df[forex_df["Symbol"].isin(MAJOR_SYMBOLS)].copy()
+    risk_rows = forex_df[forex_df["Symbol"].isin(RISK_SYMBOLS)].copy()
+    h1, h2 = st.columns(2)
+    with h1:
+        display_price_table("Relative Strength Leaders", major_rows.sort_values("7D %", ascending=False, na_position="last"), max_rows=5)
+    with h2:
+        display_price_table("Relative Strength Laggards", risk_rows.sort_values("7D %", ascending=True, na_position="last"), max_rows=5)
+    list_grid([
+        {
+            "title": "Historical Read",
+            "tone": "info",
+            "rows": [
+                ("Cycle", market_cycle["cycle"]),
+                ("Leadership", usd["state"]),
+                ("Breadth", breadth["state"]),
+                ("Confidence", f"{top_score_global:.1f} / 100"),
+            ],
+        }
+    ])
 
-        # Institutional Grade derived from regime permission + top opportunity score (UI-only)
-        if regime["trade_allowed"]:
-            institutional_grade = "READY" if top_score_global >= 65 else "PENDING CONFIRMATION"
-        else:
-            institutional_grade = "BLOCKED"
+    # Data Controls
+    section_heading("Data Controls", "Operational refresh controls kept below the decision flow.")
+    c1, c2, c3 = st.columns([1, 1, 1])
+    with c1:
+        if st.button("Refresh Forex Pulse Data", width="stretch"):
+            st.cache_data.clear()
+            st.rerun()
+    with c2:
+        st.selectbox("Lookback", ["7d", "14d", "30d"], index=["7d", "14d", "30d"].index(period) if period in ["7d", "14d", "30d"] else 0, key="forex_pulse_period")
+    with c3:
+        st.selectbox("Interval", ["1h", "2h", "4h", "1d"], index=["1h", "2h", "4h", "1d"].index(interval) if interval in ["1h", "2h", "4h", "1d"] else 0, key="forex_pulse_interval")
 
-        metric_grid([
-            {"label": "Regime", "value": f"{regime_icon(regime['regime'])} {regime['regime']}", "detail": regime["playbook"], "tone": regime_tone(regime["regime"])},
-            {"label": "USD Strength", "value": usd["state"], "detail": f"{usd['score']}/100", "tone": usd["tone"]},
-            {"label": "AUD/JPY 24H", "value": format_pct(regime["aud_jpy_24h"]), "detail": "Carry/risk barometer.", "tone": "good" if regime["aud_jpy_24h"] > 0 else "risk" if regime["aud_jpy_24h"] < -0.5 else "warning"},
-            {"label": "USD/JPY 24H", "value": format_pct(regime["usd_jpy_24h"]), "detail": "Dollar-yen / rates pulse.", "tone": "good" if regime["usd_jpy_24h"] > 0 else "risk" if regime["usd_jpy_24h"] < -0.5 else "warning"},
-            {"label": "Carry Avg 24H", "value": format_pct(regime["carry_avg_24h"]), "detail": "AUDJPY + CADJPY.", "tone": "good" if regime["carry_avg_24h"] > 0 else "risk" if regime["carry_avg_24h"] < -0.5 else "warning"},
-            {"label": "Trade Allowed", "value": "YES" if regime["trade_allowed"] else "NO", "detail": "Forex scanner permission.", "tone": "good" if regime["trade_allowed"] else "risk"},
-            {"label": "Institutional Grade", "value": institutional_grade, "detail": "UI grade: readiness for capital deployment.", "tone": "good" if institutional_grade == "READY" else "warning" if "PENDING" in institutional_grade else "risk"},
-            {"label": "Market Cycle", "value": f"{market_cycle['icon']} {market_cycle['cycle']}", "detail": market_cycle["note"], "tone": market_cycle["tone"]},
-            {"label": "Liquidity Proxy", "value": liquidity["state"], "detail": f"{liquidity['score']}/100", "tone": liquidity["tone"]},
+    # Diagnostics
+    section_heading("Diagnostics", "Technical and developer-oriented details are collapsed below.")
+    with st.expander("Forex Regime Details", expanded=False):
+        details_df = pd.DataFrame([
+            {"Metric": "Regime", "Reading": regime["regime"]},
+            {"Metric": "Stress", "Reading": f"{stress_score}/100 — {stress_label}"},
+            {"Metric": "Breadth", "Reading": f"{breadth['score']:.1f}/100 — {breadth['state']}"},
+            {"Metric": "USD Strength", "Reading": f"{usd['state']} — {usd['score']}/100"},
+            {"Metric": "Liquidity Proxy", "Reading": f"{liquidity['state']} — {liquidity['score']}/100"},
+            {"Metric": "Market Cycle", "Reading": f"{market_cycle['cycle']} — {market_cycle['note']}"},
+            {"Metric": "AUD/JPY 24H", "Reading": format_pct(regime["aud_jpy_24h"])},
+            {"Metric": "CAD/JPY 24H", "Reading": format_pct(regime["cad_jpy_24h"])},
+            {"Metric": "EUR/USD 24H", "Reading": format_pct(regime["eur_usd_24h"])},
+            {"Metric": "GBP/USD 24H", "Reading": format_pct(regime["gbp_usd_24h"])},
+            {"Metric": "Trade Allowed", "Reading": "YES" if regime["trade_allowed"] else "NO"},
+            {"Metric": "Execution Multiplier", "Reading": f"{regime['execution_multiplier']:.2f}x"},
         ])
+        st.dataframe(details_df, width="stretch", hide_index=True)
 
-        if regime["trade_allowed"]:
-            st.info(regime["playbook"])
-        else:
-            st.error(regime["playbook"])
-
-        # Show more: concise rationale and conditional change triggers (UI-only explanatory text)
-        with st.expander("Show more", expanded=False):
-            st.markdown(f"**Why:** {regime['playbook']} — Stress {stress_score}/100, Breadth {breadth['score']:.1f}/100.")
-            st.markdown(f"**What to do:** { 'Follow desk action plan and confirm setups' if institutional_grade == 'READY' else 'Wait for qualified setups or confirmation from Scanner/Research' }.")
-            st.markdown(f"**What would change this recommendation:** A qualified opportunity with score >= 65 or a change in regime/trade permission would move Institutional Grade to READY.")
-
-        if regime["regime"] == "RISK-OFF":
-            action_tone = "risk"
-            exposure = "25% - 50%"
-            preferred = "USD / JPY defensive pairs"
-            avoid = "Broad carry exposure"
-            aggression = "Low"
-        elif regime["regime"] in ("CAUTIOUS", "SELECTIVE"):
-            action_tone = "warning"
-            exposure = "40% - 70%"
-            preferred = "Majors / strongest directional pairs"
-            avoid = "Noisy crosses"
-            aggression = "Moderate"
-        else:
-            action_tone = "good"
-            exposure = "70% - 100%"
-            preferred = "Trend leaders"
-            avoid = "Late entries and thin crosses"
-            aggression = "Normal"
-
-        list_grid([
-            {
-                "title": "Action Plan",
-                "tone": action_tone,
-                "rows": [
-                    ("1", "Confirm USD direction first"),
-                    ("2", "Check JPY and carry crosses"),
-                    ("3", "Favor liquid pairs with clean trend"),
-                    ("4", "Reduce size when breadth weakens"),
-                ],
-            },
-            {
-                "title": "Trade Bias",
-                "tone": action_tone,
-                "rows": [
-                    ("Exposure", exposure),
-                    ("Preferred Setup", preferred),
-                    ("Avoid", avoid),
-                    ("Aggression", aggression),
-                    ("Position Size", f"{regime['execution_multiplier']:.2f}x"),
-                ],
-            },
-        ])
-
-        st.subheader("📘 Forex Playbook")
-        st.caption(
-            "What it means: Converts regime, USD strength, liquidity, breadth, "
-            "stress, and market cycle into a practical forex playbook."
-        )
-        list_grid(build_forex_playbook_cards(regime, breadth, stress_score, usd, liquidity, market_cycle))
-        st.info(market_cycle["note"])
-        st.caption(liquidity["note"])
-
-        help_text("Forex Pulse is informational only. It does not place trades and does not route orders.")
-
-        st.divider()
-        st.subheader("📌 Forex Snapshot")
-        st.caption("What it means: Quick read of majors, crosses, and carry/risk pairs.")
-
-        major_rows = forex_df[forex_df["Symbol"].isin(MAJOR_SYMBOLS)].copy()
-        risk_rows = forex_df[forex_df["Symbol"].isin(RISK_SYMBOLS)].copy()
-        cross_rows = forex_df[~forex_df["Symbol"].isin(MAJOR_SYMBOLS)].copy()
-
-        display_price_table("Major FX Pairs", major_rows, max_rows=8)
-        display_price_table("Carry / Risk Crosses", risk_rows.sort_values("24H %", ascending=False, na_position="last"), max_rows=8)
-        display_price_table("FX Crosses", cross_rows.sort_values("24H %", ascending=False, na_position="last"), max_rows=8)
-
-        st.divider()
-        st.subheader("📚 Reference Center")
-        st.caption("What it means: Diagnostic data used to validate the current forex read.")
-
-        with st.expander("Forex Regime Details", expanded=False):
-            details_df = pd.DataFrame([
-                {"Metric": "Regime", "Reading": regime["regime"]},
-                {"Metric": "Stress", "Reading": f"{stress_score}/100 — {stress_label}"},
-                {"Metric": "Breadth", "Reading": f"{breadth['score']:.1f}/100 — {breadth['state']}"},
-                {"Metric": "USD Strength", "Reading": f"{usd['state']} — {usd['score']}/100"},
-                {"Metric": "Liquidity Proxy", "Reading": f"{liquidity['state']} — {liquidity['score']}/100"},
-                {"Metric": "Market Cycle", "Reading": f"{market_cycle['cycle']} — {market_cycle['note']}"},
-                {"Metric": "AUD/JPY 24H", "Reading": format_pct(regime["aud_jpy_24h"])},
-                {"Metric": "CAD/JPY 24H", "Reading": format_pct(regime["cad_jpy_24h"])},
-                {"Metric": "EUR/USD 24H", "Reading": format_pct(regime["eur_usd_24h"])},
-                {"Metric": "GBP/USD 24H", "Reading": format_pct(regime["gbp_usd_24h"])},
-                {"Metric": "Trade Allowed", "Reading": "YES" if regime["trade_allowed"] else "NO"},
-                {"Metric": "Execution Multiplier", "Reading": f"{regime['execution_multiplier']:.2f}x"},
-            ])
-            st.dataframe(details_df, width="stretch", hide_index=True)
-
-        with st.expander("Data Status", expanded=False):
-            st.write({
-                "provider": "yfinance",
-                "period": period,
-                "interval": interval,
-                "assets_loaded": int(forex_df.shape[0]),
-                "last_refresh_local": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "last_refresh_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            })
+    with st.expander("Data Status", expanded=False):
+        st.write({
+            "provider": "yfinance",
+            "period": period,
+            "interval": interval,
+            "assets_loaded": int(forex_df.shape[0]),
+            "last_refresh_local": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "last_refresh_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "latest_data_timestamp": latest_timestamp,
+            "signal_bus_best_symbol": forex_pulse_bus_payload.get("best_symbol"),
+            "signal_bus_cycle": forex_pulse_bus_payload.get("market_cycle"),
+        })
 
 
 if __name__ == "__main__":

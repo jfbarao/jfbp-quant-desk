@@ -197,7 +197,7 @@ def display_table(title: str, df):
     st.subheader(title)
 
     if df is None or df.empty:
-        st.warning("No data available.")
+        st.info("No data available yet.")
         return
 
     styled = df.style.map(
@@ -216,7 +216,7 @@ def display_compact_market_table(title: str, df, max_rows: int | None = None) ->
     st.markdown(f"#### {title}")
 
     if df is None or df.empty:
-        st.info("No data available.")
+        st.info("No data available yet.")
         return
 
     view_df = df.copy()
@@ -2308,11 +2308,10 @@ def run_page() -> None:
         best_mega_move=ai_best_mega_move,
     )
 
-    st.subheader("🤖 AI Market Brief")
+    st.subheader("Executive Briefing")
 
     st.caption(
-        "What it means: Executive summary of today's market conditions. "
-        "Read this first for the 30-second overview."
+        "Immediate institutional read on market regime, risk posture, and execution conditions."
     )
 
     if ai_market_brief["tone"] == "good":
@@ -2346,11 +2345,10 @@ def run_page() -> None:
 
         st.divider()
 
-        st.subheader("🚦 Market Stress Dashboard")
+        st.subheader("Risk Assessment")
 
         st.caption(
-            "What it means: Measures overall market risk and determines "
-            "how aggressive your trading should be."
+            "Decision-ready risk posture based on stress, regime, and execution multiplier."
         )
 
         pulse_metric_grid(
@@ -2460,11 +2458,12 @@ def run_page() -> None:
             ]
         )
 
-        st.dataframe(
-            stress_df,
-            width="stretch",
-            hide_index=True,
-        )
+        with st.expander("Stress Engine Details", expanded=False):
+            st.dataframe(
+                stress_df,
+                width="stretch",
+                hide_index=True,
+            )
         
         # =====================================================
         # EVENT BANNER
@@ -2523,11 +2522,10 @@ def run_page() -> None:
 
         st.divider()
 
-        st.subheader("What Happened Today?")
+        st.subheader("Executive Summary")
 
         st.caption(
-            "What it means: Plain-English explanation of the main market move, "
-            "leadership, weakness, and stress reading."
+            "Single summary statement of today's market move and institutional implication."
         )
 
         st.info(summary)
@@ -2539,16 +2537,15 @@ def run_page() -> None:
 
         st.divider()
 
-        st.subheader("📊 Market Breadth Engine")
+        st.subheader("Market Breadth")
 
         st.caption(
-            "What it means: Measures how many stocks, sectors, and indexes "
-            "are participating in the current move."
+            "Participation quality across indexes, sectors, and megacaps."
         )
 
         if breadth_df.empty:
 
-            st.warning("Breadth data unavailable.")
+            st.info("No data available yet.")
 
         else:
 
@@ -2653,11 +2650,10 @@ def run_page() -> None:
 
         st.divider()
 
-        st.subheader("🎯 Market Playbook")
+        st.subheader("Execution Plan")
 
         st.caption(
-            "What it means: Converts market conditions into practical trading "
-            "guidance and risk management."
+            "Institutional execution guidance from regime, event profile, and risk state."
         )
 
         playbook_lookup = dict(
@@ -3793,11 +3789,10 @@ def run_page() -> None:
         # Consolidated market status dashboard.
         # =====================================================
 
-        st.subheader("🎯 Decision Center")
+        st.subheader("Institutional Snapshot")
 
         st.caption(
-            "What it means: High-level snapshot of market health, risk, breadth, "
-            "regime, and execution conditions."
+            "Compact status cards for event, risk, breadth, and position-size posture."
         )
 
         dc1, dc2 = responsive_columns(2)
@@ -3851,14 +3846,7 @@ def run_page() -> None:
                 tone="info",
             )
 
-        st.info(
-            decision_support.get(
-                "primary_action",
-                "No decision guidance available.",
-            )
-        )
-
-        st.caption(f"Regime reason: {scanner_regime_reason}")
+        # Primary action is already conveyed in Execution Plan and Trade Management.
 
         # =====================================================
         # REGIME GUIDANCE SOURCE
@@ -3911,11 +3899,10 @@ def run_page() -> None:
 
         st.divider()
 
-        st.subheader("🎯 Trade Guidance Center")
+        st.subheader("Trade Management")
 
         st.caption(
-            "What it means: Practical trading guidance combining action steps, "
-            "trade bias, and current leadership focus."
+            "Position-management and execution discipline for the current market posture."
         )
 
         action_cards = list(recommended_actions or [])
@@ -4076,11 +4063,10 @@ def run_page() -> None:
 
         st.divider()
 
-        st.subheader("🌐 Market Regime Dashboard")
+        st.subheader("Regime Details")
 
         st.caption(
-            "What it means: Breaks down the current market regime and "
-            "exposure levels."
+            "Regime and exposure diagnostics kept compact for production scanning."
         )
 
         pulse_metric_grid(
@@ -4286,11 +4272,10 @@ def run_page() -> None:
 
         st.divider()
 
-        st.subheader("📊 Key Market Tables")
+        st.subheader("Market Tables")
 
         st.caption(
-            "What it means: Real-time performance of major indexes, sectors, "
-            "and megacap stocks."
+            "Reference performance tables for indexes, megacaps, and sector reaction."
         )
 
         display_compact_market_table(
@@ -4317,11 +4302,10 @@ def run_page() -> None:
 
         st.divider()
 
-        st.subheader("📚 Reference Center")
+        st.subheader("Diagnostics")
 
         st.caption(
-            "What it means: Historical and diagnostic tools used to validate "
-            "the current market reading."
+            "Developer-oriented and historical diagnostics are collapsed below."
         )
 
         ref_left, ref_right = responsive_columns(2)

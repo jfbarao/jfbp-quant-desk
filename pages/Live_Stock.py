@@ -58,10 +58,12 @@ def inject_live_stock_responsive_css() -> None:
                 line-height: 1.18 !important;
                 font-weight: 850 !important;
                 color: #1f2937 !important;
+                margin-top: 0.55rem !important;
+                margin-bottom: 0.28rem !important;
             }
 
             div[data-testid="stHorizontalBlock"] {
-                gap: 0.85rem !important;
+                gap: 0.72rem !important;
                 align-items: stretch !important;
             }
 
@@ -125,7 +127,7 @@ def inject_live_stock_responsive_css() -> None:
                 border-radius: 16px;
                 padding: 1.0rem 1.1rem;
                 box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-                margin-bottom: 0.85rem;
+                margin-bottom: 0.68rem;
                 overflow-wrap: anywhere;
             }
 
@@ -350,8 +352,8 @@ def inject_live_stock_commander_css() -> None:
                 border: 1px solid #bbf7d0;
                 background: #ecfdf5;
                 border-radius: 18px;
-                padding: 0.88rem 0.92rem;
-                margin: 0.60rem 0 0.82rem 0;
+                padding: 0.70rem 0.78rem;
+                margin: 0.46rem 0 0.64rem 0;
                 box-shadow: 0 2px 10px rgba(15, 23, 42, 0.05);
             }
             .jfbp-live-hero.watch {
@@ -365,6 +367,11 @@ def inject_live_stock_commander_css() -> None:
             .jfbp-live-hero.info {
                 border-color: #bfdbfe;
                 background: #eff6ff;
+            }
+
+            .jfbp-live-hero.cache-compact {
+                padding: 0.58rem 0.66rem;
+                margin: 0.34rem 0 0.52rem 0;
             }
 
             .jfbp-live-kicker {
@@ -575,7 +582,7 @@ def build_market_analytics_df(snapshot: dict) -> pd.DataFrame:
 
 
 def render_market_opportunity_dashboard(analytics_df: pd.DataFrame) -> None:
-    st.subheader("Opportunity Dashboard")
+    st.subheader("Institutional Opportunity Dashboard")
     st.caption("Sector and asset-class leadership map to direct immediate attention.")
 
     if analytics_df.empty:
@@ -770,7 +777,7 @@ def render_live_stock_commander_report(symbol: str, data: dict, snapshot: dict) 
     price = safe_price_text(data.get("price", "N/A")) if data else "N/A"
     hub_size = len(snapshot)
 
-    st.subheader("🎖️ Commander Market Hub Report")
+    st.subheader("Institutional Market Summary")
     st.caption("Fast single-symbol read: cache state, price, hub size, and next action.")
 
     st.markdown(
@@ -878,7 +885,7 @@ def render_live_stock_command_brief(symbol: str, data: dict, snapshot: dict) -> 
 
 
 def render_live_stock_handoff_center(symbol: str, data: dict) -> None:
-    st.subheader("🧭 Symbol Handoff Center")
+    st.subheader("Symbol Handoff Center")
     st.caption("Prepare the selected symbol for the next page in the research and execution workflow.")
 
     h1, h2, h3, h4, h5 = jfbp_columns(5)
@@ -974,15 +981,14 @@ def render_market_cache_command_center(symbol: str, data: dict, snapshot: dict) 
     hero_class = "risk" if tone == "risk" else "watch" if tone == "warning" else ""
     last_update = _cache_last_update(snapshot)
 
-    st.subheader("📡 Market Cache Command Center")
+    st.subheader("Market Cache Command Center")
     st.caption(
-        "Command view of the symbols currently held in the JFBP market cache. "
-        "This page verifies cached state only and does not force a new market download."
+        "Command view of symbols currently held in the JFBP market cache (verification only)."
     )
 
     st.markdown(
         f"""
-        <div class="jfbp-live-hero {hero_class}">
+        <div class="jfbp-live-hero {hero_class} cache-compact">
             <div class="jfbp-live-kicker">Institutional Market Cache Command</div>
             <div class="jfbp-live-hero-title">📡 CACHE STATUS: {html.escape(cache_status)}</div>
             <div class="jfbp-live-summary">{html.escape(message)}</div>
@@ -1069,31 +1075,18 @@ def run_page():
 
     inject_live_stock_commander_css()
 
-    st.title("📡 Market Hub")
+    st.title("Market Hub")
     st.caption(
-        "Verify cached market data, inspect a selected symbol, and hand it off to Research, Trade Command, OMS, or Position Command."
+        "Institutional live-market monitor for cache verification and decision workflow handoff."
     )
 
     st.markdown(
         """
         <div class="jfbp-live-workflow">
-            🚀 Workflow: Market Pulse → Scanner → Research Stock → Market Hub → Trade Command → OMS → Position Command → Journal
+            Workflow: Symbol → Institutional Market Summary → Symbol Handoff Center → Executive Market Brief → Institutional Opportunity Dashboard → Market Radar → Watchlists → Market Cache Command Center
         </div>
         """,
         unsafe_allow_html=True,
-    )
-
-    live_stock_help_expander(
-        "How to use this page",
-        """
-        **Market Hub is the single-symbol cache command center.** It verifies the data already loaded by the app and does not fetch new live data while the page renders, keeping the page fast and stable.
-
-        **Symbol** shows the selected ticker from the current market cache. If the ticker exists in the cache, the page shows its cached price and marks it **ACTIVE**.
-
-        **Hub Size** shows how many symbols are currently stored in the local market cache. A larger hub means other parts of the app have already loaded more market data.
-
-        **Simulate Tick** is only a local test button. It nudges the cached price slightly so you can confirm that the cache and refresh logic are working.
-        """,
     )
 
     symbol = st.text_input(
@@ -1125,73 +1118,39 @@ def run_page():
         unsafe_allow_html=True,
     )
 
+
     live_stock_tip(
         "Market Hub reads from the app's existing market cache only. Use it to verify what the app already knows, not to force a new quote download."
     )
 
     analytics_df = build_market_analytics_df(snapshot)
 
-    # 2) Market Status Banner
+    # Institutional flow order v2.3
     render_live_stock_commander_report(symbol, data, snapshot)
-
-    # 3) Executive Market Brief
-    render_live_stock_command_brief(symbol, data, snapshot)
-
-    # Keep existing navigation/handoff controls
     render_live_stock_handoff_center(symbol, data)
-
-    live_stock_tip(
-        "If Price shows N/A, it usually means that symbol has not been loaded into the market cache yet. Open Scanner, Research Stock, or another market page first, then come back to Market Hub."
+    render_live_stock_command_brief(symbol, data, snapshot)
+    render_market_opportunity_dashboard(analytics_df)
+    render_market_radar(analytics_df)
+    render_market_watchlists(symbol, analytics_df)
+    render_live_stock_snapshot_tables(
+        symbol=symbol,
+        selected_price=selected_price,
+        selected_status=selected_status,
+        snapshot=snapshot,
     )
 
-    # =====================================================
-    # CONTROLS
-    # =====================================================
+    live_stock_help_expander(
+        "How to use this page",
+        """
+        **Market Hub is the single-symbol cache command center.** It verifies the data already loaded by the app and does not fetch new live data while the page renders, keeping the page fast and stable.
 
-    with st.expander("⚙️ Market Hub Controls", expanded=False):
-        live_stock_tip(
-            "Refresh View reloads the Streamlit page. Simulate Tick tests whether the market cache updates. Clear Selection resets the symbol back to AAPL."
-        )
+        **Symbol** shows the selected ticker from the current market cache. If the ticker exists in the cache, the page shows its cached price and marks it **ACTIVE**.
 
-        control_cols = jfbp_columns(3)
+        **Hub Size** shows how many symbols are currently stored in the local market cache. A larger hub means other parts of the app have already loaded more market data.
 
-        with control_cols[0]:
-            if st.button("Refresh View", width="stretch"):
-                st.rerun()
-
-        with control_cols[1]:
-            if st.button("Simulate Tick", width="stretch"):
-                current_price = data.get("price", 0) if data else 0
-
-                try:
-                    new_price = round(float(current_price or 0) * 1.001, 2)
-                except Exception:
-                    new_price = 0.0
-
-                if market is not None and hasattr(market, "update_price"):
-                    try:
-                        market.update_price(symbol, new_price)
-                    except Exception:
-                        pass
-
-                st.rerun()
-
-        with control_cols[2]:
-            if st.button("Clear Selection", width="stretch"):
-                st.session_state["selected_symbol"] = "AAPL"
-                st.rerun()
-
-    # 4) Opportunity Dashboard
-    render_market_opportunity_dashboard(analytics_df)
-
-    # 5) Market Radar
-    render_market_radar(analytics_df)
-
-    # 6) Watchlists
-    render_market_watchlists(symbol, analytics_df)
-
-    # 7) Market Trend
-    render_market_trend_section(symbol, data, snapshot, analytics_df)
+        **Simulate Tick** is only a local test button. It nudges the cached price slightly so you can confirm that the cache and refresh logic are working.
+        """,
+    )
 
 
 def page() -> None:

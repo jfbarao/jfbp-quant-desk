@@ -119,6 +119,13 @@ div[data-testid="stDataFrame"] * { white-space: normal !important; overflow-wrap
 .pcc-hero-kicker { font-size:var(--jfbp-type-card-label, 0.72rem); font-weight:850; letter-spacing:0.055em; text-transform:uppercase; color:#64748b; margin-bottom:0.24rem; }
 .pcc-hero-title { font-size:clamp(1.22rem, 2.35vw, 1.62rem); font-weight:880; line-height:1.14; margin:0 0 0.30rem 0; }
 .pcc-hero-text { font-size:var(--jfbp-type-body, 0.94rem); font-weight:700; color:#334155; line-height:1.38; margin-bottom:0.36rem; }
+.pcc-hero-badges { display:flex; flex-wrap:wrap; gap:0.46rem; margin:0.08rem 0 0.46rem 0; }
+.pcc-pill { display:inline-flex; align-items:center; gap:0.36rem; border-radius:999px; padding:0.30rem 0.58rem; border:1px solid; line-height:1.12; }
+.pcc-pill-label { font-size:0.68rem; font-weight:880; letter-spacing:0.05em; text-transform:uppercase; opacity:0.92; }
+.pcc-pill-value { font-size:0.82rem; font-weight:900; }
+.pcc-pill-status { background:#fff7ed; border-color:#fdba74; color:#9a3412; }
+.pcc-pill-conviction { background:#eff6ff; border-color:#93c5fd; color:#1d4ed8; }
+.pcc-pill-risk { background:#fef2f2; border-color:#fca5a5; color:#991b1b; }
 .pcc-hero-action { border-radius:12px; padding:0.60rem 0.78rem; background:rgba(255,255,255,0.72); border:1px solid rgba(148,163,184,0.35); font-size:var(--jfbp-type-body, 0.94rem); font-weight:820; color:#111827; }
 
 .pcc-summary-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap:0.85rem; margin:0.45rem 0 1.0rem 0; }
@@ -1303,30 +1310,17 @@ def run_page() -> None:
         if st.button("Refresh Position Center", width="stretch", key="pcc_refresh"):
             st.rerun()
 
-    render_commander_report(report, market, heat, exposure)
-
-    st.subheader("Executive Position Brief")
-    st.caption("High-level read on the active position book before drilling into management actions.")
-    render_card_grid([
-        {"title": "Position Status", "value": report.get("status", "STANDBY"), "detail": "Commander portfolio posture", "tone": report.get("tone", "info")},
-        {"title": "Total Exposure", "value": fmt_money(exposure["gross_exposure"]), "detail": f"Net {fmt_money(exposure['net_exposure'])}", "tone": "info" if positions else "warning"},
-        {"title": "Open P&L", "value": fmt_money(total_open_pnl), "detail": "Current unrealized position P&L", "tone": pnl_tone(total_open_pnl)},
-    ])
-    render_card_grid([
-        {"title": "Realized P&L", "value": fmt_money(realized_pnl), "detail": "From engine/ledger when available", "tone": pnl_tone(realized_pnl)},
-        {"title": "Risk Utilization", "value": f"{heat['heat']:.1f}%", "detail": f"{heat['label']} | Max guide {heat['max_allowed']:.1f}%", "tone": heat["tone"]},
-        {"title": "Avg Health", "value": health_badge(avg_health), "detail": "Open-position health score", "tone": "good" if avg_health >= 80 else "warning" if avg_health >= 40 else "risk"},
-    ])
-
-    st.subheader("Position Health Monitor")
-    st.caption("Risk dashboard for conviction, stop distance, reward/risk, drawdown, volatility, and income quality.")
     selected_symbol = st.selectbox("Select position", options=sorted(positions.keys()) if positions else ["No positions"], key="pcc_selected_symbol")
     selected_row = positions.get(selected_symbol, {}) if positions else {}
-    selected_health = score_position(selected_row, market, scanner_lookup().get(selected_symbol, {})) if selected_row else {}
+    selected_scanner = scanner_lookup().get(selected_symbol, {}) if selected_row else {}
+    selected_health = score_position(selected_row, market, selected_scanner) if selected_row else {}
 
     last_price = safe_float(selected_row.get("last_price"), 0.0)
     stop_price = safe_float(selected_health.get("stop"), 0.0)
     target_price = safe_float(selected_health.get("target"), 0.0)
+    selected_value = abs(safe_float(selected_row.get("position_value"), 0.0))
+    gross_exposure = max(safe_float(exposure.get("gross_exposure"), 0.0), 1.0)
+    portfolio_impact_pct = (selected_value / gross_exposure) * 100.0 if selected_value > 0 else 0.0
 
     if last_price:
         stop_distance = ((last_price - stop_price) / last_price) * 100.0
@@ -1335,154 +1329,298 @@ def run_page() -> None:
         stop_distance = 0.0
         reward_risk = 0.0
 
-    health_cards = [
-        {"title": "Position Grade", "value": health_badge(selected_health.get("health_score", 0)), "detail": "Institutional position score", "tone": position_summary_tone(selected_health.get("action", ""))},
-        {"title": "Conviction", "value": f"{selected_health.get('health_score', 0):.0f}/100", "detail": "Score translated to conviction", "tone": "good" if selected_health.get("health_score", 0) >= 78 else "warning" if selected_health.get("health_score", 0) >= 55 else "risk"},
-        {"title": "Risk Level", "value": selected_health.get("health_label", "N/A"), "detail": "Current position risk state", "tone": selected_health.get("tone", "info")},
-        {"title": "Stop Distance", "value": fmt_pct(stop_distance), "detail": "Distance to modeled stop", "tone": "warning"},
-        {"title": "Reward / Risk", "value": fmt_pct(reward_risk), "detail": "Modeled target versus stop", "tone": "info"},
-        {"title": "Drawdown", "value": fmt_pct(min(0.0, selected_health.get("pnl_pct", 0.0))), "detail": "Unrealized loss pressure", "tone": "risk" if selected_health.get("pnl_pct", 0.0) < 0 else "good"},
-        {"title": "Volatility", "value": selected_health.get("tone", "N/A"), "detail": "Health tone proxy", "tone": selected_health.get("tone", "info")},
-        {"title": "Income Quality", "value": "N/A", "detail": "See position income characteristics", "tone": "neutral"},
-    ]
-    render_card_grid(health_cards, compact=True)
+    def professional_text(value: Any, fallback: str = "Not Available") -> str:
+        text = str(value or "").strip()
+        if text.upper() in {"", "N/A", "NA", "NONE", "NULL", "UNKNOWN", "-", "—"}:
+            return fallback
+        return text
 
-    st.subheader("Position Management Center")
-    st.caption("Operational controls grouped together for stop, target, risk amount, and action readiness.")
+    score_value = safe_float(selected_health.get("health_score"), 0.0)
+    if score_value >= 78:
+        conviction_text = "High"
+    elif score_value >= 55:
+        conviction_text = "Medium"
+    else:
+        conviction_text = "Low"
+
+    risk_level = professional_text(selected_health.get("health_label"), "Not Available")
+    current_action = str(selected_health.get("action", "HOLD")).upper().strip()
+    status_display_map = {
+        "HOLD": "Hold",
+        "TRIM": "Trim",
+        "TIGHTEN STOP": "Tighten Stop",
+        "EXIT": "Exit",
+    }
+    status_display = status_display_map.get(current_action, professional_text(current_action, "Pending"))
+
+    if current_action == "EXIT":
+        decision_summary = "Reduce / Exit"
+        decision_style = "exit"
+    elif current_action == "TRIM":
+        decision_summary = "Reduce Risk"
+        decision_style = "tighten"
+    elif current_action == "TIGHTEN STOP":
+        decision_summary = "Tighten Stop / Reduce Risk"
+        decision_style = "tighten"
+    elif score_value >= 85 and str(market.get("regime", "")).upper().strip() in {"RISK_ON", "RISK-ON"}:
+        decision_summary = "Increase Position"
+        decision_style = "add"
+    else:
+        decision_summary = "Hold Existing Position"
+        decision_style = "hold"
+
+    if decision_style == "hold":
+        recommendation_color = "#15803d"
+        recommendation_bg = "#ecfdf3"
+        recommendation_border = "#86efac"
+    elif decision_style == "add":
+        recommendation_color = "#1d4ed8"
+        recommendation_bg = "#eff6ff"
+        recommendation_border = "#93c5fd"
+    elif decision_style == "tighten":
+        recommendation_color = "#b45309"
+        recommendation_bg = "#fffbeb"
+        recommendation_border = "#fcd34d"
+    else:
+        recommendation_color = "#b91c1c"
+        recommendation_bg = "#fef2f2"
+        recommendation_border = "#fca5a5"
+
+    if decision_style in {"hold", "add"}:
+        oms_bg = "#2563eb"
+        oms_bg_hover = "#1d4ed8"
+        oms_border = "#1e40af"
+        oms_text = "#ffffff"
+    elif decision_style == "tighten":
+        oms_bg = "#f59e0b"
+        oms_bg_hover = "#d97706"
+        oms_border = "#b45309"
+        oms_text = "#111827"
+    else:
+        oms_bg = "#dc2626"
+        oms_bg_hover = "#b91c1c"
+        oms_border = "#991b1b"
+        oms_text = "#ffffff"
+
+    trend_display = professional_text(selected_scanner.get("trend", market.get("regime")), "Awaiting Confirmation")
+    rs_display = (
+        f"{safe_float(selected_scanner.get('rs_score'), 0.0):.2f}"
+        if selected_scanner and str(selected_scanner.get("rs_score", "")).strip() not in {"", "N/A", "UNKNOWN"}
+        else "Pending"
+    )
+    technical_display = professional_text(selected_health.get("health_label"), "Not Available")
+
+    why_items = [str(item).strip() for item in selected_health.get("reasons", []) if str(item).strip()][:3]
+    if not why_items:
+        why_items = [
+            "Primary trend and posture remain within current risk tolerance.",
+            "No critical distribution signal in the current model state.",
+            "Position remains in monitored institutional health range.",
+        ]
+
+    sector_value = professional_text(selected_row.get("sector"), "Not Available")
+    sector_pct = 0.0
+    if not sector_df.empty and "Sector" in sector_df.columns and "Exposure %" in sector_df.columns:
+        match = sector_df[sector_df["Sector"].astype(str) == sector_value]
+        if not match.empty:
+            sector_pct = safe_float(match.iloc[0].get("Exposure %"), 0.0)
+
+    if sector_pct >= 35:
+        correlation_risk = "High"
+        correlation_detail = f"{sector_value} concentration {sector_pct:.1f}%"
+        correlation_tone = "risk"
+    elif sector_pct >= 20:
+        correlation_risk = "Medium"
+        correlation_detail = f"{sector_value} concentration {sector_pct:.1f}%"
+        correlation_tone = "warning"
+    else:
+        correlation_risk = "Low"
+        correlation_detail = f"{sector_value} concentration {sector_pct:.1f}%"
+        correlation_tone = "good"
+
     if selected_row:
+        section_open("1) Position Brief", "One-glance institutional read for today's position decision.")
+        st.markdown(
+            f"""
+            <div class="pcc-hero" style="background:#f8fafc;border-color:#dbe3ef;">
+                <div class="pcc-hero-kicker">Institutional Position Brief</div>
+                <div class="pcc-hero-title">Position: {html.escape(selected_symbol)}</div>
+                <div class="pcc-hero-badges">
+                    <div class="pcc-pill pcc-pill-status"><span class="pcc-pill-label">Status</span><span class="pcc-pill-value">{html.escape(status_display)}</span></div>
+                    <div class="pcc-pill pcc-pill-conviction"><span class="pcc-pill-label">Conviction</span><span class="pcc-pill-value">{html.escape(conviction_text)}</span></div>
+                    <div class="pcc-pill pcc-pill-risk"><span class="pcc-pill-label">Risk</span><span class="pcc-pill-value">{html.escape(risk_level)}</span></div>
+                </div>
+                <div class="pcc-hero-action">Action: {html.escape(decision_summary)}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        section_close()
+
+        section_open("2) Position Health", "Decision cards replacing raw metric walls.")
+        render_card_grid([
+            {"title": "Trend", "value": trend_display, "detail": "Directional posture", "tone": "info"},
+            {"title": "Momentum", "value": fmt_pct(selected_health.get("pnl_pct", 0.0)), "detail": "Open P&L momentum", "tone": pnl_tone(selected_health.get("pnl_pct", 0.0))},
+            {"title": "Relative Strength", "value": rs_display, "detail": "Scanner relative strength", "tone": "info"},
+            {"title": "Institutional Score", "value": health_badge(score_value), "detail": "Health engine output", "tone": position_summary_tone(current_action)},
+            {"title": "Risk Level", "value": risk_level, "detail": "Current model risk posture", "tone": selected_health.get("tone", "warning")},
+            {"title": "Technical Condition", "value": technical_display, "detail": f"Action bias: {status_display}", "tone": selected_health.get("tone", "info")},
+        ], compact=True)
+        section_close()
+
+        section_open("3) Decision Summary")
+        st.markdown(
+            f"""
+            <div style="text-align:center; padding:0.9rem 0.6rem; border:1px solid {recommendation_border}; border-radius:14px; background:{recommendation_bg};">
+                <div class="pcc-label">Today's Recommendation</div>
+                <div style="font-size:clamp(1.45rem, 2.8vw, 2.1rem); font-weight:900; color:{recommendation_color}; line-height:1.15;">
+                    {html.escape(decision_summary)}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        section_close()
+
+        section_open("4) Why?", "Concise institutional rationale.")
+        for item in why_items:
+            st.markdown(f"- {item}")
+        section_close()
+
+        section_open("5) Risk Dashboard", "Executive risk report for position-level impact.")
+        render_card_grid([
+            {"title": "Position Size", "value": f"{safe_float(selected_row.get('qty'), 0.0):,.2f}", "detail": f"Market value {fmt_money(selected_value)}", "tone": "info"},
+            {"title": "Portfolio Impact", "value": f"{portfolio_impact_pct:.1f}%", "detail": "Share of gross exposure", "tone": "warning" if portfolio_impact_pct >= 20 else "good"},
+            {"title": "Stop Distance", "value": fmt_pct(stop_distance), "detail": f"Stop {fmt_money(stop_price)} from last {fmt_money(last_price)}", "tone": "warning"},
+            {"title": "Drawdown Risk", "value": fmt_pct(min(0.0, selected_health.get('pnl_pct', 0.0))), "detail": "Current unrealized drawdown", "tone": "risk" if selected_health.get("pnl_pct", 0.0) < 0 else "good"},
+            {"title": "Correlation Risk", "value": correlation_risk, "detail": correlation_detail, "tone": correlation_tone},
+        ], compact=True)
+        section_close()
+
+        section_open("6) Execution Plan", "Action plan and OMS handoff tools.")
+        if current_action == "HOLD":
+            st.info("No action required. Continue monitoring. Review after next earnings.")
+        elif current_action == "TRIM":
+            st.warning(f"Reduce exposure in stages. Suggested trims: 25% then 50% if weakness persists. Modeled stop {fmt_money(stop_price)}.")
+        elif current_action == "TIGHTEN STOP":
+            st.warning(f"Hold position with tighter risk. Move stop toward breakeven. Current modeled stop {fmt_money(stop_price)}.")
+        else:
+            st.error(f"Reduce risk decisively. Full exit candidate if price loses stop area near {fmt_money(stop_price)}.")
+
         render_mini_grid([
-            ("Symbol", selected_symbol),
-            ("Side", selected_row.get("side", "N/A")),
-            ("Qty", f"{safe_float(selected_row.get('qty')):,.2f}"),
-            ("Current Stop", fmt_money(selected_health.get("stop"))),
-            ("Target", fmt_money(selected_health.get("target"))),
-            ("Risk Amount", fmt_money(abs(safe_float(selected_row.get('unrealized_pnl'), 0.0)))),
+            ("Entry Zone", fmt_money(selected_row.get("avg_price"))),
+            ("Scaling Plan", "25% / 50% trims"),
+            ("Stop", fmt_money(stop_price)),
+            ("Target", fmt_money(target_price)),
         ])
 
-        st.markdown("**Risk Reduction**")
-        risk_left, risk_right = st.columns(2)
-        with risk_left:
-            if st.button("🟡 Trim 25%", width="stretch", disabled=not bool(selected_row), key="pcc_trim_25"):
-                ticket = prepare_position_ticket(selected_row, "TRIM_25", 0.25)
-                st.success(f"Prepared 25% trim ticket for {ticket.get('symbol')}.")
-                st.json(ticket)
-        with risk_right:
-            if st.button("🟡 Trim 50%", width="stretch", disabled=not bool(selected_row), key="pcc_trim_50"):
-                ticket = prepare_position_ticket(selected_row, "TRIM_50", 0.50)
-                st.success(f"Prepared 50% trim ticket for {ticket.get('symbol')}.")
-                st.json(ticket)
+        st.markdown(
+            f"""
+            <style>
+            .st-key-pcc_open_oms button {{
+                background:{oms_bg} !important;
+                color:{oms_text} !important;
+                border:1px solid {oms_border} !important;
+            }}
+            .st-key-pcc_open_oms button:hover {{
+                background:{oms_bg_hover} !important;
+                color:{oms_text} !important;
+                border-color:{oms_border} !important;
+            }}
+            .st-key-pcc_prepare_exit button {{
+                background:#b91c1c !important;
+                color:#ffffff !important;
+                border:1px solid #991b1b !important;
+            }}
+            .st-key-pcc_prepare_exit button:hover {{
+                background:#991b1b !important;
+                color:#ffffff !important;
+                border-color:#7f1d1d !important;
+            }}
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
 
-        st.markdown("**Stop Management**")
-        if st.button("🟢 Move Stop to Breakeven", width="stretch", disabled=not bool(selected_row), key="pcc_stop_be"):
-            ticket = prepare_position_ticket(selected_row, "STOP_BREAKEVEN", 1.0)
-            st.success(f"Prepared breakeven stop ticket for {ticket.get('symbol')}.")
-            st.json(ticket)
-
-        st.markdown("**Exit**")
-        if st.button("🔴 Prepare Full Exit", width="stretch", disabled=not bool(selected_row), key="pcc_prepare_exit", type="primary"):
-            ticket = prepare_position_ticket(selected_row, "FULL_EXIT", 1.0)
-            st.success(f"Prepared full exit ticket for {ticket.get('symbol')}.")
-            st.json(ticket)
-
-        st.markdown("**Profit Management**")
-        if st.button("🟢 Lock Profit", width="stretch", disabled=not bool(selected_row), key="pcc_lock_profit"):
-            ticket = prepare_position_ticket(selected_row, "LOCK_PROFIT", 1.0)
-            st.success(f"Prepared profit-lock stop ticket for {ticket.get('symbol')}.")
-            st.json(ticket)
-
-        st.markdown("**Neutral**")
-        if st.button("🟢 Hold", width="stretch", disabled=not bool(selected_row), key="pcc_hold"):
-            st.info("Hold selected position. No routing action was changed.")
-
-        render_exit_rules_checklist(selected_health.get("reasons", ["No rule text available."]))
-        st.markdown('<div style="height: 0.6rem;"></div>', unsafe_allow_html=True)
-        st.caption("Execution Handoff")
-        if st.button("Open OMS With Prepared Ticket", width="stretch", disabled=not bool(selected_row), key="pcc_open_oms", type="primary"):
-            if selected_row:
-                prepare_position_ticket(selected_row, "FULL_EXIT", 1.0)
-            st.session_state["jfbp_main_navigation"] = "OMS Execution"
-            st.rerun()
-    else:
-        st.info("No positions available for management actions.")
-
-    st.subheader("Research & Analytics")
-    st.caption("Reference detail, ledger views, diagnostics, and closed-trade context live here after the operational workflow.")
-    with st.expander("📊 Open Position Monitor", expanded=False):
-        st.caption("Desktop table plus mobile cards for active position management.")
-        if pos_df.empty:
-            st.info("No open positions detected. Positions will appear here after OMS, Portfolio, or broker truth reports active holdings.")
-        else:
-            display_pos_df = pos_df.drop(columns=["Action Raw"], errors="ignore")
-            st.markdown('<div class="pcc-desktop-only">', unsafe_allow_html=True)
-            st.dataframe(display_pos_df, width="stretch", hide_index=True, height=360)
-            st.markdown('</div>', unsafe_allow_html=True)
-            render_mobile_position_cards(display_pos_df)
-    with st.expander("🧭 Position Diagnostics", expanded=False):
-        st.write({
-            "Version": "Frozen Build",
-            "Updated": now_iso(),
-            "Position Source": position_source,
-            "Positions": positions,
-            "Market Snapshot": market,
-            "Risk Snapshot": risk,
-            "Portfolio Heat": heat,
-            "Exposure Snapshot": exposure,
-            "Commander Report": report,
-            "Scanner Alignment": alignment_df.to_dict("records") if not alignment_df.empty else [],
-            "Position Ranking": ranking_df.to_dict("records") if not ranking_df.empty else [],
-            "Prepared Exit Ticket": st.session_state.get("pcc_prepared_exit_ticket", {}),
-            "Journal Prefill Note": st.session_state.get("journal_prefill_note", {}),
-            "Realized PnL": realized_pnl,
-            "Sector Exposure": sector_df.to_dict("records") if not sector_df.empty else [],
-            "Risk Alerts": risk_alerts,
-        })
-
-    with st.expander("📒 Trade History", expanded=False):
-        st.caption("Trades related to this position are archived here for review.")
-        if closed_archive_df.empty:
-            st.info("No closed-trade archive rows found in the current ledger yet.")
-        else:
-            st.dataframe(closed_archive_df, width="stretch", hide_index=True, height=320)
-
-    with st.expander("📝 Journal", expanded=False):
-        st.caption("Position review notes and journal handoff context.")
-        reviews = st.session_state.get("pcc_journal_reviews", [])
-        if not reviews:
-            st.info("No position reviews prepared yet.")
-        else:
-            st.dataframe(pd.DataFrame(reviews[:10]), width="stretch", hide_index=True, height=220)
-        journal_cols = st.columns(2)
-        with journal_cols[0]:
+        exec_left, exec_right = st.columns(2)
+        with exec_left:
+            if st.button("Open OMS With Prepared Ticket", width="stretch", disabled=not bool(selected_row), key="pcc_open_oms", type="primary"):
+                if selected_row:
+                    prepare_position_ticket(selected_row, "FULL_EXIT", 1.0)
+                st.session_state["jfbp_main_navigation"] = "OMS Execution"
+                st.rerun()
+        with exec_right:
             if st.button("Send Review to Journal", width="stretch", disabled=not bool(selected_row), key="pcc_send_journal"):
                 note = send_position_review_to_journal(selected_symbol, selected_row, selected_health)
                 st.success(f"Position review note prepared for {selected_symbol}.")
                 st.json(note)
-        with journal_cols[1]:
-            if st.button("Open Journal", width="stretch", disabled=not bool(selected_row), key="pcc_open_journal"):
-                st.session_state["jfbp_main_navigation"] = "Journal"
-                st.rerun()
 
-    tab_risk, tab_ledger, tab_archive = st.tabs([
-        "🚨 Risk Center",
-        "📒 Position Ledger",
-        "🗄 Trade Archive",
-    ])
+        st.markdown("**Risk Reduction Actions**")
+        rr1, rr2, rr3 = st.columns(3)
+        with rr1:
+            if st.button("🟡 Trim 25%", width="stretch", disabled=not bool(selected_row), key="pcc_trim_25"):
+                ticket = prepare_position_ticket(selected_row, "TRIM_25", 0.25)
+                st.success(f"Prepared 25% trim ticket for {ticket.get('symbol')}.")
+        with rr2:
+            if st.button("🟡 Trim 50%", width="stretch", disabled=not bool(selected_row), key="pcc_trim_50"):
+                ticket = prepare_position_ticket(selected_row, "TRIM_50", 0.50)
+                st.success(f"Prepared 50% trim ticket for {ticket.get('symbol')}.")
+        with rr3:
+            if st.button("🔴 Prepare Full Exit", width="stretch", disabled=not bool(selected_row), key="pcc_prepare_exit", type="primary"):
+                ticket = prepare_position_ticket(selected_row, "FULL_EXIT", 1.0)
+                st.success(f"Prepared full exit ticket for {ticket.get('symbol')}.")
 
-    with tab_risk:
-        section_open("🔎 Scanner Alignment Engine", "Compares current positions against the latest Scanner signal when available.")
+        st.markdown("**Stop / Profit Management**")
+        sp1, sp2, sp3 = st.columns(3)
+        with sp1:
+            if st.button("🟢 Move Stop to Breakeven", width="stretch", disabled=not bool(selected_row), key="pcc_stop_be"):
+                ticket = prepare_position_ticket(selected_row, "STOP_BREAKEVEN", 1.0)
+                st.success(f"Prepared breakeven stop ticket for {ticket.get('symbol')}.")
+        with sp2:
+            if st.button("🟢 Lock Profit", width="stretch", disabled=not bool(selected_row), key="pcc_lock_profit"):
+                ticket = prepare_position_ticket(selected_row, "LOCK_PROFIT", 1.0)
+                st.success(f"Prepared profit-lock stop ticket for {ticket.get('symbol')}.")
+        with sp3:
+            if st.button("🟢 Hold", width="stretch", disabled=not bool(selected_row), key="pcc_hold"):
+                st.info("Hold selected position. No routing action was changed.")
+
+        render_exit_rules_checklist(selected_health.get("reasons", ["No rule text available."]))
+        section_close()
+    else:
+        st.info("No positions available for position-level workflow. Review commander diagnostics below.")
+
+    st.subheader("7) Supporting Evidence")
+    st.caption("Secondary analytics are collapsed for a cleaner morning decision flow.")
+
+    with st.expander("▼ Trend Details", expanded=False):
+        render_commander_report(report, market, heat, exposure)
+
+    with st.expander("▼ Momentum Details", expanded=False):
+        render_card_grid([
+            {"title": "Open P&L", "value": fmt_money(total_open_pnl), "detail": "Current unrealized position P&L", "tone": pnl_tone(total_open_pnl)},
+            {"title": "Realized P&L", "value": fmt_money(realized_pnl), "detail": "Engine/ledger realized", "tone": pnl_tone(realized_pnl)},
+            {"title": "Avg Health", "value": health_badge(avg_health), "detail": "Book health momentum", "tone": "good" if avg_health >= 80 else "warning" if avg_health >= 40 else "risk"},
+        ])
+
+    with st.expander("▼ Volume", expanded=False):
+        if pos_df.empty:
+            st.info("No open positions detected.")
+        else:
+            display_pos_df = pos_df.drop(columns=["Action Raw"], errors="ignore")
+            st.dataframe(display_pos_df, width="stretch", hide_index=True, height=360)
+            render_mobile_position_cards(display_pos_df)
+
+    with st.expander("▼ Relative Strength", expanded=False):
         if alignment_df.empty:
             st.info("No scanner alignment available. Run Scanner first to populate current signals.")
         else:
             conflicts = alignment_df[alignment_df["Alignment"].astype(str).str.contains("Conflict|Risk", case=False, regex=True)]
             if not conflicts.empty:
                 conflict_symbols = ", ".join(conflicts["Symbol"].astype(str).head(5).tolist()) if "Symbol" in conflicts.columns else "review list"
-                st.error(f"🚨 SCANNER CONFLICT / POSITION RISK DETECTED: {conflict_symbols}. Review before adding exposure.")
-            else:
-                st.success("No critical Scanner conflicts detected.")
-            st.dataframe(alignment_df, width="stretch", hide_index=True, height=360)
-        section_close()
+                st.error(f"Scanner conflict / position risk detected: {conflict_symbols}.")
+            st.dataframe(alignment_df, width="stretch", hide_index=True, height=320)
 
-        section_open("🚨 Risk Alerts", "Commander alerts before adding or holding exposure.")
+    with st.expander("▼ Institutional Signals", expanded=False):
         for title, detail in risk_alerts:
             if title.startswith("🔴"):
                 st.error(f"**{title}**\n\n{detail}")
@@ -1490,39 +1628,38 @@ def run_page() -> None:
                 st.warning(f"**{title}**\n\n{detail}")
             else:
                 st.success(f"**{title}**\n\n{detail}")
-        section_close()
 
-        section_open("🧠 Position Health Method")
-        st.markdown(
-            """
-            Health score uses:
-            - open P&L versus cost basis
-            - Market Pulse regime and stress
-            - Scanner signal alignment when available
-            - estimated stop and target zones
-            - long/short regime conflict
-            - position action priority
-
-            Actions are advisory only: **HOLD**, **TRIM**, **TIGHTEN STOP**, or **EXIT**.
-            """
-        )
-        section_close()
-
-    with tab_ledger:
-        section_open("📒 Position Ledger", "Clean position ledger for current open holdings.")
-        if position_ledger_df.empty:
-            st.info("No open position ledger rows available.")
-        else:
-            st.dataframe(position_ledger_df, width="stretch", hide_index=True, height=420)
-        section_close()
-
-    with tab_archive:
-        section_open("🗄 Closed Trades Archive", "Closed or realized-trade rows from the portfolio ledger when available.")
-        if closed_archive_df.empty:
-            st.info("No closed-trade archive rows found in the current ledger yet.")
-        else:
-            st.dataframe(closed_archive_df, width="stretch", hide_index=True, height=420)
-        section_close()
+    with st.expander("▼ Statistics", expanded=False):
+        stat_tab_ledger, stat_tab_archive, stat_tab_diag = st.tabs(["Ledger", "Trade Archive", "Diagnostics"])
+        with stat_tab_ledger:
+            if position_ledger_df.empty:
+                st.info("No open position ledger rows available.")
+            else:
+                st.dataframe(position_ledger_df, width="stretch", hide_index=True, height=360)
+        with stat_tab_archive:
+            if closed_archive_df.empty:
+                st.info("No closed-trade archive rows found in the current ledger yet.")
+            else:
+                st.dataframe(closed_archive_df, width="stretch", hide_index=True, height=360)
+        with stat_tab_diag:
+            st.write({
+                "Version": "Frozen Build",
+                "Updated": now_iso(),
+                "Position Source": position_source,
+                "Positions": positions,
+                "Market Snapshot": market,
+                "Risk Snapshot": risk,
+                "Portfolio Heat": heat,
+                "Exposure Snapshot": exposure,
+                "Commander Report": report,
+                "Scanner Alignment": alignment_df.to_dict("records") if not alignment_df.empty else [],
+                "Position Ranking": ranking_df.to_dict("records") if not ranking_df.empty else [],
+                "Prepared Exit Ticket": st.session_state.get("pcc_prepared_exit_ticket", {}),
+                "Journal Prefill Note": st.session_state.get("journal_prefill_note", {}),
+                "Realized PnL": realized_pnl,
+                "Sector Exposure": sector_df.to_dict("records") if not sector_df.empty else [],
+                "Risk Alerts": risk_alerts,
+            })
 
 def page() -> None:
     run_page()

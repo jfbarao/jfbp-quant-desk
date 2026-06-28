@@ -276,6 +276,65 @@ def inject_navigation_guide_css() -> None:
                 white-space:nowrap;
             }
 
+            .doc-nav-wrap {
+                display:flex;
+                flex-wrap:wrap;
+                gap:0.4rem;
+                margin:0.45rem 0 0.9rem 0;
+                align-items:center;
+            }
+
+            div[data-testid="stPills"] {
+                margin: 0.35rem 0 0.9rem 0;
+            }
+
+            div[data-testid="stPills"] [data-baseweb="tag"] {
+                border-radius: 999px !important;
+                padding: 0.12rem 0.45rem !important;
+                font-size: var(--jfbp-type-caption) !important;
+                font-weight: 780 !important;
+            }
+
+            div[data-testid="stPills"] [aria-selected="true"] {
+                text-decoration: underline;
+                text-underline-offset: 3px;
+            }
+
+            .doc-tab {
+                display:inline-block;
+                border:1px solid #dbe3ef;
+                border-radius:999px;
+                padding:0.30rem 0.62rem;
+                font-size:var(--jfbp-type-caption);
+                font-weight:800;
+                color:#475569;
+                text-decoration:none;
+                background:#ffffff;
+            }
+
+            .doc-tab:hover {
+                border-color:#cbd5e1;
+                color:#334155;
+            }
+
+            .doc-tab.active {
+                color:#b91c1c;
+                border-color:#fecaca;
+                background:#fef2f2;
+                text-decoration:underline;
+                text-underline-offset:3px;
+            }
+
+            .manual-note {
+                background:#fffbeb;
+                border:1px solid #fde68a;
+                border-radius:12px;
+                padding:0.68rem 0.78rem;
+                color:#78350f;
+                font-size:var(--jfbp-type-caption);
+                margin:0.22rem 0 1rem 0;
+            }
+
             @media (max-width: 1180px) {
                 div[data-testid="stHorizontalBlock"] {
                     flex-wrap: wrap !important;
@@ -384,37 +443,269 @@ def nav_button(label: str, page_key: str, key: str) -> None:
         st.rerun()
 
 
+DOC_MODULES: List[Tuple[str, str]] = [
+    ("quick-start", "Quick Start"),
+    ("workflow-maps", "Workflow Maps"),
+    ("page-catalog", "Page Catalog"),
+    ("decision-grades", "Decision Grades"),
+    ("live-safety", "LIVE Safety"),
+    ("quant-executor", "Quant Executor"),
+    ("multi-asset", "Multi-Asset"),
+    ("faq", "FAQ"),
+    ("checklist", "Checklist"),
+]
+
+DOC_STATE_KEY = "guide_selected_module"
+
+
+def _current_doc_slug() -> str:
+    return str(st.session_state.get(DOC_STATE_KEY, "")).strip().lower()
+
+
+def _set_doc_slug(slug: str | None) -> None:
+    if slug:
+        st.session_state[DOC_STATE_KEY] = str(slug).strip().lower()
+    else:
+        st.session_state.pop(DOC_STATE_KEY, None)
+
+
+def documentation_nav(active_slug: str | None = None) -> None:
+    # Compact in-page module pills with natural wrapping.
+    labels = [label for _, label in DOC_MODULES]
+    slug_by_label = {label: slug for slug, label in DOC_MODULES}
+    default_label = next((label for slug, label in DOC_MODULES if slug == active_slug), None)
+
+    selected_label = st.pills(
+        "Reference Navigation",
+        labels,
+        default=default_label,
+        key=f"doc_nav_pills_{active_slug or 'manual'}",
+        label_visibility="collapsed",
+    )
+
+    if selected_label:
+        selected_slug = slug_by_label.get(str(selected_label), "")
+        if selected_slug and selected_slug != active_slug:
+            _set_doc_slug(selected_slug)
+            st.rerun()
+
+
 # =========================================================
 # PAGE SECTIONS
 # =========================================================
 
 def commander_welcome() -> None:
-    st.title("🧭 User Guide Center")
+    st.title("JFBP Quant Desk Operating Manual")
     st.caption(
-        "JFBP Quant Desk v2.0 onboarding, workflow map, execution safety guide, and operator manual."
-    )
-
-    st.markdown(
-        """
-        <div class="jfbp-hero">
-            <div class="jfbp-hero-kicker">Commander Onboarding · JFBP Quant Desk</div>
-            <div class="jfbp-hero-title">Welcome aboard the command desk.</div>
-            <div class="jfbp-hero-text">
-                This page teaches the crew how to use the platform without getting lost at sea.
-                Start with market context, find opportunity, validate the trade, route safely through OMS,
-                manage the position, and review everything in Journal.
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+        "Institutional workflow from market regime analysis through execution, risk management, and performance review."
     )
 
     guide_card_grid([
-        {"title": "Primary Mission", "value": "Decision Support", "detail": "Analyze markets, rank opportunities, prepare trades, and review outcomes.", "tone": "info"},
-        {"title": "Execution Rule", "value": "Safety First", "detail": "SIM for testing. LIVE only after OMS, IBKR, snapshot, and risk gates are verified.", "tone": "warning"},
-        {"title": "Main Workflow", "value": "Signal → Trade → Review", "detail": "Market Pulse → Scanner → Research → Trade Command → OMS → Position Command → Journal.", "tone": "good"},
-        {"title": "Asset Classes", "value": "Stocks + Multi-Asset", "detail": "Stocks, options planning, crypto, forex, gold, oil, and portfolio intelligence.", "tone": "neutral"},
+        {"title": "Mission", "value": "Read → Decide → Execute → Review", "detail": "Follow the desk workflow in order. Do not skip stages.", "tone": "info"},
+        {"title": "Execution Standard", "value": "Discipline First", "detail": "Only route when market context, research quality, and risk controls align.", "tone": "warning"},
+        {"title": "Desk Output", "value": "BUY / HOLD / WAIT / AVOID", "detail": "Use consistent institutional language across modules.", "tone": "good"},
+        {"title": "Operating Rule", "value": "Process Over Prediction", "detail": "The platform improves decision quality, not trade frequency.", "tone": "neutral"},
     ])
+
+
+def institutional_workflow_diagram() -> None:
+    st.subheader("Institutional Workflow")
+    st.caption("End-to-end flow from market reading to performance review.")
+    workflow_path([
+        "Market Pulse",
+        "Scanner",
+        "Research Stock",
+        "Trade Command Center",
+        "Options Center",
+        "OMS Execution",
+        "Position Command Center",
+        "Journal",
+        "Private Portfolio",
+        "Market Hub",
+    ])
+
+
+def workflow_stage(
+    stage_title: str,
+    purpose: str,
+    cards: List[Dict[str, str]],
+    nav_items: List[Tuple[str, str]],
+    key_prefix: str,
+) -> None:
+    st.markdown(f"## {stage_title}")
+    st.caption(purpose)
+    guide_card_grid(cards)
+
+    if nav_items:
+        cols = responsive_columns(len(nav_items))
+        for idx, (label, page_key) in enumerate(nav_items):
+            with cols[idx]:
+                nav_button(f"Open {label}", page_key, f"{key_prefix}_{idx}")
+
+
+def institutional_stages() -> None:
+    workflow_stage(
+        "STAGE 1 — READ THE MARKET",
+        "Understand the current market before searching for opportunities.",
+        [
+            {
+                "title": "Market Pulse",
+                "value": "Market regime and stress",
+                "detail": "Measures macro tape, breadth, and risk. Supports exposure posture decisions. Typical outputs: BUY / WAIT / AVOID / Pending Confirmation.",
+                "tone": "info",
+            },
+            {
+                "title": "Gold Pulse",
+                "value": "Defensive-metal regime",
+                "detail": "Measures gold leadership and macro pressure. Supports defensive/offensive balance decisions. Typical outputs: BUY / WAIT / AVOID / Pending Confirmation.",
+                "tone": "warning",
+            },
+            {
+                "title": "Oil Pulse",
+                "value": "Energy and inflation pressure",
+                "detail": "Measures crude/energy participation and stress. Supports commodity and cyclicals posture decisions. Typical outputs: BUY / WAIT / AVOID / Pending Confirmation.",
+                "tone": "warning",
+            },
+            {
+                "title": "Forex Pulse",
+                "value": "Currency regime context",
+                "detail": "Measures USD and FX leadership when available. Supports cross-asset risk and macro alignment decisions. Typical outputs: BUY / WAIT / AVOID / Pending Confirmation.",
+                "tone": "neutral",
+            },
+        ],
+        [
+            ("Market Pulse", "Market Pulse"),
+            ("Gold Pulse", "Gold Pulse"),
+            ("Oil Pulse", "Oil Pulse"),
+            ("Forex Pulse", "Forex Pulse"),
+        ],
+        "nav_stage1",
+    )
+
+    workflow_stage(
+        "STAGE 2 — FIND OPPORTUNITIES",
+        "Identify candidates that deserve institutional attention and validate whether they deserve capital.",
+        [
+            {
+                "title": "Scanner",
+                "value": "Rank candidates",
+                "detail": "Find candidates worthy of institutional research.",
+                "tone": "good",
+            },
+            {
+                "title": "Research Stock",
+                "value": "Validate quality",
+                "detail": "Determine whether the opportunity deserves capital.",
+                "tone": "info",
+            },
+        ],
+        [
+            ("Scanner", "Scanner"),
+            ("Research Stock", "Research Stock"),
+        ],
+        "nav_stage2",
+    )
+
+    workflow_stage(
+        "STAGE 3 — BUILD THE TRADE",
+        "Convert approved ideas into executable plans with institutional risk structure.",
+        [
+            {
+                "title": "Trade Command Center",
+                "value": "Execution readiness",
+                "detail": "Build position sizing, execution readiness, and institutional scoring.",
+                "tone": "good",
+            },
+            {
+                "title": "Options Center",
+                "value": "Structure the expression",
+                "detail": "Build higher-probability option structures around approved ideas.",
+                "tone": "neutral",
+            },
+        ],
+        [
+            ("Trade Command Center", "Trade Command Center"),
+            ("Options Center", "Options Center"),
+        ],
+        "nav_stage3",
+    )
+
+    workflow_stage(
+        "STAGE 4 — EXECUTE",
+        "Convert research into disciplined execution with order, sizing, risk, and quality control.",
+        [
+            {
+                "title": "OMS Execution",
+                "value": "Route with discipline",
+                "detail": "Focus on orders, sizing, risk controls, and execution quality.",
+                "tone": "risk",
+            }
+        ],
+        [
+            ("OMS Execution", "OMS Execution"),
+        ],
+        "nav_stage4",
+    )
+
+    workflow_stage(
+        "STAGE 5 — MANAGE THE POSITION",
+        "Actively manage open risk and preserve process quality during the life of the trade.",
+        [
+            {
+                "title": "Position Command Center",
+                "value": "Active risk control",
+                "detail": "Manage active risk and adjust exposure with discipline.",
+                "tone": "good",
+            },
+            {
+                "title": "Journal",
+                "value": "Decision accountability",
+                "detail": "Record decisions, emotions, and execution quality.",
+                "tone": "info",
+            },
+        ],
+        [
+            ("Position Command Center", "Position Command Center"),
+            ("Journal", "Journal"),
+        ],
+        "nav_stage5",
+    )
+
+    workflow_stage(
+        "STAGE 6 — REVIEW PERFORMANCE",
+        "Review outcomes at portfolio and market-system level to improve the next decision cycle.",
+        [
+            {
+                "title": "Private Portfolio Impact",
+                "value": "Exposure oversight",
+                "detail": "Review portfolio exposure and institutional risk oversight.",
+                "tone": "warning",
+            },
+            {
+                "title": "Market Hub",
+                "value": "Cross-market awareness",
+                "detail": "Monitor cross-market context and macro awareness.",
+                "tone": "neutral",
+            },
+        ],
+        [
+            ("Private Portfolio", "Private Portfolio"),
+            ("Market Hub", "Market Hub"),
+        ],
+        "nav_stage6",
+    )
+
+
+def how_professionals_use_platform() -> None:
+    st.subheader("How Professionals Use the Platform")
+    st.caption("Daily and weekly operating rhythm for consistent decision quality.")
+
+    check_row("Before Market Open", "Read Market Pulse, review Gold/Oil/Forex Pulse, and identify the macro regime.", "Phase")
+    check_row("Opportunity Discovery", "Run Scanner and select the strongest candidates for research.", "Phase")
+    check_row("Research", "Validate institutional quality and confirm macro alignment before capital allocation.", "Phase")
+    check_row("Execution", "Build the trade plan, confirm sizing, and execute through OMS discipline.", "Phase")
+    check_row("Management", "Monitor positions, adjust risk, and journal execution quality.", "Phase")
+    check_row("Weekly Review", "Evaluate performance, study mistakes, and improve the operating process.", "Phase")
 
 
 def quick_start() -> None:
@@ -698,52 +989,72 @@ def final_checklist() -> None:
     )
 
 
+def render_documentation_module(slug: str) -> None:
+    if slug == "quick-start":
+        quick_start()
+    elif slug == "workflow-maps":
+        workflow_maps()
+    elif slug == "page-catalog":
+        page_catalog()
+    elif slug == "decision-grades":
+        decision_grade_guide()
+    elif slug == "live-safety":
+        live_trading_safety()
+    elif slug == "quant-executor":
+        quant_executor_guide()
+    elif slug == "multi-asset":
+        multi_asset_guide()
+    elif slug == "faq":
+        faq_section()
+    elif slug == "checklist":
+        final_checklist()
+
+
+def documentation_title(slug: str) -> str:
+    for item_slug, label in DOC_MODULES:
+        if slug == item_slug:
+            return label
+    return "Documentation"
+
+
 # =========================================================
 # PAGE
 # =========================================================
 
 def run_page() -> None:
     inject_navigation_guide_css()
+
+    doc_slug = _current_doc_slug()
+    valid_slugs = {slug for slug, _ in DOC_MODULES}
+
+    if doc_slug and doc_slug in valid_slugs:
+        back_left, back_right = responsive_columns([7, 3])
+        with back_left:
+            st.caption("Documentation Library")
+        with back_right:
+            if st.button("← Back to Operating Manual", width="stretch", key=f"back_manual_{doc_slug}"):
+                _set_doc_slug(None)
+                st.rerun()
+
+        documentation_nav(active_slug=doc_slug)
+        render_documentation_module(doc_slug)
+        return
+
+    if doc_slug and doc_slug not in valid_slugs:
+        _set_doc_slug(None)
+
+    # Level 1: Operating Manual
     commander_welcome()
+    institutional_workflow_diagram()
+    institutional_stages()
+    how_professionals_use_platform()
 
-    tabs = st.tabs([
-        "Quick Start",
-        "Workflow Maps",
-        "Page Catalog",
-        "Decision Grades",
-        "LIVE Safety",
-        "Quant Executor",
-        "Multi-Asset",
-        "FAQ",
-        "Checklist",
-    ])
-
-    with tabs[0]:
-        quick_start()
-
-    with tabs[1]:
-        workflow_maps()
-
-    with tabs[2]:
-        page_catalog()
-
-    with tabs[3]:
-        decision_grade_guide()
-
-    with tabs[4]:
-        live_trading_safety()
-
-    with tabs[5]:
-        quant_executor_guide()
-
-    with tabs[6]:
-        multi_asset_guide()
-
-    with tabs[7]:
-        faq_section()
-
-    with tabs[8]:
-        final_checklist()
+    # Level 2: Independent documentation modules
+    st.divider()
+    st.subheader("Reference Library")
+    st.caption("Open a module to view its dedicated documentation page.")
+    documentation_nav(active_slug=None)
+    st.markdown('<div class="manual-note">Click any reference above to open its dedicated documentation page. The Operating Manual remains on this page.</div>', unsafe_allow_html=True)
 
 
 def page() -> None:

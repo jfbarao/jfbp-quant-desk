@@ -5096,7 +5096,13 @@ def run_page():
                     if "earnings_date" in earnings_df.columns:
                         earnings_df.loc[etf_mask, "earnings_date"] = "Not Applicable (ETF)"
                     if "days_until" in earnings_df.columns:
-                        earnings_df["days_until_display"] = earnings_df["days_until"]
+                        earnings_df["days_until"] = pd.to_numeric(
+                            earnings_df["days_until"],
+                            errors="coerce"
+                        )
+                        earnings_df["days_until_display"] = earnings_df["days_until"].apply(
+                            lambda x: "N/A" if pd.isna(x) else str(int(x))
+                        ).astype("string")
                         earnings_df.loc[etf_mask, "days_until_display"] = "N/A"
                         days_until_column = "days_until_display"
                     if "reason" in earnings_df.columns:

@@ -32,8 +32,8 @@ def inject_live_ibkr_responsive_css() -> None:
         """
         <style>
             .block-container {
-                padding-top: 1.4rem !important;
-                padding-bottom: 2.5rem !important;
+                padding-top: 1.15rem !important;
+                padding-bottom: 1.75rem !important;
                 max-width: 1500px !important;
                 margin-left: auto !important;
                 margin-right: auto !important;
@@ -51,10 +51,12 @@ def inject_live_ibkr_responsive_css() -> None:
                 font-weight: 850 !important;
                 line-height: 1.18 !important;
                 color: #1f2937 !important;
+                margin-top: 0.48rem !important;
+                margin-bottom: 0.22rem !important;
             }
 
             div[data-testid="stHorizontalBlock"] {
-                gap: 0.85rem !important;
+                gap: 0.72rem !important;
                 align-items: stretch !important;
             }
 
@@ -106,7 +108,7 @@ def inject_live_ibkr_responsive_css() -> None:
                 border-radius: 14px;
                 padding: 0.82rem 0.92rem;
                 min-height: 86px;
-                margin-bottom: 0.55rem;
+                margin-bottom: 0.36rem;
                 overflow-wrap: anywhere;
             }
 
@@ -114,8 +116,8 @@ def inject_live_ibkr_responsive_css() -> None:
                 background: #eff6ff;
                 border: 1px solid #bfdbfe;
                 border-radius: 12px;
-                padding: 0.72rem 0.82rem;
-                margin: 0.50rem 0 0.78rem 0;
+                padding: 0.56rem 0.68rem;
+                margin: 0.34rem 0 0.52rem 0;
                 color: #1e3a8a;
                 font-weight: 750;
                 line-height: 1.4;
@@ -125,23 +127,68 @@ def inject_live_ibkr_responsive_css() -> None:
                 display: inline-flex;
                 align-items: center;
                 gap: 0.45rem;
-                padding: 0.28rem 0.62rem;
+                padding: 0.24rem 0.56rem;
+                margin: 0.16rem 0 0.44rem 0;
                 border-radius: 999px;
                 background: #eef6ff;
                 border: 1px solid #bfdbfe;
                 color: #1d4ed8;
                 font-weight: 780;
                 font-size: 0.84rem;
-                margin: 0.20rem 0 0.60rem 0;
+            }
+
+            .ibkr-exec-emphasis {
+                border: 1px solid #bfdbfe;
+                border-radius: 14px;
+                padding: 0.56rem 0.72rem;
+                margin-bottom: 0.42rem;
+                background: #eff6ff;
+                font-size: 0.86rem;
+                font-weight: 820;
+                color: #1d4ed8;
+            }
+
+            .ibkr-system-health {
+                border: 1px solid #dbe3ef;
+                border-radius: 12px;
+                padding: 0.58rem 0.68rem;
+                margin-bottom: 0.42rem;
+                background: #ffffff;
+            }
+
+            .ibkr-system-health-label {
+                font-size: 0.75rem;
+                letter-spacing: 0.04em;
+                text-transform: uppercase;
+                font-weight: 820;
+                color: #64748b;
+            }
+
+            .ibkr-system-health-value {
+                font-size: 0.98rem;
+                font-weight: 850;
+                margin-top: 0.16rem;
+            }
+
+            .ibkr-utility-title {
+                font-size: 0.93rem;
+                font-weight: 760;
+                color: #475569;
+                letter-spacing: 0.01em;
+                margin: 0.18rem 0 0.22rem 0;
             }
 
             .ibkr-hero {
                 border: 1px solid;
                 border-radius: 18px;
-                padding: 0.88rem 0.92rem;
-                margin: 0.60rem 0 0.82rem 0;
+                padding: 0.76rem 0.82rem;
+                margin: 0.48rem 0 0.64rem 0;
                 box-shadow: 0 2px 10px rgba(15, 23, 42, 0.05);
                 overflow-wrap: anywhere;
+            }
+
+            div[data-testid="stDivider"] {
+                margin: 0.42rem 0 !important;
             }
 
             .ibkr-hero-kicker {
@@ -886,13 +933,13 @@ def page():
     # HEADER
     # =====================================================
 
-    st.title("📡 Live IBKR")
-    st.caption("Live IBKR v25.1 Institutional Edition — Broker Operations Center, OMS readiness, account command brief, recovery center, Telegram ops, and safety controls.")
+    st.title("Live IBKR")
+    st.caption("Institutional broker command bridge for connection state, account readiness, and controlled execution handoff.")
 
     st.markdown(
         """
         <div class="ibkr-flow">
-            🚀 LIVE Workflow: OMS Execution → Live IBKR → Pull Snapshot → Verify Account → Trade → Portfolio → Journal
+            Workflow: IBKR Connection Command → Broker Readiness Panel → Live Account Snapshot → Positions → Orders → Risk Gate → Execution Handoff → Emergency Controls
         </div>
         """,
         unsafe_allow_html=True,
@@ -905,8 +952,38 @@ def page():
         broker_status_tone,
     )
 
+    exec_status = "READY" if readiness_passed else "NOT READY"
+    snapshot_loaded = "LOADED" if snapshot_cached else "NOT LOADED"
+    if not connected:
+        next_action = "Start TWS/IBKR Gateway, connect the gateway, and verify connection state."
+    elif not snapshot_cached:
+        next_action = "Pull account synchronization to load positions, orders, and account state."
+    elif mode != "LIVE" or not live_armed or kill_switch:
+        next_action = "Validate mode, arming, and kill-switch posture before routing any execution."
+    else:
+        next_action = "Execution posture is ready. Proceed with controlled OMS workflow."
 
-    with st.expander("🚀 Interactive Brokers Connection Guide", expanded=True):
+    st.subheader("Broker Executive Summary")
+    ex1, ex2, ex3, ex4 = responsive_columns(4)
+    with ex1:
+        ibkr_metric_card("Connection", "CONNECTED" if connected else "DISCONNECTED", "Gateway status", tone="good" if connected else "risk")
+    with ex2:
+        ibkr_metric_card("Mode", mode, "SIM / LIVE", tone="warning" if mode == "LIVE" else "info")
+    with ex3:
+        ibkr_metric_card("Snapshot", snapshot_loaded, "Broker cache state", tone="good" if snapshot_cached else "warning")
+    with ex4:
+        ibkr_metric_card("Execution", exec_status, "Overall readiness", tone="good" if readiness_passed else "risk")
+    st.markdown(
+        f"""
+        <div class="ibkr-exec-emphasis">
+            NEXT ACTION: {html.escape(next_action)}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+    with st.expander("Interactive Brokers Connection Guide", expanded=False):
         st.markdown(
             """
             **Live IBKR is the broker connection center for JFBP Quant Desk.** Use this page to connect/disconnect Interactive Brokers, verify gateway status, pull broker snapshots, review account balances, and recover broker executions.
@@ -1016,22 +1093,20 @@ def page():
             """
         )
 
-    with st.expander("ℹ️ Page Map", expanded=False):
+    with st.expander("Page Map", expanded=False):
         st.markdown(
             """
             - **Live Connectivity Safety Panel** shows connection status, stream status, cached symbols, and runtime mode.
             - **Broker Recovery** attempts to recover broker executions that may have occurred while the app was offline or disconnected.
-            - **Live Safety Controls** arms live trading and controls the kill switch.
+            - **Safety Locks** arms live trading and controls the kill switch.
             - **Connection Controls** connects/disconnects the IBKR gateway.
-            - **Broker Snapshot Sync** pulls read-only cached broker data into the app session.
-            - **IBKR Account Balance** shows cached account values from IBKR.
-            - **Component Status** confirms whether the gateway, OMS, pipeline, risk engine, and market hub are online.
+            - **Account Synchronization** pulls read-only cached broker data into the app session.
+            - **Broker Account Details** shows expanded broker account values and diagnostics.
+            - **Institutional System Health** confirms whether gateway and execution infrastructure are operational.
             """
         )
 
-    ibkr_telegram_panel()
-
-    st.subheader("🛡 Live Connectivity Safety Panel")
+    st.subheader("IBKR Connection Command")
 
     status = gateway_status()
     connected = status.get("connected", False)
@@ -1041,6 +1116,9 @@ def page():
         f'<div class="ibkr-pill">📡 {mode} mode • Gateway {"connected" if connected else "disconnected"} • Stream {"running" if streaming else "stopped"}</div>',
         unsafe_allow_html=True,
     )
+
+    if mode == "LIVE":
+        st.error("LIVE MODE WARNING: This environment can interact with live broker execution when OMS is armed.")
 
     # =====================================================
     # LIVE STATUS BANNER
@@ -1079,42 +1157,52 @@ def page():
         )
 
     # =====================================================
-    # STATUS STRIP
+    # CONNECTION STATUS STRIP
     # =====================================================
+
+    snapshot_rows_cached = st.session_state.get("broker_snapshot_account_summary", [])
+    account_detected = bool(snapshot_rows_cached)
+    sync_reference = broker_snapshot_timestamp or st.session_state.get("live_ibkr_last_refresh", "")
+    last_sync_text = snapshot_age_label(sync_reference)
+    market_data_status = "AVAILABLE" if (streaming or market_snapshot_count() > 0) else "LIMITED"
 
     c1, c2, c3, c4, c5 = responsive_columns(5)
 
     with c1:
         gateway_value = "CONNECTED" if connected else "DISCONNECTED"
-        ibkr_metric_card("Gateway", gateway_value, "IBKR connection state", tone=ibkr_status_tone(gateway_value))
+        ibkr_metric_card("Connection Status", gateway_value, "IBKR gateway state", tone=ibkr_status_tone(gateway_value))
 
     with c2:
-        stream_value = "RUNNING" if streaming else "STOPPED"
-        ibkr_metric_card("Stream", stream_value, "Market data stream", tone=ibkr_status_tone(stream_value))
+        ibkr_metric_card("Mode", mode, "Paper / Live", tone="warning" if mode == "LIVE" else "info")
 
     with c3:
-        ibkr_metric_card("Market Symbols", market_snapshot_count(), "Cached market hub symbols", tone="info")
+        ibkr_metric_card("Account Detected", "YES" if account_detected else "NO", "Account snapshot loaded", tone="good" if account_detected else "warning")
 
     with c4:
-        ibkr_metric_card("Mode", mode, "SIM or LIVE runtime mode", tone="warning" if mode == "LIVE" else "info")
+        ibkr_metric_card("Market Data", market_data_status, "Stream/cache status", tone="good" if market_data_status == "AVAILABLE" else "warning")
 
     with c5:
-        telegram_value = "ACTIVE" if ibkr_telegram_ready() else "OFFLINE"
-        ibkr_metric_card("Telegram", telegram_value, "Operator alerts", tone=ibkr_status_tone(telegram_value))
+        ibkr_metric_card("Last Sync", last_sync_text, "Latest broker state sync", tone="info" if sync_reference else "warning")
 
-    st.subheader("✅ Live OMS Readiness Check")
-    ibkr_tip("Single go/no-go view for live execution capability. This page still does not place trades.")
+    st.subheader("Broker Readiness Panel")
+    ibkr_tip("Immediate go/no-go view for broker operations and execution readiness.")
 
     r_left, r_right = responsive_columns([0.58, 0.42], gap="large")
     with r_left:
-        render_readiness_check("Gateway Connected", bool(connected), "Required")
-        render_readiness_check("OMS Loaded", bool(oms_ready), "Execution module")
-        render_readiness_check("Risk Engine Loaded", bool(risk_ready), "Risk controls")
-        render_readiness_check("Broker Snapshot Cached", bool(snapshot_cached), snapshot_age)
-        render_readiness_check("LIVE Mode Selected", mode == "LIVE", str(mode))
-        render_readiness_check("LIVE Trading Armed", bool(live_armed), "Intentional only")
-        render_readiness_check("Kill Switch OFF", not bool(kill_switch), "Must be OFF to execute")
+        render_readiness_check("API Connected", bool(connected), "IBKR gateway link")
+        render_readiness_check("Account Loaded", bool(snapshot_rows_cached), "Broker account rows")
+        render_readiness_check("Market Data Available", bool(streaming or market_snapshot_count() > 0), "Stream or cache")
+        render_readiness_check("Trading Permission Status", bool(mode == "LIVE" and live_armed and not kill_switch), "LIVE + armed + kill switch OFF")
+        render_readiness_check("Order Routing Readiness", bool(readiness_passed), "Gateway/OMS/Risk/Snapshot checks")
     with r_right:
+        st.markdown(
+            """
+            <div class="ibkr-exec-emphasis">
+                EXECUTION READINESS VERDICT
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         if readiness_passed:
             render_ibkr_hero(
                 "🟢 EXECUTION STATUS: READY",
@@ -1156,348 +1244,59 @@ def page():
     st.divider()
 
     # =====================================================
-    # MANUAL BROKER RECOVERY
+    # INSTITUTIONAL SYSTEM HEALTH
     # =====================================================
 
-    st.subheader("🔧 Broker Recovery Center")
-    ibkr_tip("Use this only when broker fills may have occurred while the app was offline or disconnected. It does not place trades.")
+    ibkr_telegram_panel()
 
-    last_recovery = st.session_state.get("live_ibkr_last_recovery_time", "")
-    last_recovery_rows = st.session_state.get("live_ibkr_last_recovery_rows", 0)
-    last_recovery_status = st.session_state.get("live_ibkr_last_recovery_status", "NEVER RUN")
+    st.subheader("Institutional System Health")
+    ibkr_tip("Operational health map across broker and execution infrastructure.")
 
-    rec_m1, rec_m2, rec_m3 = responsive_columns(3)
-    with rec_m1:
-        ibkr_metric_card("Last Recovery", snapshot_age_label(last_recovery), "Broker execution recovery", tone="info" if last_recovery else "warning")
-    with rec_m2:
-        ibkr_metric_card("Recovered Rows", last_recovery_rows, "Last recovery result count", tone="info")
-    with rec_m3:
-        ibkr_metric_card("Recovery Status", last_recovery_status, "Latest recovery outcome", tone=ibkr_status_tone(last_recovery_status))
+    stream_status = "ONLINE" if stream_engine else "NOT CONFIGURED"
+    stream_running_status = "YES" if streaming else "N/A"
 
-    recovery_col1, recovery_col2 = responsive_columns(2)
+    status_rows = {
+        "Gateway Object": "ONLINE" if gateway else "MISSING",
+        "Gateway Connected": "YES" if connected else "NO",
+        "Gateway Status": status.get("status"),
+        "Stream Engine": stream_status,
+        "Stream Running": stream_running_status,
+        "Market Hub": "ONLINE" if market else "MISSING",
+        "OMS": "ONLINE" if oms else "MISSING",
+        "Pipeline": "READY" if pipeline else "MISSING",
+        "Risk Engine": "ONLINE" if risk_engine else "MISSING",
+        "Mode": mode,
+        "LIVE Armed": "YES" if st.session_state.get("live_trading_armed") else "NO",
+        "Kill Switch": "ON" if st.session_state.get("risk_kill_switch") else "OFF",
+        "Last Refresh": st.session_state.get("live_ibkr_last_refresh", ""),
+    }
 
-    with recovery_col1:
+    health_cards = [
+        ("Gateway", "OPERATIONAL" if connected else "OFFLINE", "good" if connected else "risk"),
+        ("OMS", "OPERATIONAL" if oms else "OFFLINE", "good" if oms else "risk"),
+        ("Risk Engine", "OPERATIONAL" if risk_engine else "OFFLINE", "good" if risk_engine else "risk"),
+        ("Pipeline", "OPERATIONAL" if pipeline else "WARNING", "good" if pipeline else "warning"),
+        ("Market Hub", "OPERATIONAL" if market else "OFFLINE", "good" if market else "risk"),
+        ("Stream Engine", "OPERATIONAL" if stream_engine and streaming else "WARNING" if stream_engine else "OFFLINE", "good" if stream_engine and streaming else "warning" if stream_engine else "risk"),
+        ("Telegram", "OPERATIONAL" if ibkr_telegram_ready() else "WARNING", "good" if ibkr_telegram_ready() else "warning"),
+        ("LIVE Armed", "OPERATIONAL" if st.session_state.get("live_trading_armed") else "WARNING", "good" if st.session_state.get("live_trading_armed") else "warning"),
+        ("Kill Switch", "OFFLINE" if st.session_state.get("risk_kill_switch") else "OPERATIONAL", "risk" if st.session_state.get("risk_kill_switch") else "good"),
+    ]
 
-        recover_exec_btn = st.button(
-            "Recover Broker Executions",
-            width="stretch",
-            disabled=False,
-            help=(
-                "Manually trigger IBKR execution recovery "
-                "to replay broker fills into runtime."
-            ),
-        )
-
-        if recover_exec_btn:
-
-            st.info("Recover Broker Executions button clicked.")
-
-            if gateway is None:
-
-                st.error("Gateway object is missing.")
-
-            elif not hasattr(gateway, "recover_broker_executions"):
-
-                st.error(
-                    "Gateway does not have recover_broker_executions()."
+    for i in range(0, len(health_cards), 3):
+        row = responsive_columns(3)
+        for col, (label, value, tone) in zip(row, health_cards[i:i + 3]):
+            with col:
+                _, _, value_color = ibkr_tone_palette(tone)
+                st.markdown(
+                    f"""
+                    <div class="ibkr-system-health">
+                        <div class="ibkr-system-health-label">{html.escape(label)}</div>
+                        <div class="ibkr-system-health-value" style="color:{value_color};">{html.escape(value)}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
                 )
-
-            else:
-
-                try:
-
-                    st.write("Gateway class:", type(gateway).__name__)
-                    st.write(
-                        "Broker connected:",
-                        gateway.verify_connection()
-                        if hasattr(gateway, "verify_connection")
-                        else "verify_connection unavailable",
-                    )
-
-                    with st.spinner(
-                        "Requesting broker executions from IBKR..."
-                    ):
-
-                        result = gateway.recover_broker_executions()
-
-                    gateway_error = str(
-                        getattr(gateway, "last_error", "") or ""
-                    )
-
-                    st.write("Recovery result:", result)
-                    st.write("Gateway last_error:", gateway_error)
-
-                    if gateway_error:
-
-                        st.error(gateway_error)
-
-                    else:
-
-                        count = (
-                            len(result)
-                            if result is not None
-                            else 0
-                        )
-
-                        if st.session_state.get("ibkr_notify_recovery", True):
-                            send_ibkr_telegram(
-                                "🔧 JFBP IBKR Recovery",
-                                f"Broker execution recovery completed. Returned rows: {count}",
-                            )
-
-                        st.session_state["live_ibkr_last_recovery_time"] = now()
-                        st.session_state["live_ibkr_last_recovery_rows"] = count
-                        st.session_state["live_ibkr_last_recovery_status"] = "OK"
-
-                        st.success(
-                            "Broker execution recovery call completed. "
-                            f"Returned rows: {count}"
-                        )
-
-                    st.session_state[
-                        "live_ibkr_last_refresh"
-                    ] = now()
-
-                    st.session_state[
-                        "live_ibkr_cached_status"
-                    ] = None
-
-                    st.session_state[
-                        "live_ibkr_status_cached_at"
-                    ] = 0.0
-
-                except Exception as exc:
-
-                    st.session_state["live_ibkr_last_recovery_time"] = now()
-                    st.session_state["live_ibkr_last_recovery_rows"] = 0
-                    st.session_state["live_ibkr_last_recovery_status"] = "ERROR"
-
-                    st.error(
-                        f"Recover Broker Executions failed: {exc}"
-                    )
-
-    with recovery_col2:
-
-        st.caption(
-            "Diagnostic version: this will show whether the button, "
-            "gateway, connection, and recovery method are actually firing."
-        )
-
-    st.divider()
-
-    
-    # =====================================================
-    # LIVE SAFETY CONTROLS
-    # =====================================================
-
-    st.subheader("Live Safety Controls")
-    ibkr_tip("Arm LIVE trading only when you intentionally want other execution pages to be allowed to route real orders. Kill Switch blocks execution.")
-
-    s1, s2, s3 = responsive_columns(3)
-
-    with s1:
-        st.session_state["live_trading_armed"] = st.toggle(
-            "LIVE Trading Armed",
-            value=live_armed,
-            disabled=mode != "LIVE",
-        )
-
-    with s2:
-        st.session_state["risk_kill_switch"] = st.toggle(
-            "Kill Switch",
-            value=kill_switch,
-        )
-
-    with s3:
-        refresh = st.button(
-            "Refresh Status",
-            width="stretch",
-        )
-
-    if refresh:
-        reset_operator_intent()
-
-        st.session_state["live_ibkr_cached_status"] = None
-        st.session_state["live_ibkr_status_cached_at"] = 0.0
-        st.session_state["live_ibkr_last_refresh"] = now()
-
-        st.rerun()
-
-    current_kill = bool(st.session_state.get("risk_kill_switch", False))
-    previous_kill = bool(st.session_state.get("ibkr_last_notified_kill_switch", False))
-    if current_kill and not previous_kill and st.session_state.get("ibkr_notify_kill_switch", True):
-        send_ibkr_telegram(
-            "🛑 JFBP IBKR Kill Switch",
-            "Risk kill switch is ON. Execution should remain blocked.",
-        )
-    st.session_state["ibkr_last_notified_kill_switch"] = current_kill
-
-    current_live_armed = bool(st.session_state.get("live_trading_armed", False))
-    previous_live_armed = bool(st.session_state.get("ibkr_last_notified_live_armed", False))
-    if current_live_armed and not previous_live_armed and st.session_state.get("ibkr_notify_live_armed", True):
-        send_ibkr_telegram(
-            "🚨 JFBP IBKR LIVE Armed",
-            "Live trading is armed from the Live IBKR safety panel.",
-        )
-    st.session_state["ibkr_last_notified_live_armed"] = current_live_armed
-
-    st.divider()
-
-    # =====================================================
-    # CONNECTION CONTROLS
-    # =====================================================
-
-    st.subheader("Connection Controls")
-    ibkr_tip("Connect or disconnect the IBKR gateway. These controls manage connectivity only and do not send orders.")
-
-    st.info(
-        "Start TWS or IBKR Gateway before connecting. Paper accounts normally use port 7497; live accounts normally use port 7496."
-    )
-
-    st.warning(
-        "This page manages connectivity only. It does not execute trades."
-    )
-
-    intent_key = st.session_state.get("live_ibkr_intent_reset_id", 0)
-
-    connect_col, disconnect_col, stream_col = responsive_columns(3)
-
-    with connect_col:
-        confirm_connect = st.checkbox(
-            "Confirm IBKR connect",
-            value=False,
-            key=f"confirm_ibkr_connect_{intent_key}",
-        )
-
-        connect_btn = st.button(
-            "Connect Gateway",
-            width="stretch",
-            disabled=connected or not confirm_connect,
-        )
-
-        st.caption(
-            "Connect only after TWS/IBKR Gateway is open and logged in."
-        )
-
-    with disconnect_col:
-        confirm_disconnect = st.checkbox(
-            "Confirm IBKR disconnect",
-            value=False,
-            key=f"confirm_ibkr_disconnect_{intent_key}",
-        )
-
-        disconnect_btn = st.button(
-            "Disconnect Gateway",
-            width="stretch",
-            disabled=not connected or not confirm_disconnect,
-        )
-
-        st.caption(
-            "Disconnecting JFBP does not close TWS/IBKR Gateway or affect existing broker positions."
-        )
-
-    with stream_col:
-        confirm_stream_stop = st.checkbox(
-            "Confirm stream stop",
-            value=False,
-            key=f"confirm_stream_stop_{intent_key}",
-        )
-
-        stop_stream_btn = st.button(
-            "Stop Stream",
-            width="stretch",
-            disabled=not streaming or not confirm_stream_stop,
-        )
-
-    if connect_btn:
-        if gateway is None:
-            ok = False
-            reason = "Gateway object missing"
-
-        elif not hasattr(gateway, "connect"):
-            ok = False
-            reason = "Gateway has no connect() method"
-
-        else:
-            try:
-                result = gateway.connect(
-                    host="127.0.0.1",
-                    port=7497,
-                    client_id=1,
-                )
-
-                ok = bool(result)
-
-                if ok:
-                    reason = "OK"
-                else:
-                    reason = (
-                        getattr(gateway, "last_error", "")
-                        or getattr(gateway, "error", "")
-                        or "gateway.connect() returned False"
-                    )
-
-            except Exception as exc:
-                ok = False
-                reason = str(exc)
-
-        if ok:
-            reset_operator_intent()
-
-            st.session_state["live_ibkr_cached_status"] = {
-                "connected": True,
-                "status": "CONNECTED",
-                "detail": "connected after manual gateway connect",
-            }
-            st.session_state["live_ibkr_status_cached_at"] = 0.0
-            st.session_state["live_ibkr_last_refresh"] = now()
-
-            if st.session_state.get("ibkr_notify_connect", True):
-                send_ibkr_telegram(
-                    "📡 JFBP IBKR Connected",
-                    "Gateway connected successfully. Verify broker snapshot before trading.",
-                )
-
-            st.success("Gateway connected.")
-            st.rerun()
-        else:
-            st.error(f"Gateway connect failed: {reason}")
-
-    if disconnect_btn:
-        ok, reason = call_if_exists(gateway, "disconnect")
-
-        if ok:
-            reset_operator_intent()
-
-            st.session_state["live_ibkr_cached_status"] = {
-                "connected": False,
-                "status": "DISCONNECTED",
-                "detail": "disconnected after manual gateway disconnect",
-            }
-            st.session_state["live_ibkr_status_cached_at"] = 0.0
-            st.session_state["live_ibkr_last_refresh"] = now()
-
-            if st.session_state.get("ibkr_notify_disconnect", True):
-                send_ibkr_telegram(
-                    "📡 JFBP IBKR Disconnected",
-                    "Gateway disconnect requested. JFBP broker connection is offline.",
-                )
-
-            st.success("Gateway disconnect requested.")
-            st.rerun()
-        else:
-            st.error(f"Gateway disconnect failed: {reason}")
-
-    if stop_stream_btn:
-        ok, reason = call_if_exists(stream_engine, "stop")
-
-        if ok:
-            reset_operator_intent()
-
-            st.success("Stream stop requested.")
-            st.rerun()
-        else:
-            st.error(f"Stream stop failed: {reason}")
 
     st.divider()
 
@@ -1505,13 +1304,15 @@ def page():
     # BROKER SNAPSHOT SYNC
     # =====================================================
 
-    st.subheader("Broker Snapshot Sync")
+    st.subheader("Account Synchronization")
     ibkr_tip("Read-only cache pull for broker positions, open orders, account summary rows, and fills. This does not mutate the portfolio automatically.")
 
     st.info(
         "Manual read-only broker snapshot pull. "
         "This does NOT mutate portfolio runtime automatically."
     )
+
+    intent_key = st.session_state.get("live_ibkr_intent_reset_id", 0)
 
     sync_col1, sync_col2 = responsive_columns(2)
 
@@ -1901,7 +1702,7 @@ def page():
         [],
     )
 
-    st.subheader("Broker Snapshot Status")
+    st.subheader("Cached Broker State")
     ibkr_tip("Shows what broker data is currently cached in the app session after a snapshot pull.")
 
     snap1, snap2, snap3, snap4, snap5 = responsive_columns(5)
@@ -1922,32 +1723,135 @@ def page():
         cached_value = "YES" if broker_snapshot_timestamp else "NO"
         ibkr_metric_card("Snapshot Cached", cached_value, "Whether a broker snapshot exists", tone=ibkr_status_tone(cached_value))
 
-    st.subheader("📸 Broker Snapshot Command Center")
-    ibkr_tip("Review the cached broker truth without opening diagnostics.")
+    if broker_snapshot_timestamp:
+        st.caption(
+            f"Last broker snapshot: {broker_snapshot_timestamp}"
+        )
 
-    with st.expander("View Broker Positions", expanded=False):
-        if broker_snapshot_positions:
-            st.dataframe(broker_snapshot_positions, width="stretch", hide_index=True)
-        else:
-            st.info("No cached broker positions yet.")
+    if broker_snapshot_errors:
+        st.warning(
+            "Last broker snapshot warnings: "
+            + " | ".join(str(e) for e in broker_snapshot_errors)
+        )
 
-    with st.expander("View Open Orders", expanded=False):
-        if broker_snapshot_open_orders:
-            st.dataframe(broker_snapshot_open_orders, width="stretch", hide_index=True)
-        else:
-            st.info("No cached broker open orders yet.")
+    st.subheader("Live Account Snapshot")
+    ibkr_tip("Immediate account state for net liquidation, cash, buying power, liquidity buffer, and P&L.")
 
-    with st.expander("View Broker Fills", expanded=False):
-        if broker_snapshot_fills:
-            st.dataframe(broker_snapshot_fills, width="stretch", hide_index=True)
+    account_values_headline = merged_account_values(broker_snapshot_account_summary)
+    net_liq_headline = account_value(account_values_headline, "NetLiquidation")
+    cash_headline = account_value(account_values_headline, "TotalCashValue")
+    buying_power_headline = account_value(account_values_headline, "BuyingPower")
+    excess_liq_headline = account_value(account_values_headline, "ExcessLiquidity")
+    open_pnl_headline = account_value(account_values_headline, "UnrealizedPnL")
+    day_pnl_headline = account_value(account_values_headline, "RealizedPnL")
+
+    hs1, hs2, hs3, hs4, hs5, hs6 = responsive_columns(6)
+    with hs1:
+        ibkr_metric_card("Net Liquidation", _money(net_liq_headline), "Total account value", tone="info")
+    with hs2:
+        ibkr_metric_card("Cash", _money(cash_headline), "Total cash value", tone="info")
+    with hs3:
+        ibkr_metric_card("Buying Power", _money(buying_power_headline), "Deployable capacity", tone="good" if buying_power_headline > 0 else "warning")
+    with hs4:
+        ibkr_metric_card("Margin / Excess Liquidity", _money(excess_liq_headline), "Liquidity buffer", tone="good" if excess_liq_headline > 0 else "warning")
+    with hs5:
+        ibkr_metric_card("Open P&L", _money(open_pnl_headline), "Unrealized P&L", tone="good" if open_pnl_headline >= 0 else "risk")
+    with hs6:
+        ibkr_metric_card("Day P&L", _money(day_pnl_headline), "Realized P&L", tone="good" if day_pnl_headline >= 0 else "risk")
+
+    st.subheader("Positions")
+    ibkr_tip("Current live IBKR positions from cached broker snapshot.")
+
+    position_rows = []
+    total_market_value = 0.0
+
+    for row in _as_list(broker_snapshot_positions):
+        if not isinstance(row, dict):
+            continue
+
+        symbol = str(row.get("symbol") or row.get("localSymbol") or "").upper().strip()
+        qty = safe_float(row.get("signed_qty") or row.get("qty") or row.get("quantity") or row.get("position") or 0.0, 0.0)
+        cost_basis = safe_float(row.get("avg_cost") or row.get("avgCost") or row.get("cost_basis") or 0.0, 0.0)
+        market_value = safe_float(row.get("market_value") or row.get("marketValue") or row.get("position_value") or 0.0, 0.0)
+        if market_value == 0.0:
+            last_price = safe_float(row.get("last_price") or row.get("market_price") or row.get("last") or row.get("price") or cost_basis, 0.0)
+            market_value = qty * last_price
+        unrealized = safe_float(row.get("unrealized_pnl") or row.get("unrealizedPnL") or row.get("pnl") or 0.0, 0.0)
+
+        if symbol:
+            total_market_value += abs(market_value)
+            position_rows.append(
+                {
+                    "Symbol": symbol,
+                    "Quantity": round(qty, 4),
+                    "Cost Basis": round(cost_basis, 4),
+                    "Market Value": round(market_value, 2),
+                    "Unrealized P&L": round(unrealized, 2),
+                    "_alloc_raw": abs(market_value),
+                }
+            )
+
+    if position_rows:
+        for row in position_rows:
+            alloc = (row.pop("_alloc_raw", 0.0) / total_market_value * 100.0) if total_market_value > 0 else 0.0
+            row["Allocation %"] = f"{alloc:.1f}%"
+        st.dataframe(position_rows, width="stretch", hide_index=True)
+    else:
+        st.info("No cached broker positions yet.")
+
+    st.subheader("Orders")
+    ibkr_tip("Open, submitted, filled, and cancelled broker order state with timestamp visibility.")
+
+    open_order_rows = []
+    for order in _as_list(broker_snapshot_open_orders):
+        if not isinstance(order, dict):
+            continue
+        open_order_rows.append(
+            {
+                "Symbol": str(order.get("symbol") or order.get("localSymbol") or "").upper().strip(),
+                "Status": str(order.get("status") or order.get("order_status") or "SUBMITTED").upper(),
+                "Side": str(order.get("action") or order.get("side") or "").upper(),
+                "Quantity": order.get("totalQuantity") or order.get("qty") or order.get("quantity") or "",
+                "Order Type": order.get("orderType") or order.get("type") or "",
+                "Limit Price": order.get("lmtPrice") or order.get("limit_price") or "",
+                "Timestamp": order.get("timestamp") or order.get("time") or "",
+            }
+        )
+
+    fill_rows = []
+    for fill in _as_list(broker_snapshot_fills):
+        if not isinstance(fill, dict):
+            continue
+        fill_rows.append(
+            {
+                "Symbol": str(fill.get("symbol") or "").upper().strip(),
+                "Status": str(fill.get("status") or fill.get("execution_status") or "FILLED").upper(),
+                "Side": str(fill.get("action") or fill.get("side") or "").upper(),
+                "Quantity": fill.get("qty") or fill.get("quantity") or fill.get("filled_qty") or "",
+                "Fill Price": fill.get("price") or fill.get("fill_price") or "",
+                "Timestamp": fill.get("timestamp") or "",
+            }
+        )
+
+    o1, o2 = responsive_columns(2)
+    with o1:
+        st.markdown("**Open / Submitted Orders**")
+        if open_order_rows:
+            st.dataframe(open_order_rows, width="stretch", hide_index=True)
         else:
-            st.info("No cached broker fills yet.")
+            st.info("No cached open/submitted orders.")
+    with o2:
+        st.markdown("**Filled / Cancelled Status**")
+        if fill_rows:
+            st.dataframe(fill_rows, width="stretch", hide_index=True)
+        else:
+            st.info("No cached fill/cancel records.")
 
     # =====================================================
     # IBKR ACCOUNT BALANCE
     # =====================================================
 
-    st.subheader("IBKR Account Balance")
+    st.subheader("Broker Account Details")
     ibkr_tip("Account balance values come from cached IBKR account summary/account values. Net Liquidation is total account value; Buying Power and Available Funds show deployable capacity.")
 
     account_values = merged_account_values(
@@ -2015,33 +1919,37 @@ def page():
     exposure_value = gross_position_value if gross_position_value > 0 else broker_position_value
     cash_deployment = (exposure_value / net_liq_value * 100.0) if net_liq_value > 0 else 0.0
 
-    st.subheader("💰 Account Command Brief")
-    ibkr_tip("Fast account read: total equity, deployable funds, current exposure, and cash deployment.")
+    account_error = st.session_state.get(
+        "live_ibkr_account_values_error",
+        "",
+    )
+    position_value_error = st.session_state.get(
+        "live_ibkr_position_value_error",
+        "",
+    )
 
-    ac1, ac2, ac3, ac4, ac5 = responsive_columns(5)
-    with ac1:
-        ibkr_metric_card("Net Liquidation", _money(net_liq_value), "Total account value", tone="info")
-    with ac2:
-        ibkr_metric_card("Buying Power", _money(buying_power_value), "Broker buying power", tone="good" if buying_power_value > 0 else "warning")
-    with ac3:
-        ibkr_metric_card("Available Funds", _money(available_funds_value), "Available to deploy", tone="good" if available_funds_value > 0 else "warning")
-    with ac4:
-        ibkr_metric_card("Exposure", _money(exposure_value), "Gross position value", tone="info")
-    with ac5:
-        ibkr_metric_card("Cash Deployment", f"{cash_deployment:.1f}%", "Exposure / net liquidation", tone="risk" if cash_deployment >= 80 else "warning" if cash_deployment >= 60 else "good")
+    ibkr_tip("Detailed broker-account inspection with expanded account metrics and valuation diagnostics.")
+
+    d1, d2, d3 = responsive_columns(3)
+    with d1:
+        ibkr_metric_card("Inspection Mode", "DETAILED METRICS", "Expanded broker-account inspection", tone="info")
+    with d2:
+        ibkr_metric_card("Account Rows", _safe_len(broker_snapshot_account_summary), "Cached IBKR account summary rows", tone="info")
+    with d3:
+        ibkr_metric_card("Snapshot Reference", snapshot_age_label(broker_snapshot_timestamp), "Broker account cache timing", tone="good" if broker_snapshot_timestamp else "warning")
 
     if readiness_passed:
         st.success("Account and broker operations are ready for controlled OMS execution.")
     elif mode == "LIVE" and connected:
         st.warning("Broker is connected in LIVE workflow, but readiness is incomplete. Verify the checklist before execution.")
 
-    b1, b2, b3, b4, b5 = responsive_columns(5)
+    b1, b2, b3, b4 = responsive_columns(4)
 
     with b1:
         account_metric(
-            "Net Liquidation",
+            "Available Funds",
             account_values,
-            "NetLiquidation",
+            "AvailableFunds",
         )
 
     with b2:
@@ -2053,26 +1961,19 @@ def page():
 
     with b3:
         account_metric(
-            "Available Funds",
-            account_values,
-            "AvailableFunds",
-        )
-
-    with b4:
-        account_metric(
-            "Buying Power",
-            account_values,
-            "BuyingPower",
-        )
-
-    with b5:
-        account_metric(
             "Excess Liquidity",
             account_values,
             "ExcessLiquidity",
         )
 
-    cash1, cash2, cash3, cash4, cash5 = responsive_columns(5)
+    with b4:
+        account_metric(
+            "Gross Position",
+            account_values,
+            "GrossPositionValue",
+        )
+
+    cash1, cash2, cash3, cash4 = responsive_columns(4)
 
     with cash1:
         account_metric(
@@ -2100,13 +2001,6 @@ def page():
 
     with cash4:
         account_metric(
-            "IBKR Account Gross Position",
-            account_values,
-            "GrossPositionValue",
-        )
-
-    with cash5:
-        account_metric(
             "Cushion",
             account_values,
             "Cushion",
@@ -2118,21 +2012,11 @@ def page():
             "Connect IBKR, then use Pull Broker Snapshot."
         )
 
-    account_error = st.session_state.get(
-        "live_ibkr_account_values_error",
-        "",
-    )
-
     if account_error:
         st.warning(
             "Account values warning: "
             + str(account_error)
         )
-
-    position_value_error = st.session_state.get(
-        "live_ibkr_position_value_error",
-        "",
-    )
 
     if position_value_error:
         st.warning(
@@ -2140,10 +2024,10 @@ def page():
             + str(position_value_error)
         )
 
-    with st.expander("IBKR account balance values"):
+    with st.expander("Account Balance Details"):
         st.write(account_values)
 
-    with st.expander("Broker position value rows"):
+    with st.expander("Broker Position Summary"):
         st.write(
             {
                 "broker_position_value": broker_position_value,
@@ -2151,60 +2035,342 @@ def page():
             }
         )
 
-    st.divider()
+    st.subheader("Risk Gate")
+    ibkr_tip("Pre-trade exposure, concentration, and cash-buffer gate for live execution safety.")
 
-    if broker_snapshot_timestamp:
-        st.caption(
-            f"Last broker snapshot: {broker_snapshot_timestamp}"
+    risk_concentration = 0.0
+    if position_rows and total_market_value > 0:
+        try:
+            risk_concentration = max(
+                (safe_float(str(r.get("Allocation %", "0")).replace("%", ""), 0.0) for r in position_rows),
+                default=0.0,
+            )
+        except Exception:
+            risk_concentration = 0.0
+
+    cash_buffer_pct = (available_funds_value / net_liq_value * 100.0) if net_liq_value > 0 else 0.0
+    risk_badge = "READY" if readiness_passed else "NOT READY"
+
+    rg1, rg2, rg3, rg4, rg5 = responsive_columns(5)
+    with rg1:
+        ibkr_metric_card("Account Exposure", f"{cash_deployment:.1f}%", "Gross exposure / net liq", tone="risk" if cash_deployment >= 80 else "warning" if cash_deployment >= 60 else "good")
+    with rg2:
+        ibkr_metric_card("Concentration", f"{risk_concentration:.1f}%", "Largest position allocation", tone="risk" if risk_concentration >= 30 else "warning" if risk_concentration >= 20 else "good")
+    with rg3:
+        ibkr_metric_card("Cash Buffer", f"{cash_buffer_pct:.1f}%", "Available funds / net liq", tone="good" if cash_buffer_pct >= 20 else "warning" if cash_buffer_pct >= 10 else "risk")
+    with rg4:
+        ibkr_metric_card("Live Trading Warning", "LIVE" if mode == "LIVE" else "PAPER/SIM", "Mode visibility guard", tone="risk" if mode == "LIVE" else "info")
+    with rg5:
+        ibkr_metric_card("Risk Gate", risk_badge, "Ready / Not Ready", tone="good" if readiness_passed else "risk")
+
+    st.subheader("Execution Handoff")
+    ibkr_tip("Send selected symbol/order context to OMS, Position Command, or Journal.")
+
+    preferred_symbol = st.session_state.get("selected_symbol", "")
+    if not preferred_symbol and position_rows:
+        preferred_symbol = str(position_rows[0].get("Symbol") or "")
+    if not preferred_symbol and fill_rows:
+        preferred_symbol = str(fill_rows[0].get("Symbol") or "")
+    preferred_symbol = str(preferred_symbol or "AAPL").upper().strip()
+
+    h1, h2, h3 = responsive_columns(3)
+    with h1:
+        if st.button("Send to OMS", width="stretch", key="live_ibkr_handoff_oms"):
+            st.session_state["selected_symbol"] = preferred_symbol
+            st.session_state["oms_order_symbol"] = preferred_symbol
+            st.session_state["jfbp_main_navigation"] = "OMS Execution"
+            st.rerun()
+    with h2:
+        if st.button("Send to Position Command", width="stretch", key="live_ibkr_handoff_position"):
+            st.session_state["selected_symbol"] = preferred_symbol
+            st.session_state["position_command_symbol"] = preferred_symbol
+            st.session_state["jfbp_main_navigation"] = "Position Command Center"
+            st.rerun()
+    with h3:
+        if st.button("Send to Journal", width="stretch", key="live_ibkr_handoff_journal"):
+            last_fill = fill_rows[0] if fill_rows else {"Symbol": preferred_symbol, "Status": "NO FILL", "Timestamp": now()}
+            st.session_state["journal_trade_record"] = last_fill
+            st.session_state["selected_symbol"] = preferred_symbol
+            st.session_state["jfbp_main_navigation"] = "Journal"
+            st.rerun()
+
+    st.subheader("Emergency Controls")
+    ibkr_tip("Danger zone for live broker operations: refresh broker state, cancel open orders, and disconnect session.")
+
+    if mode == "LIVE":
+        st.error("LIVE SESSION WARNING: Dangerous actions are isolated below. Confirm intent before use.")
+
+    e1, e2, e3 = responsive_columns(3)
+    with e1:
+        emergency_refresh = st.button("Refresh Broker State", width="stretch", key="live_ibkr_emergency_refresh")
+    with e2:
+        emergency_cancel_orders = st.button("Cancel Open Orders", width="stretch", key="live_ibkr_emergency_cancel_orders")
+    with e3:
+        emergency_disconnect = st.button("Disconnect Session", width="stretch", key="live_ibkr_emergency_disconnect")
+
+    if emergency_refresh:
+        reset_operator_intent()
+        st.session_state["live_ibkr_cached_status"] = None
+        st.session_state["live_ibkr_status_cached_at"] = 0.0
+        st.session_state["live_ibkr_last_refresh"] = now()
+        st.rerun()
+
+    if emergency_cancel_orders:
+        ok, reason = call_if_exists(gateway, "cancel_all_open_orders")
+        if not ok:
+            ok, reason = call_if_exists(gateway, "cancel_all_orders")
+        if ok:
+            st.success("Cancel open orders requested.")
+        else:
+            st.warning(f"Cancel open orders unavailable: {reason}")
+
+    if emergency_disconnect:
+        ok, reason = call_if_exists(gateway, "disconnect")
+        if ok:
+            st.session_state["live_ibkr_cached_status"] = {
+                "connected": False,
+                "status": "DISCONNECTED",
+                "detail": "disconnected from emergency controls",
+            }
+            st.session_state["live_ibkr_status_cached_at"] = 0.0
+            st.session_state["live_ibkr_last_refresh"] = now()
+            st.success("Gateway disconnect requested.")
+            st.rerun()
+        else:
+            st.error(f"Disconnect failed: {reason}")
+
+    st.caption("Paper/Live warning: LIVE mode with gateway connectivity can route real broker orders from execution modules when armed.")
+
+    
+    # =====================================================
+    # SAFETY LOCKS
+    # =====================================================
+
+    st.subheader("Safety Locks")
+    ibkr_tip("Core live arming and kill-switch controls.")
+
+    s1, s2, s3 = responsive_columns(3)
+
+    with s1:
+        st.session_state["live_trading_armed"] = st.toggle(
+            "LIVE Trading Armed",
+            value=live_armed,
+            disabled=mode != "LIVE",
         )
 
-    if broker_snapshot_errors:
-        st.warning(
-            "Last broker snapshot warnings: "
-            + " | ".join(str(e) for e in broker_snapshot_errors)
+    with s2:
+        st.session_state["risk_kill_switch"] = st.toggle(
+            "Kill Switch",
+            value=kill_switch,
         )
+
+    with s3:
+        refresh = st.button(
+            "Refresh Status Cache",
+            width="stretch",
+        )
+
+    if refresh:
+        reset_operator_intent()
+
+        st.session_state["live_ibkr_cached_status"] = None
+        st.session_state["live_ibkr_status_cached_at"] = 0.0
+        st.session_state["live_ibkr_last_refresh"] = now()
+
+        st.rerun()
+
+    current_kill = bool(st.session_state.get("risk_kill_switch", False))
+    previous_kill = bool(st.session_state.get("ibkr_last_notified_kill_switch", False))
+    if current_kill and not previous_kill and st.session_state.get("ibkr_notify_kill_switch", True):
+        send_ibkr_telegram(
+            "🛑 JFBP IBKR Kill Switch",
+            "Risk kill switch is ON. Execution should remain blocked.",
+        )
+    st.session_state["ibkr_last_notified_kill_switch"] = current_kill
+
+    current_live_armed = bool(st.session_state.get("live_trading_armed", False))
+    previous_live_armed = bool(st.session_state.get("ibkr_last_notified_live_armed", False))
+    if current_live_armed and not previous_live_armed and st.session_state.get("ibkr_notify_live_armed", True):
+        send_ibkr_telegram(
+            "🚨 JFBP IBKR LIVE Armed",
+            "Live trading is armed from the Live IBKR safety panel.",
+        )
+    st.session_state["ibkr_last_notified_live_armed"] = current_live_armed
 
     st.divider()
 
     # =====================================================
-    # COMPONENT STATUS
+    # CONNECTION CONTROLS
     # =====================================================
 
-    st.subheader("Component Status")
-    ibkr_tip("Diagnostic health check for the gateway, stream, market hub, OMS, pipeline, risk engine, mode, armed state, and kill switch.")
+    st.subheader("Connection Controls")
+    ibkr_tip("Connect or disconnect the IBKR gateway. These controls manage connectivity only and do not send orders.")
 
-    stream_status = "ONLINE" if stream_engine else "NOT CONFIGURED"
-    stream_running_status = "YES" if streaming else "N/A"
-
-    status_rows = {
-        "Gateway Object": "ONLINE" if gateway else "MISSING",
-        "Gateway Connected": "YES" if connected else "NO",
-        "Gateway Status": status.get("status"),
-        "Stream Engine": stream_status,
-        "Stream Running": stream_running_status,
-        "Market Hub": "ONLINE" if market else "MISSING",
-        "OMS": "ONLINE" if oms else "MISSING",
-        "Pipeline": "READY" if pipeline else "MISSING",
-        "Risk Engine": "ONLINE" if risk_engine else "MISSING",
-        "Mode": mode,
-        "LIVE Armed": "YES" if st.session_state.get("live_trading_armed") else "NO",
-        "Kill Switch": "ON" if st.session_state.get("risk_kill_switch") else "OFF",
-        "Last Refresh": st.session_state.get("live_ibkr_last_refresh", ""),
-    }
-
-    st.table(
-        {
-            "Component": list(status_rows.keys()),
-            "Status": list(status_rows.values()),
-        }
+    st.info(
+        "Start TWS or IBKR Gateway before connecting. Paper accounts normally use port 7497; live accounts normally use port 7496."
     )
 
+    st.warning(
+        "This page manages connectivity only. It does not execute trades."
+    )
+
+    intent_key = st.session_state.get("live_ibkr_intent_reset_id", 0)
+
+    connect_col, disconnect_col, stream_col = responsive_columns(3)
+
+    with connect_col:
+        confirm_connect = st.checkbox(
+            "Confirm IBKR connect",
+            value=False,
+            key=f"confirm_ibkr_connect_{intent_key}",
+        )
+
+        connect_btn = st.button(
+            "Connect Gateway",
+            width="stretch",
+            disabled=connected or not confirm_connect,
+        )
+
+        st.caption(
+            "Connect only after TWS/IBKR Gateway is open and logged in."
+        )
+
+    with disconnect_col:
+        confirm_disconnect = st.checkbox(
+            "Confirm IBKR disconnect",
+            value=False,
+            key=f"confirm_ibkr_disconnect_{intent_key}",
+        )
+
+        disconnect_btn = st.button(
+            "Disconnect Gateway",
+            width="stretch",
+            disabled=not connected or not confirm_disconnect,
+        )
+
+        st.caption(
+            "Disconnecting JFBP does not close TWS/IBKR Gateway or affect existing broker positions."
+        )
+
+    with stream_col:
+        confirm_stream_stop = st.checkbox(
+            "Confirm stream stop",
+            value=False,
+            key=f"confirm_stream_stop_{intent_key}",
+        )
+
+        stop_stream_btn = st.button(
+            "Stop Stream",
+            width="stretch",
+            disabled=not streaming or not confirm_stream_stop,
+        )
+
+    if connect_btn:
+        if gateway is None:
+            ok = False
+            reason = "Gateway object missing"
+
+        elif not hasattr(gateway, "connect"):
+            ok = False
+            reason = "Gateway has no connect() method"
+
+        else:
+            try:
+                result = gateway.connect(
+                    host="127.0.0.1",
+                    port=7497,
+                    client_id=1,
+                )
+
+                ok = bool(result)
+
+                if ok:
+                    reason = "OK"
+                else:
+                    reason = (
+                        getattr(gateway, "last_error", "")
+                        or getattr(gateway, "error", "")
+                        or "gateway.connect() returned False"
+                    )
+
+            except Exception as exc:
+                ok = False
+                reason = str(exc)
+
+        if ok:
+            reset_operator_intent()
+
+            st.session_state["live_ibkr_cached_status"] = {
+                "connected": True,
+                "status": "CONNECTED",
+                "detail": "connected after manual gateway connect",
+            }
+            st.session_state["live_ibkr_status_cached_at"] = 0.0
+            st.session_state["live_ibkr_last_refresh"] = now()
+
+            if st.session_state.get("ibkr_notify_connect", True):
+                send_ibkr_telegram(
+                    "📡 JFBP IBKR Connected",
+                    "Gateway connected successfully. Verify broker snapshot before trading.",
+                )
+
+            st.success("Gateway connected.")
+            st.rerun()
+        else:
+            st.error(f"Gateway connect failed: {reason}")
+
+    if disconnect_btn:
+        ok, reason = call_if_exists(gateway, "disconnect")
+
+        if ok:
+            reset_operator_intent()
+
+            st.session_state["live_ibkr_cached_status"] = {
+                "connected": False,
+                "status": "DISCONNECTED",
+                "detail": "disconnected after manual gateway disconnect",
+            }
+            st.session_state["live_ibkr_status_cached_at"] = 0.0
+            st.session_state["live_ibkr_last_refresh"] = now()
+
+            if st.session_state.get("ibkr_notify_disconnect", True):
+                send_ibkr_telegram(
+                    "📡 JFBP IBKR Disconnected",
+                    "Gateway disconnect requested. JFBP broker connection is offline.",
+                )
+
+            st.success("Gateway disconnect requested.")
+            st.rerun()
+        else:
+            st.error(f"Gateway disconnect failed: {reason}")
+
+    if stop_stream_btn:
+        ok, reason = call_if_exists(stream_engine, "stop")
+
+        if ok:
+            reset_operator_intent()
+
+            st.success("Stream stop requested.")
+            st.rerun()
+        else:
+            st.error(f"Stream stop failed: {reason}")
+
+    st.divider()
+
     # =====================================================
-    # RAW STATUS
+    # TECHNICAL DIAGNOSTICS
     # =====================================================
+
+    st.markdown('<div class="ibkr-utility-title">Technical Diagnostics</div>', unsafe_allow_html=True)
 
     with st.expander("Gateway detail"):
         st.write(status.get("detail"))
+        st.table(
+            {
+                "Component": list(status_rows.keys()),
+                "Status": list(status_rows.values()),
+            }
+        )
 
     with st.expander("Live execution guard summary"):
         st.write(
@@ -2251,6 +2417,136 @@ def page():
                     [],
                 ),
             }
+        )
+
+    st.divider()
+
+    # =====================================================
+    # MANUAL BROKER RECOVERY
+    # =====================================================
+
+    st.subheader("🔧 Broker Recovery Center")
+    ibkr_tip("Use this only when broker fills may have occurred while the app was offline or disconnected. It does not place trades.")
+
+    last_recovery = st.session_state.get("live_ibkr_last_recovery_time", "")
+    last_recovery_rows = st.session_state.get("live_ibkr_last_recovery_rows", 0)
+    last_recovery_status = st.session_state.get("live_ibkr_last_recovery_status", "NEVER RUN")
+
+    rec_m1, rec_m2, rec_m3 = responsive_columns(3)
+    with rec_m1:
+        ibkr_metric_card("Last Recovery", snapshot_age_label(last_recovery), "Broker execution recovery", tone="info" if last_recovery else "warning")
+    with rec_m2:
+        ibkr_metric_card("Recovered Rows", last_recovery_rows, "Last recovery result count", tone="info")
+    with rec_m3:
+        ibkr_metric_card("Recovery Status", last_recovery_status, "Latest recovery outcome", tone=ibkr_status_tone(last_recovery_status))
+
+    recovery_col1, recovery_col2 = responsive_columns(2)
+
+    with recovery_col1:
+
+        recover_exec_btn = st.button(
+            "Recover Broker Executions",
+            width="stretch",
+            disabled=False,
+            help=(
+                "Manually trigger IBKR execution recovery "
+                "to replay broker fills into runtime."
+            ),
+        )
+
+        if recover_exec_btn:
+
+            st.info("Recover Broker Executions button clicked.")
+
+            if gateway is None:
+
+                st.error("Gateway object is missing.")
+
+            elif not hasattr(gateway, "recover_broker_executions"):
+
+                st.error(
+                    "Gateway does not have recover_broker_executions()."
+                )
+
+            else:
+
+                try:
+
+                    st.write("Gateway class:", type(gateway).__name__)
+                    st.write(
+                        "Broker connected:",
+                        gateway.verify_connection()
+                        if hasattr(gateway, "verify_connection")
+                        else "verify_connection unavailable",
+                    )
+
+                    with st.spinner(
+                        "Requesting broker executions from IBKR..."
+                    ):
+
+                        result = gateway.recover_broker_executions()
+
+                    gateway_error = str(
+                        getattr(gateway, "last_error", "") or ""
+                    )
+
+                    st.write("Recovery result:", result)
+                    st.write("Gateway last_error:", gateway_error)
+
+                    if gateway_error:
+
+                        st.error(gateway_error)
+
+                    else:
+
+                        count = (
+                            len(result)
+                            if result is not None
+                            else 0
+                        )
+
+                        if st.session_state.get("ibkr_notify_recovery", True):
+                            send_ibkr_telegram(
+                                "🔧 JFBP IBKR Recovery",
+                                f"Broker execution recovery completed. Returned rows: {count}",
+                            )
+
+                        st.session_state["live_ibkr_last_recovery_time"] = now()
+                        st.session_state["live_ibkr_last_recovery_rows"] = count
+                        st.session_state["live_ibkr_last_recovery_status"] = "OK"
+
+                        st.success(
+                            "Broker execution recovery call completed. "
+                            f"Returned rows: {count}"
+                        )
+
+                    st.session_state[
+                        "live_ibkr_last_refresh"
+                    ] = now()
+
+                    st.session_state[
+                        "live_ibkr_cached_status"
+                    ] = None
+
+                    st.session_state[
+                        "live_ibkr_status_cached_at"
+                    ] = 0.0
+
+                except Exception as exc:
+
+                    st.session_state["live_ibkr_last_recovery_time"] = now()
+                    st.session_state["live_ibkr_last_recovery_rows"] = 0
+                    st.session_state["live_ibkr_last_recovery_status"] = "ERROR"
+
+                    st.error(
+                        f"Recover Broker Executions failed: {exc}"
+                    )
+
+    with recovery_col2:
+
+        st.caption(
+            "Diagnostic version: this will show whether the button, "
+            "gateway, connection, and recovery method are actually firing."
         )
 
 

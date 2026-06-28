@@ -1579,13 +1579,13 @@ def run_page():
 
     st.info(
         "🚀 Workflow: Market Pulse → Scanner → Research Stock → "
-        "OMS Execution → Live IBKR → Pull Snapshot → "
-        "Verify Account → Trade → Portfolio → Journal"
+        "Trade Command Center → OMS Execution → "
+        "Position Command Center → Journal"
     )
 
     with st.expander(
         "🚀 OMS LIVE Trading Workflow",
-        expanded=True,
+        expanded=False,
     ):
         st.markdown(
             """
@@ -1998,85 +1998,116 @@ def run_page():
         )
 
     st.divider()
-    st.subheader("🧠 OMS Execution Brief")
+    st.subheader("🏛 OMS v7.0 Institutional Execution Desk")
+    st.caption("What order is being prepared, what is the risk, and is it ready to execute?")
 
-    st.info(
-        "🏛 OMS Control Center\n\n"
-        "Recommended workflow:\n"
-        "1. Verify Reconciliation = MATCH.\n"
-        "2. Confirm Kill Switch is OFF.\n"
-        "3. Review approved Scanner signals.\n"
-        "4. Execute approved signals.\n"
-        "5. Monitor fills, portfolio updates, and audit records.\n\n"
-        "Use Emergency Flatten only during abnormal market conditions "
-        "or when you need to immediately exit all positions."
-    )
+    ticket_symbol = str(prepared_ticket.get("symbol") or prepared_ticket.get("Symbol") or st.session_state.get("oms_order_symbol", "")).upper().strip()
+    ticket_action = str(prepared_ticket.get("action") or prepared_ticket.get("Action") or "REVIEW").upper().strip()
+    ticket_source = str(prepared_ticket.get("source") or "OMS")
 
+    def _to_float(value, default=0.0):
+        try:
+            if value is None:
+                return default
+            if isinstance(value, str):
+                text = value.replace("$", "").replace(",", "").strip()
+                if not text:
+                    return default
+                return float(text)
+            return float(value)
+        except Exception:
+            return default
+
+    ticket_qty = int(_to_float(prepared_ticket.get("qty", prepared_ticket.get("Qty", 0)), 0.0))
+    ticket_entry = _to_float(prepared_ticket.get("entry", prepared_ticket.get("Entry", prepared_ticket.get("price", 0))), 0.0)
+    ticket_stop = _to_float(prepared_ticket.get("stop", prepared_ticket.get("Stop", 0)), 0.0)
+    ticket_target = _to_float(prepared_ticket.get("target_2", prepared_ticket.get("target_1", prepared_ticket.get("Target", 0))), 0.0)
+    ticket_risk = _to_float(prepared_ticket.get("dollar_risk", prepared_ticket.get("Risk", 0)), 0.0)
+    ticket_exposure = ticket_qty * ticket_entry if ticket_qty > 0 and ticket_entry > 0 else _to_float(prepared_ticket.get("position_value", 0), 0.0)
+    ticket_rr = abs(ticket_target - ticket_entry) / max(abs(ticket_entry - ticket_stop), 0.01) if ticket_entry > 0 and ticket_stop > 0 and ticket_target > 0 else 0.0
+
+    # 1) Executive Order Brief
+    render_oms_card_grid([
+        {"title": "Order", "value": ticket_symbol or "No Prepared Order", "detail": f"Action {ticket_action}", "tone": "info"},
+        {"title": "Readiness", "value": readiness_label, "detail": readiness_text, "tone": "good" if reconciliation_ok and not kill_switch else "risk" if kill_switch else "warning"},
+        {"title": "Mode", "value": mode, "detail": "LIVE armed requires strict safeguards", "tone": "risk" if mode == "LIVE" and live_armed else "warning" if mode == "LIVE" else "good"},
+        {"title": "Kill Switch", "value": "ON" if kill_switch else "OFF", "detail": "Execution blocked when ON", "tone": "risk" if kill_switch else "good"},
+        {"title": "Reconciliation", "value": "MATCH" if reconciliation_ok else "REVIEW", "detail": f"Runtime {len(runtime_fills)} | Audit {len(audit_fills)}", "tone": "good" if reconciliation_ok else "warning"},
+        {"title": "Positions", "value": positions_count, "detail": f"Risk book {risk_positions_count}", "tone": "info"},
+    ])
+
+    # 2) Position Sizing and Risk Summary
+    render_oms_card_grid([
+        {"title": "Position Size", "value": ticket_qty if ticket_qty > 0 else "Pending", "detail": "Prepared quantity", "tone": "info"},
+        {"title": "Dollar Exposure", "value": f"${ticket_exposure:,.2f}", "detail": "Estimated notional", "tone": "info"},
+        {"title": "Max Risk", "value": f"${ticket_risk:,.2f}", "detail": "Stop-based estimate", "tone": "warning" if ticket_risk > 0 else "neutral"},
+        {"title": "Risk/Reward", "value": f"{ticket_rr:.2f}R" if ticket_rr > 0 else "Pending", "detail": "Target vs stop distance", "tone": "good" if ticket_rr >= 2 else "warning" if ticket_rr > 0 else "neutral"},
+    ])
+
+    # 3) Order Ticket Preview
     with st.container(border=True):
-        oms_tip(
-            "This is the execution-readiness layer. It summarizes mode, "
-            "live status, kill switch, reconciliation, and current position truth."
-        )
-
-        brief_cols = st.columns(5)
-
-        with brief_cols[0]:
-            st.metric("Mode", mode)
-
-        with brief_cols[1]:
-            st.metric(
-                "Readiness",
-                readiness_label,
-            )
-
-        with brief_cols[2]:
-            st.metric(
-                "Kill Switch",
-                "ON" if kill_switch else "OFF",
-            )
-
-        with brief_cols[3]:
-            st.metric(
-                "Reconciliation",
-                "MATCH" if reconciliation_ok else "REVIEW",
-            )
-
-        with brief_cols[4]:
-            st.metric(
-                "Positions",
-                positions_count,
-            )
-
-        if reconciliation_ok and not kill_switch:
-            st.success(readiness_text)
-        elif kill_switch or (mode == "LIVE" and live_armed):
-            st.error(readiness_text)
+        st.markdown("### 📋 Order Ticket Preview")
+        if prepared_ticket:
+            preview_rows = [
+                {"Field": "Symbol", "Value": ticket_symbol or "Not Available"},
+                {"Field": "Action", "Value": ticket_action or "Not Available"},
+                {"Field": "Qty", "Value": ticket_qty if ticket_qty > 0 else "Not Available"},
+                {"Field": "Entry", "Value": f"${ticket_entry:,.2f}" if ticket_entry > 0 else "Not Available"},
+                {"Field": "Stop", "Value": f"${ticket_stop:,.2f}" if ticket_stop > 0 else "Not Available"},
+                {"Field": "Target", "Value": f"${ticket_target:,.2f}" if ticket_target > 0 else "Not Available"},
+                {"Field": "Source", "Value": ticket_source},
+            ]
+            st.dataframe(pd.DataFrame(preview_rows), width="stretch", hide_index=True)
         else:
-            st.warning(readiness_text)
+            st.info("No prepared upstream order ticket detected. OMS can still execute approved scanner plans.")
 
-    # =====================================================
-    # OMS ↔ POSITION COMMAND CENTER INTEGRATION v35.0
-    # =====================================================
+    # 4) Validation Checklist
+    checklist_rows = [
+        ("Market mode selected", mode in {"SIM", "LIVE"}),
+        ("Kill switch OFF", not kill_switch),
+        ("Reconciliation aligned", reconciliation_ok),
+        ("Order symbol loaded", bool(ticket_symbol)),
+        ("Quantity available", ticket_qty > 0),
+        ("Execution not lock-blocked", not execution_locked()),
+    ]
+    passed = sum(1 for _, ok in checklist_rows if ok)
+    total = len(checklist_rows)
+    with st.container(border=True):
+        st.markdown("### ✅ Validation Checklist")
+        for label, ok in checklist_rows:
+            st.markdown(f"{'✅' if ok else '⬜'} {label}")
+        if passed == total:
+            st.success(f"Execution checklist complete: {passed}/{total}")
+        elif passed >= total - 2:
+            st.warning(f"Execution checklist nearly complete: {passed}/{total}")
+        else:
+            st.error(f"Execution checklist incomplete: {passed}/{total}")
 
+    # 5) Execution Warnings
+    with st.container(border=True):
+        st.markdown("### ⚠️ Execution Warnings")
+        if kill_switch:
+            st.error("Kill switch is ON. Execution remains blocked until risk controls are restored.")
+        elif mode == "LIVE" and live_armed:
+            st.error("LIVE trading is armed. Confirm broker/account state before triggering any execution control.")
+        elif mode == "LIVE":
+            st.warning("LIVE infrastructure mode active, but trading is not armed.")
+        else:
+            st.info("SIM mode active. Execution can be tested without live broker routing.")
+
+    # 6) Journal and Position Handoff
     last_exec_report = st.session_state.get("oms_last_execution_report", {})
     approved_count = int(last_exec_report.get("approved_signals", 0) or 0) if isinstance(last_exec_report, dict) else 0
     executed_count = int(last_exec_report.get("executed", 0) or 0) if isinstance(last_exec_report, dict) else 0
     blocked_count = int(last_exec_report.get("blocked", 0) or 0) if isinstance(last_exec_report, dict) else 0
     failed_count = int(last_exec_report.get("failed", 0) or 0) if isinstance(last_exec_report, dict) else 0
 
-    st.markdown("### 🎯 OMS → Position Command Handoff")
-    oms_tip(
-        "This turns OMS from an execution page into a workflow bridge. "
-        "After an execution, move directly into Position Command Center to manage open trades."
-    )
-
+    st.markdown("### 🔁 Journal and Position Handoff")
     render_oms_card_grid([
-        {"title": "Approved Signals", "value": approved_count, "detail": "Last OMS execution plan", "tone": "info" if approved_count else "neutral"},
-        {"title": "Executed", "value": executed_count, "detail": "Orders accepted/executed by pipeline", "tone": "good" if executed_count else "neutral"},
-        {"title": "Blocked", "value": blocked_count, "detail": "Risk / OMS / duplicate blocks", "tone": "warning" if blocked_count else "good"},
-        {"title": "Failed", "value": failed_count, "detail": "Execution failures needing review", "tone": "risk" if failed_count else "good"},
-        {"title": "Runtime Fills", "value": len(runtime_fills), "detail": "Current OMS runtime fill cache", "tone": "info" if runtime_fills else "neutral"},
-        {"title": "Portfolio Positions", "value": positions_count, "detail": action_priority_label(last_exec_report), "tone": "info" if positions_count else "neutral"},
+        {"title": "Approved Signals", "value": approved_count, "detail": "Last execution plan", "tone": "info" if approved_count else "neutral"},
+        {"title": "Executed", "value": executed_count, "detail": "Accepted by pipeline", "tone": "good" if executed_count else "neutral"},
+        {"title": "Blocked", "value": blocked_count, "detail": "Risk / duplicate blocks", "tone": "warning" if blocked_count else "good"},
+        {"title": "Failed", "value": failed_count, "detail": "Needs review", "tone": "risk" if failed_count else "good"},
     ])
 
     nav_a, nav_b, nav_c = st.columns(3)
@@ -2091,154 +2122,146 @@ def run_page():
             st.session_state["jfbp_main_navigation"] = "Journal"
             st.rerun()
 
-    st.markdown("### 🏛 Institutional Reconciliation Center")
-    oms_tip(
-        "This checks whether runtime fills, portfolio ledger, audit fills, "
-        "portfolio positions, and risk positions agree."
-    )
+    st.caption("Post-OMS workflow sequence: Research Stock → Options Center.")
 
-    with st.container(border=True):
-        c1, c2, c3, c4, c5 = st.columns(5)
+    st.markdown("### 🏛 Execution Integrity Status")
+    with st.expander("Reconciliation Report", expanded=False):
+        with st.container(border=True):
+            c1, c2, c3, c4, c5 = st.columns(5)
 
-        c1.metric("Runtime Fills", len(runtime_fills))
-        c2.metric("Portfolio Ledger", len(portfolio_ledger))
-        c3.metric("Audit Fills", len(audit_fills))
-        c4.metric("Portfolio Positions", positions_count)
-        c5.metric("Risk Positions", risk_positions_count)
+            c1.metric("Runtime Fills", len(runtime_fills))
+            c2.metric("Portfolio Ledger", len(portfolio_ledger))
+            c3.metric("Audit Fills", len(audit_fills))
+            c4.metric("Portfolio Positions", positions_count)
+            c5.metric("Risk Positions", risk_positions_count)
 
-        if ledger_match and position_match:
+            if ledger_match and position_match:
 
-            if runtime_empty_after_restart:
-                st.success(
-                    "Institutional reconciliation: MATCH "
-                    "(runtime cache empty after restart)"
-                )
-
-            elif full_runtime_match:
-                st.success("Institutional reconciliation: MATCH")
-
-            else:
-                st.success(
-                    "Institutional reconciliation: MATCH "
-                    "(audit/portfolio/risk aligned; runtime cache is non-authoritative)"
-                )
-
-        else:
-            st.error(
-                "Institutional reconciliation drift: "
-                "FILL_LEDGER_AUDIT_MISMATCH"
-            )
-
-            if portfolio_engine and hasattr(
-                portfolio_engine,
-                "reconcile_runtime_vs_portfolio",
-            ):
-                try:
-                    drift_report = portfolio_engine.reconcile_runtime_vs_portfolio(
-                        runtime_fills=runtime_fills,
-                        audit_fills=audit_fills,
+                if runtime_empty_after_restart:
+                    st.success(
+                        "Institutional reconciliation: MATCH "
+                        "(runtime cache empty after restart)"
                     )
 
-                    st.session_state["last_portfolio_reconcile_report"] = drift_report
+                elif full_runtime_match:
+                    st.success("Institutional reconciliation: MATCH")
 
-                    if isinstance(drift_report, dict) and drift_report.get("status") == "OK":
-                        st.success("Portfolio ledger repaired from runtime/audit truth.")
-                        st.rerun()
+                else:
+                    st.success(
+                        "Institutional reconciliation: MATCH "
+                        "(audit/portfolio/risk aligned; runtime cache is non-authoritative)"
+                    )
 
-                    else:
-                        st.warning(
-                            "Portfolio repair attempted. Review reconcile report below."
+            else:
+                st.error(
+                    "Institutional reconciliation drift: "
+                    "FILL_LEDGER_AUDIT_MISMATCH"
+                )
+
+                if portfolio_engine and hasattr(
+                    portfolio_engine,
+                    "reconcile_runtime_vs_portfolio",
+                ):
+                    try:
+                        drift_report = portfolio_engine.reconcile_runtime_vs_portfolio(
+                            runtime_fills=runtime_fills,
+                            audit_fills=audit_fills,
                         )
 
-                except Exception as exc:
-                    st.warning(f"Portfolio repair failed: {exc}")
+                        st.session_state["last_portfolio_reconcile_report"] = drift_report
 
-            if st.session_state.get("last_portfolio_reconcile_report"):
-                with st.expander("Last Portfolio Reconcile Report"):
-                    st.json(st.session_state["last_portfolio_reconcile_report"])
+                        if isinstance(drift_report, dict) and drift_report.get("status") == "OK":
+                            st.success("Portfolio ledger repaired from runtime/audit truth.")
+                            st.rerun()
+
+                        else:
+                            st.warning(
+                                "Portfolio repair attempted. Review reconcile report below."
+                            )
+
+                    except Exception as exc:
+                        st.warning(f"Portfolio repair failed: {exc}")
+
+                if st.session_state.get("last_portfolio_reconcile_report"):
+                    with st.expander("Last Portfolio Reconcile Report"):
+                        st.json(st.session_state["last_portfolio_reconcile_report"])
 
     # =====================================================
     # OPERATIONAL CONTROLS
     # =====================================================
 
-    st.markdown("### Operational Controls")
+    with st.expander("▼ Advanced Runtime Controls", expanded=False):
+        oms_tip(
+            "Administrative tools used to rebuild OMS state, "
+            "reset risk counters, and validate system integrity. "
+            "Normally used during testing, recovery, or troubleshooting."
+        )
 
-    oms_tip(
-        "Administrative tools used to rebuild OMS state, "
-        "reset risk counters, and validate system integrity. "
-        "Normally used during testing, recovery, or troubleshooting."
-    )
+        oc1, oc2, oc3 = st.columns(3)
 
-    oc1, oc2, oc3 = st.columns(3)
+        confirm_replay = oc1.checkbox("Confirm runtime rebuild from audit")
+        replay_clicked = oc1.button("Replay Audit / Rebuild Runtime")
 
-    confirm_replay = oc1.checkbox("Confirm runtime rebuild from audit")
-    replay_clicked = oc1.button("Replay Audit / Rebuild Runtime")
+        confirm_reset = oc2.checkbox("Confirm risk counter reset")
+        reset_clicked = oc2.button("Reset Risk Counters")
 
-    confirm_reset = oc2.checkbox("Confirm risk counter reset")
-    reset_clicked = oc2.button("Reset Risk Counters")
+        confirm_test = oc3.checkbox("Confirm OMS test fill")
+        test_clicked = oc3.button("Test OMS Fill")
 
-    confirm_test = oc3.checkbox("Confirm OMS test fill")
-    test_clicked = oc3.button("Test OMS Fill")
+        if replay_clicked:
+            if not confirm_replay:
+                st.warning("Replay requires confirmation.")
+            else:
+                ok = replay_runtime()
 
-    if replay_clicked:
-        if not confirm_replay:
-            st.warning("Replay requires confirmation.")
-        else:
-            ok = replay_runtime()
+                if ok:
+                    st.success("Runtime rebuilt from audit truth.")
+                    st.rerun()
+                else:
+                    st.error("Replay failed.")
 
-            if ok:
-                st.success("Runtime rebuilt from audit truth.")
+        if reset_clicked:
+            if not confirm_reset:
+                st.warning("Risk reset requires confirmation.")
+            else:
+                ok = reset_risk_counters_only()
+
+                if ok:
+                    st.success("Risk counters reset.")
+                    st.rerun()
+                else:
+                    st.error("Risk reset failed.")
+
+        if test_clicked:
+            if not confirm_test:
+                st.warning("OMS fill test requires confirmation.")
+            else:
+                report = execute_oms_test_fill()
+
+                status = str(report.get("status", "UNKNOWN"))
+
+                if status.startswith("EXECUTED_"):
+                    st.success("OMS SIM test fill executed and persisted to portfolio_positions.")
+                else:
+                    st.error(report.get("reason", status))
+
                 st.rerun()
+
+        st.markdown("#### Runtime Clear")
+        oms_tip(
+            "Clears temporary OMS runtime data. "
+            "Does not remove audit history or permanent records."
+        )
+
+        confirm_clear = st.checkbox("Confirm runtime clear")
+
+        if st.button("Clear Runtime OMS"):
+            if not confirm_clear:
+                st.warning("Runtime clear requires confirmation.")
             else:
-                st.error("Replay failed.")
-
-    if reset_clicked:
-        if not confirm_reset:
-            st.warning("Risk reset requires confirmation.")
-        else:
-            ok = reset_risk_counters_only()
-
-            if ok:
-                st.success("Risk counters reset.")
+                clear_runtime()
+                st.success("Runtime cleared.")
                 st.rerun()
-            else:
-                st.error("Risk reset failed.")
-
-    if test_clicked:
-        if not confirm_test:
-            st.warning("OMS fill test requires confirmation.")
-        else:
-            report = execute_oms_test_fill()
-
-            status = str(report.get("status", "UNKNOWN"))
-
-            if status.startswith("EXECUTED_"):
-                st.success("OMS SIM test fill executed and persisted to portfolio_positions.")
-            else:
-                st.error(report.get("reason", status))
-
-            st.rerun()
-
-    # =====================================================
-    # RUNTIME CLEAR
-    # =====================================================
-
-    st.markdown("### Runtime Clear Zone")
-
-    oms_tip(
-        "Clears temporary OMS runtime data. "
-        "Does not remove audit history or permanent records."
-    )
-
-    confirm_clear = st.checkbox("Confirm runtime clear")
-
-    if st.button("Clear Runtime OMS"):
-        if not confirm_clear:
-            st.warning("Runtime clear requires confirmation.")
-        else:
-            clear_runtime()
-            st.success("Runtime cleared.")
-            st.rerun()
 
 
     # =====================================================
@@ -2629,115 +2652,115 @@ def run_page():
     # OBSERVABILITY
     # =====================================================
 
-    st.markdown("### 📊 OMS Diagnostics")
+    with st.expander("▼ OMS Diagnostics", expanded=False):
+        oms_tip(
+            "Displays the most recent OMS execution report, "
+            "including executed, blocked, and failed orders."
+        )
 
-    oms_tip(
-        "Displays the most recent OMS execution report, "
-        "including executed, blocked, and failed orders."
-    )
+        last_exec = st.session_state.get("oms_last_execution_report", {})
 
-    last_exec = st.session_state.get("oms_last_execution_report", {})
-
-    if last_exec:
-        st.json(last_exec)
+        if last_exec:
+            st.json(last_exec)
+        else:
+            st.info("No OMS execution diagnostics available yet.")
 
     # =====================================================
     # OMS ORDER BLOTTER (FIXED)
     # =====================================================
 
-    st.markdown("### 📋 OMS Order Blotter")
+    with st.expander("▼ OMS Order Blotter", expanded=False):
+        blotter_rows = []
 
-    blotter_rows = []
+        refresh_refs()
 
-    refresh_refs()
+        if oms:
+            for attr in (
+                "orders",
+                "completed_orders",
+                "working_orders",
+                "rejected_orders",
+            ):
+                if hasattr(oms, attr):
+                    try:
+                        rows = getattr(oms, attr)
 
-    if oms:
-        for attr in (
-            "orders",
-            "completed_orders",
-            "working_orders",
-            "rejected_orders",
-        ):
-            if hasattr(oms, attr):
+                        if isinstance(rows, list):
+                            blotter_rows.extend(rows)
+
+                        elif isinstance(rows, dict):
+                            blotter_rows.extend(rows.values())
+
+                    except Exception:
+                        pass
+
+            if hasattr(oms, "orders_snapshot"):
                 try:
-                    rows = getattr(oms, attr)
-
+                    rows = oms.orders_snapshot()
                     if isinstance(rows, list):
                         blotter_rows.extend(rows)
-
                     elif isinstance(rows, dict):
                         blotter_rows.extend(rows.values())
-
                 except Exception:
                     pass
 
-        if hasattr(oms, "orders_snapshot"):
-            try:
-                rows = oms.orders_snapshot()
-                if isinstance(rows, list):
-                    blotter_rows.extend(rows)
-                elif isinstance(rows, dict):
-                    blotter_rows.extend(rows.values())
-            except Exception:
-                pass
+        if not blotter_rows:
+            blotter_rows = get_pipeline_results()
 
-    if not blotter_rows:
-        blotter_rows = get_pipeline_results()
+        if not blotter_rows:
+            blotter_rows = get_fills()
 
-    if not blotter_rows:
-        blotter_rows = get_fills()
+        if blotter_rows:
+            cleaned_rows = [
+                row for row in blotter_rows
+                if isinstance(row, dict)
+            ]
 
-    if blotter_rows:
-        cleaned_rows = [
-            row for row in blotter_rows
-            if isinstance(row, dict)
-        ]
+            df = pd.DataFrame(cleaned_rows)
 
-        df = pd.DataFrame(cleaned_rows)
+            preferred_cols = [
+                "timestamp",
+                "symbol",
+                "action",
+                "side",
+                "execution_action",
+                "qty",
+                "price",
+                "fill_price",
+                "avg_fill_price",
+                "status",
+                "execution_status",
+                "order_status",
+                "reason",
+                "risk_approved",
+                "position_action",
+                "position_before",
+                "position_after_expected",
+                "lifecycle_stage",
+                "realized_delta",
+                "realized_pnl",
+                "mode",
+                "order_id",
+                "fill_id",
+                "execution_id",
+                "exec_id",
+                "broker_order_id",
+                "source",
+                "emergency_flatten",
+            ]
 
-        preferred_cols = [
-            "timestamp",
-            "symbol",
-            "action",
-            "side",
-            "execution_action",
-            "qty",
-            "price",
-            "fill_price",
-            "avg_fill_price",
-            "status",
-            "execution_status",
-            "order_status",
-            "reason",
-            "risk_approved",
-            "position_action",
-            "position_before",
-            "position_after_expected",
-            "lifecycle_stage",
-            "realized_delta",
-            "realized_pnl",
-            "mode",
-            "order_id",
-            "fill_id",
-            "execution_id",
-            "exec_id",
-            "broker_order_id",
-            "source",
-            "emergency_flatten",
-        ]
+            visible_cols = [
+                col for col in preferred_cols
+                if col in df.columns
+            ]
 
-        visible_cols = [
-            col for col in preferred_cols
-            if col in df.columns
-        ]
+            if visible_cols:
+                df = df[visible_cols]
 
-        if visible_cols:
-            df = df[visible_cols]
+            st.dataframe(df, use_container_width=True)
 
-        st.dataframe(df, use_container_width=True)
-
-    else:
-        st.info("No OMS blotter entries yet.")
+        else:
+            st.info("No OMS blotter entries yet.")
 
     # =====================================================
     # OMS POSITIONS CREATED / MANAGED TODAY
@@ -2745,68 +2768,67 @@ def run_page():
 
     positions = get_positions()
 
-    st.markdown("### 🎯 Today's OMS Positions")
-    oms_tip(
-        "Fast bridge into Position Command Center. Review open positions created or updated by OMS, then manage hold/trim/exit decisions."
-    )
+    with st.expander("▼ Today's OMS Positions", expanded=False):
+        oms_tip(
+            "Fast bridge into Position Command Center. Review open positions created or updated by OMS, then manage hold/trim/exit decisions."
+        )
 
-    if positions and isinstance(positions, dict):
-        today_rows = []
-        for symbol, row in positions.items():
-            if not isinstance(row, dict):
-                continue
-            qty = row.get("qty", row.get("signed_qty", 0))
-            try:
-                signed_qty = float(row.get("signed_qty", qty) or 0)
-            except Exception:
-                signed_qty = 0.0
-            side = row.get("side", "LONG" if signed_qty >= 0 else "SHORT")
-            entry = row.get("avg_price", row.get("average_cost", row.get("avgCost", row.get("fill_price", 0))))
-            last = row.get("last_price", row.get("price", entry))
-            unrealized = row.get("unrealized_pnl", row.get("pnl", 0))
-            try:
-                pnl_float = float(unrealized or 0)
-            except Exception:
-                pnl_float = 0.0
-            if pnl_float > 0:
-                action_hint = "🟡 Review / Trim if target hit"
-            elif pnl_float < 0:
-                action_hint = "🔴 Review stop / exit risk"
+        if positions and isinstance(positions, dict):
+            today_rows = []
+            for symbol, row in positions.items():
+                if not isinstance(row, dict):
+                    continue
+                qty = row.get("qty", row.get("signed_qty", 0))
+                try:
+                    signed_qty = float(row.get("signed_qty", qty) or 0)
+                except Exception:
+                    signed_qty = 0.0
+                side = row.get("side", "LONG" if signed_qty >= 0 else "SHORT")
+                entry = row.get("avg_price", row.get("average_cost", row.get("avgCost", row.get("fill_price", 0))))
+                last = row.get("last_price", row.get("price", entry))
+                unrealized = row.get("unrealized_pnl", row.get("pnl", 0))
+                try:
+                    pnl_float = float(unrealized or 0)
+                except Exception:
+                    pnl_float = 0.0
+                if pnl_float > 0:
+                    action_hint = "🟡 Review / Trim if target hit"
+                elif pnl_float < 0:
+                    action_hint = "🔴 Review stop / exit risk"
+                else:
+                    action_hint = "🟢 Monitor"
+                today_rows.append({
+                    "Symbol": str(symbol).upper(),
+                    "Side": side,
+                    "Qty": qty,
+                    "Entry": entry,
+                    "Last": last,
+                    "Unrealized P&L": unrealized,
+                    "Next Step": action_hint,
+                })
+            if today_rows:
+                st.dataframe(pd.DataFrame(today_rows), width="stretch", hide_index=True, height=220)
+                open_position_command_center_button("Manage in Position Command Center", key="oms_open_position_command_bottom_v35")
             else:
-                action_hint = "🟢 Monitor"
-            today_rows.append({
-                "Symbol": str(symbol).upper(),
-                "Side": side,
-                "Qty": qty,
-                "Entry": entry,
-                "Last": last,
-                "Unrealized P&L": unrealized,
-                "Next Step": action_hint,
-            })
-        if today_rows:
-            st.dataframe(pd.DataFrame(today_rows), width="stretch", hide_index=True, height=220)
-            open_position_command_center_button("Manage in Position Command Center", key="oms_open_position_command_bottom_v35")
+                st.info("No normalized OMS position rows available yet.")
         else:
-            st.info("No normalized OMS position rows available yet.")
-    else:
-        st.info("No OMS-managed positions detected yet.")
+            st.info("No OMS-managed positions detected yet.")
 
     # =====================================================
     # PORTFOLIO
     # =====================================================
 
-    st.markdown("### 📦 Portfolio Snapshot")
-
-    if positions:
-        st.dataframe(
-            pd.DataFrame.from_dict(
-                positions,
-                orient="index",
-            ),
-            use_container_width=True,
-        )
-    else:
-        st.info("No active positions.")
+    with st.expander("▼ Portfolio Snapshot", expanded=False):
+        if positions:
+            st.dataframe(
+                pd.DataFrame.from_dict(
+                    positions,
+                    orient="index",
+                ),
+                use_container_width=True,
+            )
+        else:
+            st.info("No active positions.")
 
     # =====================================================
     # FILLS
@@ -2814,15 +2836,14 @@ def run_page():
 
     fills = get_fills()
 
-    st.markdown("### 🧾 Runtime Fills")
-
-    if fills:
-        st.dataframe(
-            pd.DataFrame(fills),
-            use_container_width=True,
-        )
-    else:
-        st.info("No runtime fills.")
+    with st.expander("▼ Runtime Fills", expanded=False):
+        if fills:
+            st.dataframe(
+                pd.DataFrame(fills),
+                use_container_width=True,
+            )
+        else:
+            st.info("No runtime fills.")
 
     # =====================================================
     # AUDIT
@@ -2830,58 +2851,56 @@ def run_page():
 
     audit_events = get_audit_events(limit=200)
 
-    st.markdown("### 🏛 Audit Trail")
-
-    if audit_events:
-        st.dataframe(
-            pd.DataFrame(audit_events),
-            use_container_width=True,
-        )
-    else:
-        st.info("No audit events.")
+    with st.expander("▼ Audit Trail", expanded=False):
+        if audit_events:
+            st.dataframe(
+                pd.DataFrame(audit_events),
+                use_container_width=True,
+            )
+        else:
+            st.info("No audit events.")
 
     # =====================================================
     # RISK SNAPSHOT
     # =====================================================
 
-    st.markdown("### 🔍 Risk Snapshot")
+    with st.expander("▼ Risk Snapshot", expanded=False):
+        risk_snap = safe_snapshot(risk_engine)
 
-    risk_snap = safe_snapshot(risk_engine)
+        if risk_snap and isinstance(risk_snap, dict):
 
-    if risk_snap and isinstance(risk_snap, dict):
+            excluded = {
+                "positions",
+                "last_prices",
+                "last_check",
+            }
 
-        excluded = {
-            "positions",
-            "last_prices",
-            "last_check",
-        }
+            rows = []
 
-        rows = []
+            for k, v in risk_snap.items():
+                if k in excluded:
+                    continue
 
-        for k, v in risk_snap.items():
-            if k in excluded:
-                continue
+                rows.append(
+                    {
+                        "Metric": str(k),
+                        "Value": str(v),
+                    }
+                )
 
-            rows.append(
-                {
-                    "Metric": str(k),
-                    "Value": str(v),
-                }
-            )
+            if rows:
+                risk_df = pd.DataFrame(rows)
 
-        if rows:
-            risk_df = pd.DataFrame(rows)
+                risk_df["Metric"] = risk_df["Metric"].astype(str)
+                risk_df["Value"] = risk_df["Value"].astype(str)
 
-            risk_df["Metric"] = risk_df["Metric"].astype(str)
-            risk_df["Value"] = risk_df["Value"].astype(str)
+                st.dataframe(
+                    risk_df,
+                    width="stretch",
+                    hide_index=True,
+                )
+            else:
+                st.info("No risk snapshot available.")
 
-            st.dataframe(
-                risk_df,
-                width="stretch",
-                hide_index=True,
-            )
         else:
             st.info("No risk snapshot available.")
-
-    else:
-        st.info("No risk snapshot available.")
