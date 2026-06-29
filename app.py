@@ -1085,9 +1085,8 @@ def app():
 
         st.session_state.setdefault("sidebar_show_change_password", False)
         st.sidebar.markdown("**👤 Account**")
-        account_col_left, account_col_right = st.sidebar.columns([1.35, 1.0])
 
-        if account_col_left.button(
+        if st.sidebar.button(
             "🔑 Change Password",
             key="sidebar_change_password_btn",
             use_container_width=True,
@@ -1096,7 +1095,7 @@ def app():
                 st.session_state.get("sidebar_show_change_password", False)
             )
 
-        if account_col_right.button("🚪 Logout", key="sidebar_saas_logout", use_container_width=True):
+        if st.sidebar.button("🚪 Logout", key="sidebar_saas_logout", use_container_width=True):
             supabase_logout()
             clear_active_page_cache()
             st.rerun()
