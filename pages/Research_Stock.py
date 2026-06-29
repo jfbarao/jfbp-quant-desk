@@ -894,6 +894,7 @@ h2 {
 .pf-label {font-size:.74rem;font-weight:800;color:#1f2937;text-transform:none;margin-bottom:.25rem;line-height:1.2;word-break:normal;overflow-wrap:normal;hyphens:none;white-space:normal;}
 .opportunity-scorecard-title {font-size:clamp(.9rem,1.05vw,1.03rem);line-height:1.22;font-weight:800;}
 .pf-value {font-size:1.95rem;font-weight:900;color:#0f172a;line-height:1.05;margin:.2rem 0 .2rem 0;}
+.opportunity-scorecard-primary {font-size:clamp(1.02rem,1.28vw,1.32rem)!important;line-height:1.18!important;font-weight:800!important;}
 .scorecard-role {font-size:clamp(1.02rem,1.28vw,1.32rem);line-height:1.18;font-weight:800;word-break:normal;overflow-wrap:normal;hyphens:none;white-space:normal;display:flex;align-items:center;justify-content:center;text-align:center;width:100%;}
 .opportunity-scorecard-role {font-size:clamp(1.02rem,1.28vw,1.32rem);line-height:1.18;font-weight:800;word-break:normal;overflow-wrap:normal;hyphens:none;white-space:normal;}
 .opportunity-scorecard-allocation {font-size:clamp(1.02rem,1.28vw,1.32rem);line-height:1.18;font-weight:800;text-align:center;word-break:normal;overflow-wrap:normal;hyphens:none;white-space:normal;}
@@ -3342,17 +3343,17 @@ h2 {
                 <div class="pf-grid">
                     <div class="pf-cell">
                         <div class="pf-label opportunity-scorecard-title">Portfolio Role</div>
-                        <div class="pf-value scorecard-role opportunity-scorecard-role {portfolio_role_class}">{portfolio_role}</div>
+                        <div class="pf-value scorecard-role opportunity-scorecard-role opportunity-scorecard-primary {portfolio_role_class}">{portfolio_role}</div>
                         <div class="pf-sub opportunity-scorecard-description">{portfolio_role_note}</div>
                     </div>
                     <div class="pf-cell">
                         <div class="pf-label opportunity-scorecard-title">Suggested Allocation</div>
-                        <div class="pf-value opportunity-scorecard-allocation">{suggested_allocation}</div>
+                        <div class="pf-value opportunity-scorecard-allocation opportunity-scorecard-primary">{suggested_allocation}</div>
                         <div class="pf-sub opportunity-scorecard-description">{suggested_allocation_note}</div>
                     </div>
                     <div class="pf-cell">
                         <div class="pf-label opportunity-scorecard-title">Review Again</div>
-                        <div class="pf-review-value opportunity-scorecard-review">{review_again}</div>
+                        <div class="pf-review-value opportunity-scorecard-review opportunity-scorecard-primary">{review_again}</div>
                         <div class="pf-sub opportunity-scorecard-description">{review_again_note}</div>
                     </div>
                 </div>
