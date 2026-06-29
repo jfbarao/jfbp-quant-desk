@@ -272,6 +272,170 @@ def init_saas_state() -> None:
     st.session_state.setdefault("saas_auth_debug", {})
     st.session_state.setdefault("saas_trial_warning_message", "")
     st.session_state.setdefault("saas_trial_protection", {})
+    if not st.session_state.get("saas_logged_in", False):
+        _rehydrate_authenticated_session()
+
+
+@st.cache_resource(show_spinner=False)
+def _auth_session_cache() -> Dict[str, Dict[str, Any]]:
+    """In-memory auth cache keyed by browser fingerprint for refresh persistence."""
+    return {}
+
+
+def _browser_auth_cache_key() -> str:
+    headers = _request_headers()
+    if not headers:
+        return ""
+
+    client_ip = _client_ip(headers)
+    user_agent = _user_agent(headers)
+
+    if client_ip == "UNKNOWN" and user_agent == "UNKNOWN":
+        return ""
+
+    raw = "|".join(
+        [
+            client_ip,
+            user_agent,
+            _request_header(headers, "accept-language"),
+            _request_header(headers, "sec-ch-ua"),
+            _request_header(headers, "x-forwarded-proto"),
+        ]
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _session_cache_payload(session: Any) -> Dict[str, Any]:
+    access_token, refresh_token = _get_session_tokens(session)
+
+    expires_at = None
+    try:
+        expires_at = getattr(session, "expires_at", None)
+    except Exception:
+        expires_at = None
+
+    if isinstance(session, dict):
+        expires_at = session.get("expires_at", expires_at)
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "expires_at": expires_at,
+    }
+
+
+def _cache_authenticated_session(session: Any) -> None:
+    payload = _session_cache_payload(session)
+    if not payload.get("access_token"):
+        return
+
+    key = _browser_auth_cache_key()
+    if not key:
+        return
+
+    cache = _auth_session_cache()
+    cache[key] = payload
+
+
+def _clear_cached_authenticated_session() -> None:
+    key = _browser_auth_cache_key()
+    if not key:
+        return
+
+    cache = _auth_session_cache()
+    cache.pop(key, None)
+
+
+@st.cache_resource(show_spinner=False)
+def _active_page_cache() -> Dict[str, str]:
+    return {}
+
+
+def _browser_page_cache_key() -> str:
+    key = _browser_auth_cache_key()
+    return key
+
+
+def remember_active_page(page_name: str) -> None:
+    page_name = str(page_name or "").strip()
+    key = _browser_page_cache_key()
+    if not page_name or not key:
+        return
+    _active_page_cache()[key] = page_name
+
+
+def restore_active_page(default_page: str = "Opportunity Center") -> str:
+    key = _browser_page_cache_key()
+    if not key:
+        return default_page
+
+    saved_page = str(_active_page_cache().get(key, "") or "").strip()
+    if not saved_page:
+        return default_page
+
+    user = get_current_user()
+    if user is None:
+        return default_page
+
+    if can_access_page(user, saved_page):
+        return saved_page
+
+    _active_page_cache().pop(key, None)
+    return default_page
+
+
+def clear_active_page_cache() -> None:
+    key = _browser_page_cache_key()
+    if not key:
+        return
+    _active_page_cache().pop(key, None)
+
+
+def _rehydrate_authenticated_session() -> bool:
+    if st.session_state.get("saas_logged_in", False) and isinstance(
+        st.session_state.get("saas_user"),
+        SaaSUser,
+    ):
+        return True
+
+    key = _browser_auth_cache_key()
+    if not key:
+        return False
+
+    cache = _auth_session_cache()
+    session_payload = cache.get(key)
+    if not isinstance(session_payload, dict):
+        return False
+
+    access_token = str(session_payload.get("access_token", "") or "").strip()
+    if not access_token:
+        return False
+
+    client = get_supabase_client()
+    if client is None:
+        return False
+
+    if not _apply_auth_session_to_client(client, session_payload):
+        _clear_cached_authenticated_session()
+        return False
+
+    auth_user = None
+    try:
+        auth_user = _auth_response_user(client.auth.get_user())
+    except Exception:
+        auth_user = None
+
+    if auth_user is None:
+        _clear_cached_authenticated_session()
+        return False
+
+    st.session_state["saas_auth_session"] = session_payload
+    st.session_state["saas_user"] = build_saas_user_from_auth(
+        auth_user,
+        selected_plan=st.session_state.get("saas_selected_plan"),
+    )
+    st.session_state["saas_logged_in"] = True
+    return True
 
 
 def clear_stripe_checkout_state() -> None:
@@ -1240,9 +1404,11 @@ def initialize_session(user: Any, session: Any, selected_plan: str | None = None
     if client is not None:
         session_applied = _apply_auth_session_to_client(client, session)
 
-    st.session_state["saas_auth_session"] = session
+    session_payload = _session_cache_payload(session)
+    st.session_state["saas_auth_session"] = session_payload
     st.session_state["saas_user"] = build_saas_user_from_auth(user, selected_plan=selected_plan)
     st.session_state["saas_logged_in"] = True
+    _cache_authenticated_session(session_payload)
 
     _set_auth_debug(
         "initialize_session",
@@ -1405,6 +1571,8 @@ def set_authenticated_session(auth_response: Any, selected_plan: str | None = No
 
 
 def clear_authenticated_session() -> None:
+    _clear_cached_authenticated_session()
+    clear_active_page_cache()
     clear_stripe_checkout_state()
     st.session_state["saas_logged_in"] = False
     st.session_state["saas_user"] = None

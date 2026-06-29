@@ -1076,6 +1076,13 @@ def prepare_position_ticket(row: Dict[str, Any], ticket_type: str, pct: float = 
     pct = max(0.0, min(float(pct), 1.0))
     ticket_qty = qty * pct
     symbol = str(row.get("symbol") or "").upper().strip()
+    execution_id = str(
+        row.get("execution_id")
+        or row.get("exec_id")
+        or row.get("order_id")
+        or (st.session_state.get("oms_execution_id_by_symbol", {}) or {}).get(symbol, "")
+        or ""
+    ).strip()
 
     position_action = {
         "TRIM_25": "TRIM_POSITION",
@@ -1088,6 +1095,7 @@ def prepare_position_ticket(row: Dict[str, Any], ticket_type: str, pct: float = 
     ticket = {
         "timestamp": now_iso(),
         "symbol": symbol,
+        "execution_id": execution_id,
         "action": close_action if ticket_type in {"TRIM_25", "TRIM_50", "FULL_EXIT"} else "MODIFY_STOP",
         "qty": ticket_qty if ticket_type in {"TRIM_25", "TRIM_50", "FULL_EXIT"} else qty,
         "pct_of_position": pct if ticket_type in {"TRIM_25", "TRIM_50", "FULL_EXIT"} else None,
@@ -1194,10 +1202,20 @@ def prepare_exit_ticket(row: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def send_position_review_to_journal(symbol: str, row: Dict[str, Any], health: Dict[str, Any]) -> Dict[str, Any]:
+    symbol = str(symbol or "").upper().strip()
+    execution_id = str(
+        row.get("execution_id")
+        or row.get("exec_id")
+        or row.get("order_id")
+        or (st.session_state.get("oms_execution_id_by_symbol", {}) or {}).get(symbol, "")
+        or ""
+    ).strip()
+
     note = {
         "timestamp": now_iso(),
         "symbol": symbol,
         "source": "Position_Command_Center_v2_7",
+        "execution_id": execution_id,
         "setup_grade": "A" if health["health_score"] >= 75 else "B" if health["health_score"] >= 55 else "C" if health["health_score"] >= 35 else "D",
         "execution_grade": "Review",
         "tag": health["action"],
@@ -1215,7 +1233,21 @@ def send_position_review_to_journal(symbol: str, row: Dict[str, Any], health: Di
     existing = st.session_state.get("pcc_journal_reviews", [])
     if not isinstance(existing, list):
         existing = []
-    st.session_state["pcc_journal_reviews"] = [note] + existing[:49]
+
+    if execution_id:
+        merged = [note]
+        for item in existing:
+            if not isinstance(item, dict):
+                continue
+            item_execution_id = str(item.get("execution_id") or "").strip()
+            if item_execution_id == execution_id:
+                merged[0] = {**item, **note}
+                continue
+            merged.append(item)
+        st.session_state["pcc_journal_reviews"] = merged[:50]
+    else:
+        st.session_state["pcc_journal_reviews"] = [note] + existing[:49]
+
     st.session_state["journal_prefill_note"] = note
     return note
 

@@ -1606,7 +1606,10 @@ def build_trade_review_queue(df: pd.DataFrame | None, pnl_col: str = "realized_d
         work = work.sort_values("timestamp", ascending=False, na_position="last")
 
     queue = []
-    for idx, row in work.head(limit).iterrows():
+    queued_by_execution_id: dict[str, dict] = {}
+    queued_legacy_keys: set[str] = set()
+
+    for idx, row in work.iterrows():
         symbol = str(row.get("symbol") or row.get("Symbol") or "N/A").upper().strip() or "N/A"
         action = str(row.get("action") or row.get("Action") or row.get("tag") or "Review").strip() or "Review"
         pnl_value = safe_float(row.get(pnl_col), 0.0)
@@ -1631,8 +1634,16 @@ def build_trade_review_queue(df: pd.DataFrame | None, pnl_col: str = "realized_d
             except Exception:
                 time_text = str(timestamp)
 
-        queue.append({
+        execution_id = str(
+            row.get("execution_id")
+            or row.get("exec_id")
+            or row.get("order_id")
+            or ""
+        ).strip()
+
+        queue_item = {
             "key": f"{symbol}|{time_text}|{action}|{idx}",
+            "execution_id": execution_id,
             "symbol": symbol,
             "status": queue_status,
             "action": action,
@@ -1640,7 +1651,28 @@ def build_trade_review_queue(df: pd.DataFrame | None, pnl_col: str = "realized_d
             "time_text": time_text,
             "note_text": note_text,
             "row": row.to_dict(),
-        })
+
+        }
+
+        if execution_id:
+            if execution_id in queued_by_execution_id:
+                existing = queued_by_execution_id[execution_id]
+                if not existing.get("note_text") and note_text:
+                    existing["note_text"] = note_text
+                    existing["row"] = row.to_dict()
+                continue
+
+            queued_by_execution_id[execution_id] = queue_item
+            queue.append(queue_item)
+        else:
+            legacy_key = f"{symbol}|{time_text}|{action}|{pnl_value:.6f}"
+            if legacy_key in queued_legacy_keys:
+                continue
+            queued_legacy_keys.add(legacy_key)
+            queue.append(queue_item)
+
+        if len(queue) >= limit:
+            break
 
     return queue
 

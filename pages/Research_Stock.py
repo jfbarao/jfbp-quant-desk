@@ -10,6 +10,12 @@ from core.responsive import inject_responsive_css, columns as responsive_columns
 from core.ui_cards import inject_card_css
 
 try:
+    from pages.SaaS_Core import remember_active_page
+except Exception:
+    def remember_active_page(page_name: str):
+        return None
+
+try:
     from universe.jfbp_universe import JFBP_UNIVERSE
 except Exception:
     JFBP_UNIVERSE = {}
@@ -772,12 +778,12 @@ def open_trade_command_from_research(symbol: str) -> None:
         st.warning("Enter a symbol before opening Trade Command Center.")
         return
 
-    # Safe handoff keys only. Do not touch widget-bound input keys.
-    st.session_state["research_ticker"] = symbol
     st.session_state["selected_symbol"] = symbol
     st.session_state["trade_command_symbol"] = symbol
-    st.session_state["tcc_selected_symbol"] = symbol
+    st.session_state["tcc_symbol"] = symbol
     st.session_state["jfbp_main_navigation"] = "Trade Command Center"
+
+    remember_active_page("Trade Command Center")
 
     st.rerun()
 

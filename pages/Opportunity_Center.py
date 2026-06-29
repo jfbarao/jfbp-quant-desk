@@ -18,6 +18,12 @@ import streamlit as st
 from core.responsive import inject_responsive_css
 from core.ui_cards import inject_card_css
 
+try:
+    from pages.SaaS_Core import remember_active_page
+except Exception:
+    def remember_active_page(page_name: str):
+        return None
+
 
 # =========================================================
 # HELPERS
@@ -130,6 +136,10 @@ def pulse_allowed_reason(row: Dict[str, Any]) -> str:
 
 def navigate_to(page_key: str) -> None:
     st.session_state["jfbp_main_navigation"] = page_key
+    try:
+        remember_active_page(page_key)
+    except Exception:
+        pass
     st.rerun()
 
 

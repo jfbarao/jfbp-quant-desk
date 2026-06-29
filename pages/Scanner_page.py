@@ -22,6 +22,12 @@ from core.ui_cards import inject_card_css
 from core.bootstrap import init_core
 
 try:
+    from pages.SaaS_Core import remember_active_page
+except Exception:
+    def remember_active_page(page_name: str):
+        return None
+
+try:
     from universe.jfbp_universe import JFBP_UNIVERSE
 except Exception:
     JFBP_UNIVERSE = {}
@@ -1151,27 +1157,9 @@ def run_page():
             st.warning("Select a symbol before opening Research Stock.")
             return
 
-        # Ticker handoff keys used by different Research Stock builds.
-        # Keep this broad because older Research Stock builds used different
-        # session-state names for the active ticker.
-        for key in (
-            "research_ticker",
-            "research_ticker_input",
-            "research_symbol",
-            "research_symbol_input",
-            "selected_research_ticker",
-            "research_stock_ticker",
-            "research_stock_symbol",
-            "research_stock_selected_symbol",
-            "research_prefill_symbol",
-            "research_requested_symbol",
-            "selected_stock",
-            "selected_symbol",
-            "ticker",
-            "ticker_input",
-            "symbol_input",
-        ):
-            st.session_state[key] = symbol
+        st.session_state["selected_symbol"] = symbol
+        st.session_state["research_ticker"] = symbol
+        st.session_state["research_symbol"] = symbol
 
         st.session_state["research_last_analyze"] = True
         st.session_state["research_autorun"] = True
@@ -1197,6 +1185,8 @@ def run_page():
             "navigation",
         ):
             st.session_state[key] = "Research Stock"
+
+        remember_active_page("Research Stock")
 
         # Do not call st.switch_page here. In this app it can open a blank
         # Streamlit route because Research Stock is loaded by the custom router.

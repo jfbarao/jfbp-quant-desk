@@ -272,6 +272,8 @@ def run_page():
         symbol = str(symbol or "").upper().strip()
         if symbol:
             st.session_state["selected_symbol"] = symbol
+            st.session_state["execution_symbol"] = symbol
+            st.session_state["position_symbol"] = symbol
             st.session_state["research_symbol"] = symbol
             st.session_state["research_ticker"] = symbol
             st.session_state["trade_command_symbol"] = symbol
@@ -2494,6 +2496,22 @@ def run_page():
                 result = route_signal(signal)
 
                 if isinstance(result, dict):
+                    execution_id = str(
+                        result.get("execution_id")
+                        or result.get("exec_id")
+                        or result.get("order_id")
+                        or row.get("execution_id")
+                        or row.get("exec_id")
+                        or row.get("order_id")
+                        or signal.get("execution_id")
+                        or ""
+                    ).strip()
+
+                    if not execution_id:
+                        execution_id = uuid.uuid4().hex
+
+                    result["execution_id"] = execution_id
+                    result.setdefault("exec_id", execution_id)
                     results.append(result)
                 else:
                     results.append({
@@ -2502,6 +2520,7 @@ def run_page():
                         "symbol": signal.get("symbol"),
                         "action": signal.get("action"),
                         "qty": signal.get("qty"),
+                        "execution_id": uuid.uuid4().hex,
                     })
 
         finally:
@@ -2559,6 +2578,7 @@ def run_page():
             prepared_reviews.append({
                 "timestamp": now(),
                 "source": "OMS_Execution_v35_0",
+                "execution_id": result.get("execution_id") or result.get("exec_id") or result.get("order_id"),
                 "symbol": result.get("symbol"),
                 "action": result.get("action") or result.get("side") or result.get("execution_action"),
                 "qty": result.get("qty"),
@@ -2570,10 +2590,35 @@ def run_page():
         if prepared_reviews:
             st.session_state["pending_trade_review"] = prepared_reviews
             st.session_state["position_center_refresh"] = True
+
+            symbol_execution_map = st.session_state.get("oms_execution_id_by_symbol", {})
+            if not isinstance(symbol_execution_map, dict):
+                symbol_execution_map = {}
+            for review in prepared_reviews:
+                symbol = str(review.get("symbol") or "").upper().strip()
+                execution_id = str(review.get("execution_id") or "").strip()
+                if symbol and execution_id:
+                    symbol_execution_map[symbol] = execution_id
+            st.session_state["oms_execution_id_by_symbol"] = symbol_execution_map
+
             existing_notes = st.session_state.get("pcc_journal_reviews", [])
             if not isinstance(existing_notes, list):
                 existing_notes = []
-            st.session_state["pcc_journal_reviews"] = prepared_reviews + existing_notes[:50]
+
+            merged_reviews = []
+            seen_execution_ids = set()
+
+            for review in prepared_reviews + existing_notes:
+                if not isinstance(review, dict):
+                    continue
+                execution_id = str(review.get("execution_id") or "").strip()
+                if execution_id:
+                    if execution_id in seen_execution_ids:
+                        continue
+                    seen_execution_ids.add(execution_id)
+                merged_reviews.append(review)
+
+            st.session_state["pcc_journal_reviews"] = merged_reviews[:50]
 
         audit_event("EXECUTION_PLAN_EXECUTED", report)
 

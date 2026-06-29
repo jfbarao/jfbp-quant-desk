@@ -130,6 +130,9 @@ try:
         render_auth_panel,
         require_page_access,
         supabase_logout,
+        remember_active_page,
+        restore_active_page,
+        clear_active_page_cache,
         is_admin_user,
     )
 except Exception as saas_import_error:
@@ -169,6 +172,15 @@ except Exception as saas_import_error:
 
     def is_admin_user(user):
         return False
+
+    def remember_active_page(page_name: str):
+        return None
+
+    def restore_active_page(default_page: str = "Opportunity Center"):
+        return default_page
+
+    def clear_active_page_cache():
+        return None
 
 
 try:
@@ -355,8 +367,16 @@ def _sidebar_nav_button(label: str, page_key: str, container=st.sidebar) -> None
         width="stretch",
         type="primary" if selected else "secondary",
     ):
-        st.session_state["jfbp_main_navigation"] = page_key
-        st.rerun()
+        navigate_to_page(page_key)
+
+
+def navigate_to_page(page_key: str) -> None:
+    st.session_state["jfbp_main_navigation"] = page_key
+    try:
+        remember_active_page(page_key)
+    except Exception:
+        pass
+    st.rerun()
 
 
 def _section_is_active(current: str, page_keys: list[str]) -> bool:
@@ -587,6 +607,10 @@ def app():
     enforce_app_login()
     inject_sidebar_workflow_css()
 
+    current_navigation = str(st.session_state.get("jfbp_main_navigation", "") or "").strip()
+    if not current_navigation:
+        st.session_state["jfbp_main_navigation"] = restore_active_page("Opportunity Center")
+
     logo_path = Path(__file__).parent / "JFBP_Quant_Desk.png"
 
     if logo_path.exists():
@@ -614,6 +638,7 @@ def app():
 
         if st.sidebar.button("Logout", key="sidebar_saas_logout", width="stretch"):
             supabase_logout()
+            clear_active_page_cache()
             st.rerun()
 
         st.sidebar.markdown(
@@ -700,6 +725,8 @@ def app():
 
     else:
         empty_page("Unknown Page")
+
+    remember_active_page(page)
 
 
 if __name__ == "__main__":
