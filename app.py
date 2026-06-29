@@ -1113,8 +1113,8 @@ def app():
         """
 🚨 GLOBAL DEPLOYMENT TEST
 
-Build: 2026-06-29-1605
-Commit: 79e622d
+Build: 2026-06-29-1645
+Commit: 12dd97c
 
 If you can read this, Streamlit Cloud is serving the latest build path.
 """
