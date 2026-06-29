@@ -5,6 +5,10 @@
 # =========================================================
 
 from pathlib import Path
+import json
+import smtplib
+from datetime import datetime, timezone
+from email.message import EmailMessage
 
 import streamlit as st
 
@@ -199,6 +203,11 @@ st.set_page_config(
 )
 
 
+APP_VERSION = "v24.24"
+FOUNDER_FEEDBACK_EMAIL = "hello@jfbpquantdesk.com"
+FEEDBACK_CATEGORY_OPTIONS = ["Bug", "Suggestion", "Question", "Feature Request"]
+
+
 # =========================================================
 # FALLBACK / FUTURE PAGES
 # =========================================================
@@ -216,6 +225,172 @@ def future_asset_page(title: str, asset_class: str):
         "The router is already prepared so this page can be upgraded later "
         "without changing the app navigation structure."
     )
+
+
+def _founder_plan_label(user) -> str:
+    if user is None:
+        return "Starter"
+    if is_admin_user(user):
+        return "Admin"
+
+    plan_value = str(getattr(user, "plan", "") or "").strip().upper()
+    if plan_value == "ELITE":
+        return "Elite"
+    if plan_value == "PRO":
+        return "Pro"
+    return "Starter"
+
+
+def _guess_current_symbol() -> str:
+    symbol_keys = [
+        "selected_symbol",
+        "trade_command_symbol",
+        "research_ticker",
+        "research_symbol",
+        "tcc_symbol",
+        "execution_symbol",
+        "position_symbol",
+        "oms_order_symbol",
+        "position_command_symbol",
+    ]
+    for key in symbol_keys:
+        raw = str(st.session_state.get(key, "") or "").strip().upper()
+        if raw:
+            return raw
+    return "N/A"
+
+
+def _diagnostics_payload(active_page: str) -> dict:
+    return {
+        "navigation": str(st.session_state.get("jfbp_main_navigation", "") or ""),
+        "active_page": active_page,
+        "keys_present": {
+            "selected_symbol": "selected_symbol" in st.session_state,
+            "trade_command_symbol": "trade_command_symbol" in st.session_state,
+            "research_ticker": "research_ticker" in st.session_state,
+            "scanner_selected_symbol": "scanner_selected_symbol" in st.session_state,
+            "saas_logged_in": bool(st.session_state.get("saas_logged_in", False)),
+        },
+    }
+
+
+def _send_feedback_email(subject: str, body: str, reply_to: str) -> tuple[bool, str]:
+    smtp_host = str(st.secrets.get("FEEDBACK_SMTP_HOST", "") or "").strip()
+    try:
+        smtp_port = int(str(st.secrets.get("FEEDBACK_SMTP_PORT", "587") or "587").strip())
+    except Exception:
+        smtp_port = 587
+    smtp_user = str(st.secrets.get("FEEDBACK_SMTP_USER", "") or "").strip()
+    smtp_password = str(st.secrets.get("FEEDBACK_SMTP_PASSWORD", "") or "").strip()
+    smtp_from = str(st.secrets.get("FEEDBACK_SMTP_FROM", smtp_user or FOUNDER_FEEDBACK_EMAIL) or "").strip()
+    smtp_tls = str(st.secrets.get("FEEDBACK_SMTP_USE_TLS", "true") or "true").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    if not smtp_host or not smtp_from:
+        return False, (
+            "Feedback mail is not configured yet. Add FEEDBACK_SMTP_HOST, FEEDBACK_SMTP_USER, "
+            "FEEDBACK_SMTP_PASSWORD, and FEEDBACK_SMTP_FROM to Streamlit secrets."
+        )
+
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = smtp_from
+    message["To"] = FOUNDER_FEEDBACK_EMAIL
+    if reply_to and "@" in reply_to:
+        message["Reply-To"] = reply_to
+    message.set_content(body)
+
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:
+            if smtp_tls:
+                server.starttls()
+            if smtp_user and smtp_password:
+                server.login(smtp_user, smtp_password)
+            server.send_message(message)
+        return True, "Feedback sent."
+    except Exception as exc:
+        return False, f"Could not send feedback email: {exc}"
+
+
+def render_founder_feedback_footer(page_key: str) -> None:
+    user = get_current_user()
+    page_name = ACCESS_NAME_BY_PAGE.get(page_key, page_key)
+    plan_label = _founder_plan_label(user)
+    feedback_state_key = f"feedback_success_{page_name}"
+    feedback_rate_limit_key = "founder_feedback_last_submit_ts"
+    symbol_default = _guess_current_symbol()
+
+    st.markdown("---")
+    st.markdown("### 💬 Message the Founder")
+    st.caption("Help us improve JFBP Quant Desk. Found something confusing, have an idea, or spotted a bug?")
+
+    with st.expander("Send a note to Captain JFBP", expanded=False):
+        with st.form(key=f"feedback_form_{page_name}", clear_on_submit=True):
+            category = st.radio(
+                "Category",
+                FEEDBACK_CATEGORY_OPTIONS,
+                horizontal=True,
+            )
+            message_text = st.text_area(
+                "Message",
+                height=140,
+                placeholder="Tell us what happened or what would make this workflow better.",
+            )
+
+            include_symbol = st.checkbox("Include current symbol", value=True)
+            include_diagnostics = st.checkbox("Include session diagnostics", value=False)
+
+            submit = st.form_submit_button("Submit Feedback", type="primary", use_container_width=True)
+
+        if submit:
+            clean_message = str(message_text or "").strip()
+            if not clean_message:
+                st.warning("Please add a message before submitting feedback.")
+            else:
+                now_ts = datetime.now(timezone.utc).timestamp()
+                last_submit_ts = float(st.session_state.get(feedback_rate_limit_key, 0.0) or 0.0)
+                if now_ts - last_submit_ts < 30:
+                    st.warning("Please wait a few seconds before sending another message.")
+                    return
+
+                user_email = str(getattr(user, "email", "") or "unknown")
+                symbol_line = symbol_default if include_symbol else "Not included"
+                diagnostics_block = "Not included"
+                if include_diagnostics:
+                    diagnostics_block = json.dumps(_diagnostics_payload(page_name), indent=2)
+
+                timestamp = datetime.now(timezone.utc).isoformat()
+
+                subject = f"[{plan_label}][{page_name}][{category}]"
+                body = "\n".join(
+                    [
+                        f"User: {user_email}",
+                        f"Plan: {plan_label}",
+                        f"Page: {page_name}",
+                        f"Version: {APP_VERSION}",
+                        f"Time: {timestamp}",
+                        f"Category: {category}",
+                        "Message:",
+                        clean_message,
+                        f"Symbol: {symbol_line}",
+                        "Session Diagnostics:",
+                        diagnostics_block,
+                    ]
+                )
+
+                ok, result = _send_feedback_email(subject=subject, body=body, reply_to=user_email)
+                st.session_state[feedback_rate_limit_key] = now_ts
+                if ok:
+                    st.session_state[feedback_state_key] = True
+                    st.rerun()
+                else:
+                    st.error(result)
+
+    if st.session_state.get(feedback_state_key, False):
+        st.success(
+            "✅ Thank you! Your feedback has been sent directly to the founder. "
+            "Many of the improvements in JFBP Quant Desk come from user suggestions."
+        )
+        st.session_state[feedback_state_key] = False
     st.markdown(
         """
         **Planned structure:**
@@ -725,6 +900,8 @@ def app():
 
     else:
         empty_page("Unknown Page")
+
+    render_founder_feedback_footer(page)
 
     remember_active_page(page)
 
