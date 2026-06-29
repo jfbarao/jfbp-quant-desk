@@ -1120,6 +1120,46 @@ If you can read this, Streamlit Cloud is serving the latest build path.
 """
     )
 
+    st.markdown(
+        """
+        <style>
+        /* Force deployed-safe scorecard typography for both legacy and new class variants. */
+        .pf-decision-card .pf-label,
+        .opportunity-scorecard .scorecard-heading {
+            font-size: 14px !important;
+            line-height: 1.2 !important;
+            font-weight: 800 !important;
+        }
+        .pf-decision-card .pf-value,
+        .opportunity-scorecard .scorecard-role-value,
+        .opportunity-scorecard .scorecard-allocation-value {
+            font-size: 20px !important;
+            line-height: 1.2 !important;
+            font-weight: 800 !important;
+        }
+        .pf-decision-card .pf-review-value,
+        .opportunity-scorecard .scorecard-review-value {
+            font-size: 16px !important;
+            line-height: 1.2 !important;
+            font-weight: 800 !important;
+        }
+        .pf-decision-card .pf-sub,
+        .opportunity-scorecard .scorecard-description {
+            font-size: 14px !important;
+            line-height: 1.32 !important;
+        }
+        .pf-decision-card,
+        .opportunity-scorecard,
+        .opportunity-scorecard * {
+            word-break: normal !important;
+            overflow-wrap: normal !important;
+            hyphens: none !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     current_user = get_current_user()
     if current_user is not None:
         st.sidebar.markdown(
