@@ -3291,7 +3291,6 @@ h2 {
             unsafe_allow_html=True,
         )
         st.subheader("🧮 Opportunity Scorecard")
-        st.caption("Scorecard CSS v3 active")
         st.caption(
             "What it means: Converts the research factors into one "
             "institutional opportunity score."
