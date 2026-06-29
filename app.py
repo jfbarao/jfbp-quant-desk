@@ -5,6 +5,7 @@
 # =========================================================
 
 from pathlib import Path
+import html
 import json
 import smtplib
 from datetime import datetime, timezone
@@ -225,6 +226,17 @@ def future_asset_page(title: str, asset_class: str):
         "The router is already prepared so this page can be upgraded later "
         "without changing the app navigation structure."
     )
+    st.markdown(
+        """
+        **Planned structure:**
+        - Market regime
+        - Volatility / stress dashboard
+        - Leadership and breadth
+        - Event catalysts
+        - Trade bias / playbook
+        - Risk controls
+        """
+    )
 
 
 def _founder_plan_label(user) -> str:
@@ -239,6 +251,80 @@ def _founder_plan_label(user) -> str:
     if plan_value == "PRO":
         return "Pro"
     return "Starter"
+
+
+def _sidebar_role_plan_label(user) -> str:
+    plan_label = _founder_plan_label(user)
+    if plan_label == "Admin":
+        # Keep plan from subscription field even for admin users.
+        raw_plan = str(getattr(user, "plan", "") or "").strip().upper()
+        if raw_plan == "ELITE":
+            plan_label = "Elite"
+        elif raw_plan == "PRO":
+            plan_label = "Pro"
+        else:
+            plan_label = "Starter"
+
+    role_value = str(getattr(user, "role", "") or "").strip().upper()
+    if role_value == "ADMIN":
+        role_label = "Admin"
+    else:
+        role_label = "User"
+
+    return f"{role_label} · {plan_label}"
+
+
+def _sidebar_display_name(user) -> str:
+    full_name = str(getattr(user, "full_name", "") or "").strip()
+    if full_name:
+        return full_name
+
+    email = str(getattr(user, "email", "") or "").strip()
+    if "@" in email:
+        return email.split("@", 1)[0]
+    return "JFBP Member"
+
+
+def _sidebar_initials(name: str, email: str) -> str:
+    tokens = [part for part in str(name or "").replace("_", " ").split() if part]
+    if len(tokens) >= 2:
+        return (tokens[0][0] + tokens[1][0]).upper()
+    if len(tokens) == 1 and len(tokens[0]) >= 2:
+        return tokens[0][:2].upper()
+
+    clean_email = str(email or "").strip()
+    if clean_email:
+        local = clean_email.split("@", 1)[0]
+        letters = "".join(ch for ch in local if ch.isalpha())
+        if len(letters) >= 2:
+            return letters[:2].upper()
+    return "JB"
+
+
+def _render_sidebar_profile_card(user) -> None:
+    display_name = _sidebar_display_name(user)
+    email = str(getattr(user, "email", "") or "").strip()
+    role_plan_label = _sidebar_role_plan_label(user)
+    initials = _sidebar_initials(display_name, email)
+
+    safe_name = html.escape(display_name)
+    safe_email = html.escape(email)
+    safe_role_plan = html.escape(role_plan_label)
+    safe_initials = html.escape(initials)
+
+    st.sidebar.markdown(
+        (
+            '<div class="jfbp-profile-card">'
+            f'<div class="jfbp-profile-avatar">{safe_initials}</div>'
+            '<div class="jfbp-profile-meta">'
+            f'<div class="jfbp-profile-name">{safe_name}</div>'
+            f'<div class="jfbp-profile-plan">{safe_role_plan}</div>'
+            f'<div class="jfbp-profile-email">{safe_email}</div>'
+            "</div>"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 def _guess_current_symbol() -> str:
@@ -275,6 +361,21 @@ def _diagnostics_payload(active_page: str) -> dict:
 
 
 def _send_feedback_email(subject: str, body: str, reply_to: str) -> tuple[bool, str]:
+    required_secret_names = [
+        "FEEDBACK_SMTP_HOST",
+        "FEEDBACK_SMTP_USER",
+        "FEEDBACK_SMTP_PASSWORD",
+        "FEEDBACK_SMTP_FROM",
+    ]
+
+    missing_config = [
+        name
+        for name in required_secret_names
+        if not str(st.secrets.get(name, "") or "").strip()
+    ]
+    if missing_config:
+        return False, "CONFIG_MISSING:" + ",".join(missing_config)
+
     smtp_host = str(st.secrets.get("FEEDBACK_SMTP_HOST", "") or "").strip()
     try:
         smtp_port = int(str(st.secrets.get("FEEDBACK_SMTP_PORT", "587") or "587").strip())
@@ -282,26 +383,24 @@ def _send_feedback_email(subject: str, body: str, reply_to: str) -> tuple[bool, 
         smtp_port = 587
     smtp_user = str(st.secrets.get("FEEDBACK_SMTP_USER", "") or "").strip()
     smtp_password = str(st.secrets.get("FEEDBACK_SMTP_PASSWORD", "") or "").strip()
-    smtp_from = str(st.secrets.get("FEEDBACK_SMTP_FROM", smtp_user or FOUNDER_FEEDBACK_EMAIL) or "").strip()
+    smtp_from = str(st.secrets.get("FEEDBACK_SMTP_FROM", "") or "").strip()
+    founder_feedback_email = str(st.secrets.get("FOUNDER_FEEDBACK_EMAIL", FOUNDER_FEEDBACK_EMAIL) or FOUNDER_FEEDBACK_EMAIL).strip()
     smtp_tls = str(st.secrets.get("FEEDBACK_SMTP_USE_TLS", "true") or "true").strip().lower() in {"1", "true", "yes", "y", "on"}
-
-    if not smtp_host or not smtp_from:
-        return False, (
-            "Feedback mail is not configured yet. Add FEEDBACK_SMTP_HOST, FEEDBACK_SMTP_USER, "
-            "FEEDBACK_SMTP_PASSWORD, and FEEDBACK_SMTP_FROM to Streamlit secrets."
-        )
 
     message = EmailMessage()
     message["Subject"] = subject
     message["From"] = smtp_from
-    message["To"] = FOUNDER_FEEDBACK_EMAIL
+    message["To"] = founder_feedback_email
     if reply_to and "@" in reply_to:
         message["Reply-To"] = reply_to
     message.set_content(body)
 
     try:
-        with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:
-            if smtp_tls:
+        use_ssl = (smtp_port == 465) and (not smtp_tls)
+        smtp_client = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
+
+        with smtp_client(smtp_host, smtp_port, timeout=20) as server:
+            if smtp_tls and not use_ssl:
                 server.starttls()
             if smtp_user and smtp_password:
                 server.login(smtp_user, smtp_password)
@@ -311,11 +410,84 @@ def _send_feedback_email(subject: str, body: str, reply_to: str) -> tuple[bool, 
         return False, f"Could not send feedback email: {exc}"
 
 
+def _feedback_error_message_for_user(raw_error: str, user) -> str:
+    text = str(raw_error or "").strip()
+    if text.startswith("CONFIG_MISSING:"):
+        missing = [
+            item.strip()
+            for item in text.split(":", 1)[1].split(",")
+            if item.strip()
+        ]
+        if is_admin_user(user):
+            bullet_lines = "\n".join([f"• {item}" for item in missing])
+            return (
+                "⚠️ Feedback email is not configured.\n"
+                "Missing configuration:\n"
+                f"{bullet_lines}\n"
+                "Configure these in Streamlit Secrets."
+            )
+        return "⚠️ Feedback couldn't be sent. Please try again later."
+
+    if is_admin_user(user):
+        return f"⚠️ Feedback delivery failed.\n{text or 'Unknown error.'}"
+
+    return "⚠️ Feedback couldn't be sent. Please try again later."
+
+
+def _submit_founder_feedback(payload: dict, reply_to: str) -> tuple[bool, str]:
+    def _build_feedback_email_body(data: dict) -> str:
+        # Keep body sections explicit so future additions (attachments, logs,
+        # screenshots) can be appended without rewriting the submit workflow.
+        message_value = str(data.get("message", "") or "").strip()
+        if not message_value:
+            message_value = "(no message provided)"
+
+        sections = [
+            f"User: {data.get('user', 'unknown')}",
+            f"Plan: {data.get('plan', 'Starter')}",
+            f"Page: {data.get('page', 'Unknown')}",
+            f"Version: {data.get('version', APP_VERSION)}",
+            f"Time: {data.get('time', datetime.now(timezone.utc).isoformat())}",
+            f"Category: {data.get('category', 'Suggestion')}",
+            "Message:",
+            message_value,
+        ]
+
+        symbol_value = data.get("symbol")
+        if symbol_value:
+            sections.extend([f"Symbol: {symbol_value}"])
+
+        diagnostics_value = data.get("diagnostics")
+        if diagnostics_value:
+            sections.extend(["Session Diagnostics:", str(diagnostics_value)])
+
+        sections.extend(
+            [
+                "",
+                "Future Extensions:",
+                "- Attachments: Not included",
+                "- Screenshots: Not included",
+                "- Runtime Logs: Not included",
+            ]
+        )
+
+        return "\n".join(sections)
+
+    subject = f"[{payload['plan']}][{payload['page']}][{payload['category']}]"
+    body = _build_feedback_email_body(payload)
+
+    ok, result = _send_feedback_email(subject=subject, body=body, reply_to=reply_to)
+    # Future:
+    # save_feedback_to_supabase(payload)
+    return ok, result
+
+
 def render_founder_feedback_footer(page_key: str) -> None:
     user = get_current_user()
     page_name = ACCESS_NAME_BY_PAGE.get(page_key, page_key)
     plan_label = _founder_plan_label(user)
     feedback_state_key = f"feedback_success_{page_name}"
+    feedback_success_once_key = f"feedback_success_once_{page_name}"
     feedback_rate_limit_key = "founder_feedback_last_submit_ts"
     symbol_default = _guess_current_symbol()
 
@@ -353,55 +525,47 @@ def render_founder_feedback_footer(page_key: str) -> None:
                     return
 
                 user_email = str(getattr(user, "email", "") or "unknown")
-                symbol_line = symbol_default if include_symbol else "Not included"
-                diagnostics_block = "Not included"
+                symbol_line = symbol_default if include_symbol else ""
+                diagnostics_block = ""
                 if include_diagnostics:
                     diagnostics_block = json.dumps(_diagnostics_payload(page_name), indent=2)
 
                 timestamp = datetime.now(timezone.utc).isoformat()
 
-                subject = f"[{plan_label}][{page_name}][{category}]"
-                body = "\n".join(
-                    [
-                        f"User: {user_email}",
-                        f"Plan: {plan_label}",
-                        f"Page: {page_name}",
-                        f"Version: {APP_VERSION}",
-                        f"Time: {timestamp}",
-                        f"Category: {category}",
-                        "Message:",
-                        clean_message,
-                        f"Symbol: {symbol_line}",
-                        "Session Diagnostics:",
-                        diagnostics_block,
-                    ]
-                )
+                feedback_payload = {
+                    "user": user_email,
+                    "plan": plan_label,
+                    "page": page_name,
+                    "version": APP_VERSION,
+                    "time": timestamp,
+                    "category": category,
+                    "message": clean_message,
+                    "symbol": symbol_line,
+                    "diagnostics": diagnostics_block,
+                }
 
-                ok, result = _send_feedback_email(subject=subject, body=body, reply_to=user_email)
+                ok, result = _submit_founder_feedback(payload=feedback_payload, reply_to=user_email)
                 st.session_state[feedback_rate_limit_key] = now_ts
                 if ok:
                     st.session_state[feedback_state_key] = True
+                    st.session_state[feedback_success_once_key] = False
                     st.rerun()
                 else:
-                    st.error(result)
+                    st.warning(_feedback_error_message_for_user(result, user))
 
     if st.session_state.get(feedback_state_key, False):
-        st.success(
-            "✅ Thank you! Your feedback has been sent directly to the founder. "
-            "Many of the improvements in JFBP Quant Desk come from user suggestions."
-        )
-        st.session_state[feedback_state_key] = False
-    st.markdown(
-        """
-        **Planned structure:**
-        - Market regime
-        - Volatility / stress dashboard
-        - Leadership and breadth
-        - Event catalysts
-        - Trade bias / playbook
-        - Risk controls
-        """
-    )
+        already_shown_once = bool(st.session_state.get(feedback_success_once_key, False))
+        if already_shown_once:
+            st.session_state[feedback_state_key] = False
+            st.session_state[feedback_success_once_key] = False
+        else:
+            st.success(
+                "✅ **Thank you!**\n\n"
+                "Your message has been sent directly to me.\n\n"
+                "I personally read every message, and many improvements in JFBP Quant Desk come directly from our community.\n\n"
+                "— **Captain JFBP**"
+            )
+            st.session_state[feedback_success_once_key] = True
 
 
 # =========================================================
@@ -440,6 +604,70 @@ def inject_sidebar_workflow_css() -> None:
                 color: #64748b;
                 line-height: 1.25;
                 overflow-wrap: anywhere;
+            }
+
+            .jfbp-profile-card {
+                display: flex;
+                align-items: center;
+                gap: 0.62rem;
+                margin-top: 0.45rem;
+                margin-bottom: 0.35rem;
+                padding: 0.58rem 0.56rem;
+                border: 1px solid #d6dbe5;
+                border-radius: 11px;
+                background: #ffffff;
+            }
+
+            .jfbp-profile-avatar {
+                width: 2.05rem;
+                height: 2.05rem;
+                border-radius: 999px;
+                background: #e2e8f0;
+                color: #0f172a;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-weight: 700;
+                font-size: 0.74rem;
+                letter-spacing: 0.03em;
+                flex: 0 0 auto;
+            }
+
+            .jfbp-profile-meta {
+                min-width: 0;
+                flex: 1;
+            }
+
+            .jfbp-profile-name {
+                font-size: 0.84rem;
+                font-weight: 650;
+                color: #0f172a;
+                line-height: 1.2;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .jfbp-profile-plan {
+                display: inline-block;
+                margin-top: 0.18rem;
+                padding: 0.06rem 0.42rem;
+                border-radius: 999px;
+                background: #dbeafe;
+                color: #1e3a8a;
+                font-size: 0.68rem;
+                font-weight: 640;
+                line-height: 1.2;
+            }
+
+            .jfbp-profile-email {
+                margin-top: 0.2rem;
+                font-size: 0.72rem;
+                color: #64748b;
+                line-height: 1.2;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
             }
 
             /* Sidebar expander cards: uniform border on all sides. */
@@ -811,15 +1039,12 @@ def app():
             use_container_width=True,
         )
 
+        _render_sidebar_profile_card(current_user)
+
         if st.sidebar.button("Logout", key="sidebar_saas_logout", width="stretch"):
             supabase_logout()
             clear_active_page_cache()
             st.rerun()
-
-        st.sidebar.markdown(
-            f'<div class="jfbp-sidebar-footer-email">Signed in:<br>{current_user.email}</div>',
-            unsafe_allow_html=True,
-        )
 
         st.sidebar.markdown("</div>", unsafe_allow_html=True)
 
