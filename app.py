@@ -131,6 +131,7 @@ try:
         run_page as saas_core_page,
         init_saas_state,
         get_current_user,
+        get_supabase_client,
         inject_saas_css,
         render_auth_panel,
         require_page_access,
@@ -154,6 +155,9 @@ except Exception as saas_import_error:
         st.session_state.setdefault("saas_user", None)
 
     def get_current_user():
+        return None
+
+    def get_supabase_client():
         return None
 
     def inject_saas_css():
@@ -325,6 +329,44 @@ def _render_sidebar_profile_card(user) -> None:
         ),
         unsafe_allow_html=True,
     )
+
+
+def _apply_sidebar_auth_session(client) -> bool:
+    session = st.session_state.get("saas_auth_session")
+    if not isinstance(session, dict):
+        return False
+
+    access_token = str(session.get("access_token", "") or "").strip()
+    refresh_token = str(session.get("refresh_token", "") or "").strip()
+    if not access_token:
+        return False
+
+    try:
+        client.auth.set_session(access_token, refresh_token)
+        return True
+    except TypeError:
+        try:
+            client.auth.set_session(access_token=access_token, refresh_token=refresh_token)
+            return True
+        except Exception:
+            return False
+    except Exception:
+        return False
+
+
+def _update_logged_in_password(new_password: str) -> tuple[bool, str]:
+    client = get_supabase_client()
+    if client is None:
+        return False, "Supabase client unavailable"
+
+    if not _apply_sidebar_auth_session(client):
+        return False, "Authenticated session unavailable"
+
+    try:
+        client.auth.update_user({"password": new_password})
+        return True, "Password updated"
+    except Exception as exc:
+        return False, str(exc)
 
 
 def _guess_current_symbol() -> str:
@@ -1034,17 +1076,60 @@ def app():
         )
 
         st.sidebar.link_button(
-            "💳 Manage Subscription",
+            "💳 Manage Plan",
             "https://billing.stripe.com/p/login/3cIcN63Kpe2GcELaKp7IY00",
             use_container_width=True,
         )
 
         _render_sidebar_profile_card(current_user)
 
-        if st.sidebar.button("Logout", key="sidebar_saas_logout", width="stretch"):
+        st.session_state.setdefault("sidebar_show_change_password", False)
+        st.sidebar.markdown("**👤 Account**")
+        account_col_left, account_col_right = st.sidebar.columns([1.35, 1.0])
+
+        if account_col_left.button(
+            "🔑 Change Password",
+            key="sidebar_change_password_btn",
+            use_container_width=True,
+        ):
+            st.session_state["sidebar_show_change_password"] = not bool(
+                st.session_state.get("sidebar_show_change_password", False)
+            )
+
+        if account_col_right.button("🚪 Logout", key="sidebar_saas_logout", use_container_width=True):
             supabase_logout()
             clear_active_page_cache()
             st.rerun()
+
+        if st.session_state.get("sidebar_show_change_password", False):
+            with st.sidebar.form("sidebar_change_password_form", clear_on_submit=True):
+                new_password = st.text_input("New Password", type="password")
+                confirm_password = st.text_input("Confirm New Password", type="password")
+                update_password = st.form_submit_button("Update Password", use_container_width=True)
+
+            if update_password:
+                new_password = str(new_password or "")
+                confirm_password = str(confirm_password or "")
+
+                if not new_password.strip():
+                    st.sidebar.warning("New password cannot be empty.")
+                elif len(new_password) < 8:
+                    st.sidebar.warning("New password must be at least 8 characters.")
+                elif new_password != confirm_password:
+                    st.sidebar.warning("New password and confirm password must match.")
+                else:
+                    ok, detail = _update_logged_in_password(new_password)
+                    if ok:
+                        st.sidebar.success("✅ Password updated successfully.")
+                        st.session_state["sidebar_show_change_password"] = False
+                    else:
+                        if is_admin_user(current_user):
+                            st.sidebar.error(
+                                "Password could not be updated. Please try again.\n"
+                                f"{detail}"
+                            )
+                        else:
+                            st.sidebar.error("Password could not be updated. Please try again.")
 
         st.sidebar.markdown("</div>", unsafe_allow_html=True)
 
