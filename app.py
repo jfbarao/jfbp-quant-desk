@@ -15,6 +15,7 @@ from email.message import EmailMessage
 import streamlit as st
 
 from core.bootstrap import init_core
+from core.ui_utils import scroll_to_top
 
 from pages.Navigation_Guide import run_page as navigation_guide_page
 
@@ -1104,6 +1105,9 @@ def app():
         st.sidebar.title("JFBP Desk")
 
     page = workflow_sidebar_navigation()
+
+    # UI infrastructure: enforce top-of-page viewport on every routed module load.
+    scroll_to_top()
 
     current_user = get_current_user()
     if current_user is not None:
