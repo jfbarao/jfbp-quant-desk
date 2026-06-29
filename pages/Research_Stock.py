@@ -892,11 +892,11 @@ h2 {
 .scorecard-row {display:flex;align-items:stretch;}
 .scorecard-cell {flex:1 1 0;padding:.3rem .55rem;min-width:0;display:flex;flex-direction:column;justify-content:center;}
 .scorecard-divider {border-left:1px solid #d9dee8;}
-.opportunity-scorecard .scorecard-heading {font-size:.82rem !important;line-height:1.2 !important;font-weight:800 !important;color:#1f2937;margin-bottom:.22rem !important;}
-.opportunity-scorecard .scorecard-role-value {font-size:1.22rem !important;line-height:1.2 !important;font-weight:800 !important;display:flex;align-items:center;justify-content:center;text-align:center;width:100%;margin:.1rem 0 !important;}
-.opportunity-scorecard .scorecard-allocation-value {font-size:1.3rem !important;line-height:1.2 !important;font-weight:800 !important;text-align:center;margin:.1rem 0 !important;}
-.opportunity-scorecard .scorecard-review-value {font-size:1rem !important;line-height:1.2 !important;font-weight:800 !important;color:#2563eb;margin:.12rem 0 !important;}
-.opportunity-scorecard .scorecard-description {font-size:.84rem !important;line-height:1.3 !important;color:#667085;}
+.opportunity-scorecard .scorecard-heading {font-size:14px !important;line-height:1.2 !important;font-weight:800 !important;color:#1f2937;margin-bottom:4px !important;}
+.opportunity-scorecard .scorecard-role-value {font-size:20px !important;line-height:1.2 !important;font-weight:800 !important;display:flex;align-items:center;justify-content:center;text-align:center;width:100%;margin:2px 0 !important;}
+.opportunity-scorecard .scorecard-allocation-value {font-size:21px !important;line-height:1.2 !important;font-weight:800 !important;text-align:center;margin:2px 0 !important;}
+.opportunity-scorecard .scorecard-review-value {font-size:16px !important;line-height:1.2 !important;font-weight:800 !important;color:#2563eb;margin:2px 0 !important;}
+.opportunity-scorecard .scorecard-description {font-size:14px !important;line-height:1.32 !important;color:#667085;}
 .pf-role-value-bad {color:#dc2626;}
 .pf-role-value-good {color:#0f9f6e;}
 .pf-interpretation {background:#eff6ff;border:1px solid #bfdbfe;border-radius:14px;padding:.75rem .95rem;color:#1d4ed8;line-height:1.45;margin:0 0 .8rem 0;}
@@ -3342,19 +3342,19 @@ If you can read this, Streamlit Cloud is serving the latest build.
             <div class="pf-decision-card opportunity-scorecard">
                 <div class="scorecard-row">
                     <div class="scorecard-cell">
-                        <div class="scorecard-heading">Portfolio Role</div>
-                        <div class="scorecard-role-value {portfolio_role_class}">{portfolio_role}</div>
-                        <div class="scorecard-description">{portfolio_role_note}</div>
+                        <div class="scorecard-heading" style="font-size:14px;line-height:1.2;font-weight:800;">Portfolio Role</div>
+                        <div class="scorecard-role-value {portfolio_role_class}" style="font-size:20px;line-height:1.2;font-weight:800;">{portfolio_role}</div>
+                        <div class="scorecard-description" style="font-size:14px;line-height:1.32;">{portfolio_role_note}</div>
                     </div>
                     <div class="scorecard-cell scorecard-divider">
-                        <div class="scorecard-heading">Suggested Allocation</div>
-                        <div class="scorecard-allocation-value">{suggested_allocation}</div>
-                        <div class="scorecard-description">{suggested_allocation_note}</div>
+                        <div class="scorecard-heading" style="font-size:14px;line-height:1.2;font-weight:800;">Suggested Allocation</div>
+                        <div class="scorecard-allocation-value" style="font-size:21px;line-height:1.2;font-weight:800;">{suggested_allocation}</div>
+                        <div class="scorecard-description" style="font-size:14px;line-height:1.32;">{suggested_allocation_note}</div>
                     </div>
                     <div class="scorecard-cell scorecard-divider">
-                        <div class="scorecard-heading">Review Again</div>
-                        <div class="scorecard-review-value">{review_again}</div>
-                        <div class="scorecard-description">{review_again_note}</div>
+                        <div class="scorecard-heading" style="font-size:14px;line-height:1.2;font-weight:800;">Review Again</div>
+                        <div class="scorecard-review-value" style="font-size:16px;line-height:1.2;font-weight:800;">{review_again}</div>
+                        <div class="scorecard-description" style="font-size:14px;line-height:1.32;">{review_again_note}</div>
                     </div>
                 </div>
             </div>
