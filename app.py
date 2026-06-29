@@ -1109,17 +1109,6 @@ def app():
     # UI infrastructure: enforce top-of-page viewport on every routed module load.
     scroll_to_top()
 
-    st.error(
-        """
-🚨 GLOBAL DEPLOYMENT TEST
-
-Build: 2026-06-29-1645
-Commit: 12dd97c
-
-If you can read this, Streamlit Cloud is serving the latest build path.
-"""
-    )
-
     st.markdown(
         """
         <style>

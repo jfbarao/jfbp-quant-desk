@@ -3290,16 +3290,6 @@ h2 {
             '<div class="institutional-chapter">Portfolio Fit</div>',
             unsafe_allow_html=True,
         )
-        st.error(
-            """
-🚨 DEPLOYMENT TEST
-
-Build: 2026-06-29-1530
-Commit: 6bc576c
-
-If you can read this, Streamlit Cloud is serving the latest build.
-"""
-        )
         st.subheader("🧮 Opportunity Scorecard")
         st.caption(
             "What it means: Converts the research factors into one "
