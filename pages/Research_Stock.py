@@ -886,16 +886,23 @@ h2 {
 .research-exec-title {font-size:1.08rem;font-weight:900;color:#1f2937;margin-bottom:.45rem;}
 .research-exec-text {font-size:.94rem;line-height:1.5;color:#334155;}
 .institutional-chapter {font-size:1.22rem;font-weight:900;letter-spacing:.01em;color:#0f172a;margin:1.35rem 0 .55rem 0;padding-top:.15rem;}
-.pf-decision-card {background:#ffffff;border:1px solid #d6dce8;border-radius:18px;padding:1rem 1.1rem;margin:.55rem 0 .85rem 0;box-shadow:0 1px 1px rgba(15,23,42,.03);}
-.pf-grid {display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;}
-.pf-cell {padding:.15rem 1rem .2rem 1rem;}
+.pf-decision-card {background:#ffffff;border:1px solid #d6dce8;border-radius:18px;padding:.95rem .85rem;margin:.55rem 0 .85rem 0;box-shadow:0 1px 1px rgba(15,23,42,.03);}
+.opportunity-scorecard {word-break:normal;overflow-wrap:normal;hyphens:none;white-space:normal;}
+.pf-grid {display:grid;grid-template-columns:1.02fr .96fr 1.02fr;column-gap:.1rem;}
+.pf-cell {padding:.25rem .62rem .3rem .62rem;min-width:0;display:flex;flex-direction:column;justify-content:center;}
 .pf-cell + .pf-cell {border-left:1px solid #d9dee8;}
-.pf-label {font-size:.84rem;font-weight:800;color:#1f2937;text-transform:none;margin-bottom:.25rem;}
+.pf-label {font-size:.74rem;font-weight:800;color:#1f2937;text-transform:none;margin-bottom:.25rem;line-height:1.2;word-break:normal;overflow-wrap:normal;hyphens:none;white-space:normal;}
+.opportunity-scorecard-title {font-size:clamp(.9rem,1.05vw,1.03rem);line-height:1.22;font-weight:800;}
 .pf-value {font-size:1.95rem;font-weight:900;color:#0f172a;line-height:1.05;margin:.2rem 0 .2rem 0;}
-.pf-sub {font-size:.9rem;color:#667085;line-height:1.35;}
+.scorecard-role {font-size:clamp(1.02rem,1.28vw,1.32rem);line-height:1.18;font-weight:800;word-break:normal;overflow-wrap:normal;hyphens:none;white-space:normal;display:flex;align-items:center;justify-content:center;text-align:center;width:100%;}
+.opportunity-scorecard-role {font-size:clamp(1.02rem,1.28vw,1.32rem);line-height:1.18;font-weight:800;word-break:normal;overflow-wrap:normal;hyphens:none;white-space:normal;}
+.opportunity-scorecard-allocation {font-size:clamp(1.02rem,1.28vw,1.32rem);line-height:1.18;font-weight:800;text-align:center;word-break:normal;overflow-wrap:normal;hyphens:none;white-space:normal;}
+.pf-sub {font-size:.9rem;color:#667085;line-height:1.35;word-break:normal;overflow-wrap:normal;hyphens:none;white-space:normal;}
+.opportunity-scorecard-description {font-size:clamp(.78rem,.92vw,.98rem);line-height:1.28;}
 .pf-role-value-bad {color:#dc2626;}
 .pf-role-value-good {color:#0f9f6e;}
-.pf-review-value {font-size:1.05rem;font-weight:800;color:#2563eb;line-height:1.25;margin:.35rem 0 .25rem 0;}
+.pf-review-value {font-size:clamp(.95rem,1.55vw,1.15rem);font-weight:800;color:#2563eb;line-height:1.2;margin:.35rem 0 .25rem 0;word-break:normal;overflow-wrap:normal;hyphens:none;white-space:normal;}
+.opportunity-scorecard-review {font-size:clamp(1.02rem,1.28vw,1.32rem);line-height:1.18;font-weight:800;}
 .pf-interpretation {background:#eff6ff;border:1px solid #bfdbfe;border-radius:14px;padding:.75rem .95rem;color:#1d4ed8;line-height:1.45;margin:0 0 .8rem 0;}
 
 @media (max-width: 900px) {
@@ -3331,22 +3338,22 @@ h2 {
 
         st.markdown(
             f"""
-            <div class="pf-decision-card">
+            <div class="pf-decision-card opportunity-scorecard">
                 <div class="pf-grid">
                     <div class="pf-cell">
-                        <div class="pf-label">Portfolio Role</div>
-                        <div class="pf-value {portfolio_role_class}">{portfolio_role}</div>
-                        <div class="pf-sub">{portfolio_role_note}</div>
+                        <div class="pf-label opportunity-scorecard-title">Portfolio Role</div>
+                        <div class="pf-value scorecard-role opportunity-scorecard-role {portfolio_role_class}">{portfolio_role}</div>
+                        <div class="pf-sub opportunity-scorecard-description">{portfolio_role_note}</div>
                     </div>
                     <div class="pf-cell">
-                        <div class="pf-label">Suggested Allocation</div>
-                        <div class="pf-value">{suggested_allocation}</div>
-                        <div class="pf-sub">{suggested_allocation_note}</div>
+                        <div class="pf-label opportunity-scorecard-title">Suggested Allocation</div>
+                        <div class="pf-value opportunity-scorecard-allocation">{suggested_allocation}</div>
+                        <div class="pf-sub opportunity-scorecard-description">{suggested_allocation_note}</div>
                     </div>
                     <div class="pf-cell">
-                        <div class="pf-label">Review Again</div>
-                        <div class="pf-review-value">{review_again}</div>
-                        <div class="pf-sub">{review_again_note}</div>
+                        <div class="pf-label opportunity-scorecard-title">Review Again</div>
+                        <div class="pf-review-value opportunity-scorecard-review">{review_again}</div>
+                        <div class="pf-sub opportunity-scorecard-description">{review_again_note}</div>
                     </div>
                 </div>
             </div>
