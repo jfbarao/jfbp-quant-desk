@@ -8,6 +8,7 @@ from pathlib import Path
 import html
 import json
 import smtplib
+import uuid
 from datetime import datetime, timezone
 from email.message import EmailMessage
 
@@ -402,7 +403,7 @@ def _diagnostics_payload(active_page: str) -> dict:
     }
 
 
-def _send_feedback_email(subject: str, body: str, reply_to: str) -> tuple[bool, str]:
+def _send_feedback_email(subject: str, body: str, reply_to: str, feedback_id: str) -> tuple[bool, str]:
     required_secret_names = [
         "FEEDBACK_SMTP_HOST",
         "FEEDBACK_SMTP_USER",
@@ -416,7 +417,8 @@ def _send_feedback_email(subject: str, body: str, reply_to: str) -> tuple[bool, 
         if not str(st.secrets.get(name, "") or "").strip()
     ]
     if missing_config:
-        return False, "CONFIG_MISSING:" + ",".join(missing_config)
+        print(f"FOUNDER_FEEDBACK {feedback_id}: smtp send failed: missing config {','.join(missing_config)}")
+        return False, f"CONFIG_MISSING:{feedback_id}:" + ",".join(missing_config)
 
     smtp_host = str(st.secrets.get("FEEDBACK_SMTP_HOST", "") or "").strip()
     try:
@@ -438,6 +440,7 @@ def _send_feedback_email(subject: str, body: str, reply_to: str) -> tuple[bool, 
     message.set_content(body)
 
     try:
+        print(f"FOUNDER_FEEDBACK {feedback_id}: smtp send starting")
         use_ssl = (smtp_port == 465) and (not smtp_tls)
         smtp_client = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
 
@@ -447,23 +450,31 @@ def _send_feedback_email(subject: str, body: str, reply_to: str) -> tuple[bool, 
             if smtp_user and smtp_password:
                 server.login(smtp_user, smtp_password)
             server.send_message(message)
+        print(f"FOUNDER_FEEDBACK {feedback_id}: smtp send succeeded")
         return True, "Feedback sent."
     except Exception as exc:
-        return False, f"Could not send feedback email: {exc}"
+        print(f"FOUNDER_FEEDBACK {feedback_id}: smtp send failed: {exc}")
+        return False, f"[{feedback_id}] Could not send feedback email: {exc}"
 
 
 def _feedback_error_message_for_user(raw_error: str, user) -> str:
     text = str(raw_error or "").strip()
     if text.startswith("CONFIG_MISSING:"):
+        rest = text.split(":", 1)[1]
+        parts = rest.split(":", 1)
+        feedback_id = parts[0].strip() if len(parts) > 1 else ""
+        missing_csv = parts[1] if len(parts) > 1 else parts[0]
         missing = [
             item.strip()
-            for item in text.split(":", 1)[1].split(",")
+            for item in missing_csv.split(",")
             if item.strip()
         ]
         if is_admin_user(user):
             bullet_lines = "\n".join([f"• {item}" for item in missing])
             return (
                 "⚠️ Feedback email is not configured.\n"
+                + (f"Reference: {feedback_id}\n" if feedback_id else "")
+                +
                 "Missing configuration:\n"
                 f"{bullet_lines}\n"
                 "Configure these in Streamlit Secrets."
@@ -476,7 +487,7 @@ def _feedback_error_message_for_user(raw_error: str, user) -> str:
     return "⚠️ Feedback couldn't be sent. Please try again later."
 
 
-def _submit_founder_feedback(payload: dict, reply_to: str) -> tuple[bool, str]:
+def _submit_founder_feedback(payload: dict, reply_to: str, feedback_id: str) -> tuple[bool, str]:
     def _build_feedback_email_body(data: dict) -> str:
         # Keep body sections explicit so future additions (attachments, logs,
         # screenshots) can be appended without rewriting the submit workflow.
@@ -485,6 +496,7 @@ def _submit_founder_feedback(payload: dict, reply_to: str) -> tuple[bool, str]:
             message_value = "(no message provided)"
 
         sections = [
+            f"Feedback ID: {feedback_id}",
             f"User: {data.get('user', 'unknown')}",
             f"Plan: {data.get('plan', 'Starter')}",
             f"Page: {data.get('page', 'Unknown')}",
@@ -515,10 +527,15 @@ def _submit_founder_feedback(payload: dict, reply_to: str) -> tuple[bool, str]:
 
         return "\n".join(sections)
 
-    subject = f"[{payload['plan']}][{payload['page']}][{payload['category']}]"
+    subject = f"[{payload['plan']}][{payload['page']}][{payload['category']}][{feedback_id}]"
     body = _build_feedback_email_body(payload)
 
-    ok, result = _send_feedback_email(subject=subject, body=body, reply_to=reply_to)
+    ok, result = _send_feedback_email(
+        subject=subject,
+        body=body,
+        reply_to=reply_to,
+        feedback_id=feedback_id,
+    )
     # Future:
     # save_feedback_to_supabase(payload)
     return ok, result
@@ -530,6 +547,7 @@ def render_founder_feedback_footer(page_key: str) -> None:
     plan_label = _founder_plan_label(user)
     feedback_state_key = f"feedback_success_{page_name}"
     feedback_success_once_key = f"feedback_success_once_{page_name}"
+    feedback_reference_key = f"feedback_reference_{page_name}"
     feedback_rate_limit_key = "founder_feedback_last_submit_ts"
     symbol_default = _guess_current_symbol()
 
@@ -556,44 +574,61 @@ def render_founder_feedback_footer(page_key: str) -> None:
             submit = st.form_submit_button("Submit Feedback", type="primary", use_container_width=True)
 
         if submit:
+            feedback_id = (
+                f"FB-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-"
+                f"{uuid.uuid4().hex[:6]}"
+            )
+            print(f"FOUNDER_FEEDBACK {feedback_id}: submit requested")
+
+            # New attempts should never keep stale success UI from older sends.
+            st.session_state[feedback_state_key] = False
+            st.session_state[feedback_success_once_key] = False
+            st.session_state[feedback_reference_key] = ""
+
             clean_message = str(message_text or "").strip()
             if not clean_message:
+                print(f"FOUNDER_FEEDBACK {feedback_id}: blocked by validation")
                 st.warning("Please add a message before submitting feedback.")
             else:
                 now_ts = datetime.now(timezone.utc).timestamp()
                 last_submit_ts = float(st.session_state.get(feedback_rate_limit_key, 0.0) or 0.0)
                 if now_ts - last_submit_ts < 30:
+                    print(f"FOUNDER_FEEDBACK {feedback_id}: blocked by cooldown")
                     st.warning("Please wait a few seconds before sending another message.")
-                    return
-
-                user_email = str(getattr(user, "email", "") or "unknown")
-                symbol_line = symbol_default if include_symbol else ""
-                diagnostics_block = ""
-                if include_diagnostics:
-                    diagnostics_block = json.dumps(_diagnostics_payload(page_name), indent=2)
-
-                timestamp = datetime.now(timezone.utc).isoformat()
-
-                feedback_payload = {
-                    "user": user_email,
-                    "plan": plan_label,
-                    "page": page_name,
-                    "version": APP_VERSION,
-                    "time": timestamp,
-                    "category": category,
-                    "message": clean_message,
-                    "symbol": symbol_line,
-                    "diagnostics": diagnostics_block,
-                }
-
-                ok, result = _submit_founder_feedback(payload=feedback_payload, reply_to=user_email)
-                st.session_state[feedback_rate_limit_key] = now_ts
-                if ok:
-                    st.session_state[feedback_state_key] = True
-                    st.session_state[feedback_success_once_key] = False
-                    st.rerun()
                 else:
-                    st.warning(_feedback_error_message_for_user(result, user))
+                    user_email = str(getattr(user, "email", "") or "unknown")
+                    symbol_line = symbol_default if include_symbol else "Not included"
+                    diagnostics_block = "Not included"
+                    if include_diagnostics:
+                        diagnostics_block = json.dumps(_diagnostics_payload(page_name), indent=2)
+
+                    timestamp = datetime.now(timezone.utc).isoformat()
+
+                    feedback_payload = {
+                        "user": user_email,
+                        "plan": plan_label,
+                        "page": page_name,
+                        "version": APP_VERSION,
+                        "time": timestamp,
+                        "category": category,
+                        "message": clean_message,
+                        "symbol": symbol_line,
+                        "diagnostics": diagnostics_block,
+                    }
+
+                    ok, result = _submit_founder_feedback(
+                        payload=feedback_payload,
+                        reply_to=user_email,
+                        feedback_id=feedback_id,
+                    )
+                    st.session_state[feedback_rate_limit_key] = now_ts
+                    if ok:
+                        st.session_state[feedback_state_key] = True
+                        st.session_state[feedback_success_once_key] = False
+                        st.session_state[feedback_reference_key] = feedback_id
+                        st.rerun()
+                    else:
+                        st.warning(_feedback_error_message_for_user(result, user))
 
     if st.session_state.get(feedback_state_key, False):
         already_shown_once = bool(st.session_state.get(feedback_success_once_key, False))
@@ -601,8 +636,10 @@ def render_founder_feedback_footer(page_key: str) -> None:
             st.session_state[feedback_state_key] = False
             st.session_state[feedback_success_once_key] = False
         else:
+            feedback_reference = str(st.session_state.get(feedback_reference_key, "") or "").strip()
             st.success(
-                "✅ **Thank you!**\n\n"
+                "✅ Feedback sent.\n\n"
+                f"Reference: {feedback_reference}\n\n"
                 "Your message has been sent directly to me.\n\n"
                 "I personally read every message, and many improvements in JFBP Quant Desk come directly from our community.\n\n"
                 "— **Captain JFBP**"
