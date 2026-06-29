@@ -887,30 +887,19 @@ h2 {
 .research-exec-text {font-size:.94rem;line-height:1.5;color:#334155;}
 .institutional-chapter {font-size:1.22rem;font-weight:900;letter-spacing:.01em;color:#0f172a;margin:1.35rem 0 .55rem 0;padding-top:.15rem;}
 .pf-decision-card {background:#ffffff;border:1px solid #d6dce8;border-radius:18px;padding:.95rem .85rem;margin:.55rem 0 .85rem 0;box-shadow:0 1px 1px rgba(15,23,42,.03);}
-.opportunity-scorecard {word-break:normal;overflow-wrap:normal;hyphens:none;white-space:normal;}
-.scorecard-grid {display:grid;grid-template-columns:repeat(3,minmax(180px,1fr));gap:0;}
-.scorecard-grid,
-.scorecard-grid * {word-break:normal !important;overflow-wrap:normal !important;hyphens:none !important;white-space:normal;}
-.scorecard-cell {padding:.25rem .62rem .3rem .62rem;min-width:0;display:flex;flex-direction:column;justify-content:center;}
+.opportunity-scorecard,
+.opportunity-scorecard * {word-break:normal !important;overflow-wrap:normal !important;hyphens:none !important;}
+.scorecard-row {display:flex;align-items:stretch;}
+.scorecard-cell {flex:1 1 0;padding:.3rem .55rem;min-width:0;display:flex;flex-direction:column;justify-content:center;}
 .scorecard-divider {border-left:1px solid #d9dee8;}
-.scorecard-heading {font-size:clamp(.9rem,1.1vw,1.05rem);line-height:1.25;font-weight:800;color:#1f2937;margin-bottom:.25rem;}
-.scorecard-role-value {font-size:clamp(1.35rem,1.8vw,1.85rem);line-height:1.08;font-weight:800;display:flex;align-items:center;justify-content:center;text-align:center;width:100%;margin:.2rem 0;}
-.scorecard-allocation-value {font-size:clamp(1.5rem,2vw,2rem);line-height:1.08;font-weight:800;text-align:center;margin:.2rem 0;}
-.scorecard-review-value {font-size:clamp(1.1rem,1.5vw,1.4rem);line-height:1.15;font-weight:800;color:#2563eb;margin:.35rem 0 .25rem 0;}
-.scorecard-description {font-size:clamp(.9rem,1.05vw,1rem);line-height:1.35;color:#667085;}
+.scorecard-heading {font-size:.9rem;line-height:1.25;font-weight:800;color:#1f2937;margin-bottom:.3rem;}
+.scorecard-role-value {font-size:1.45rem;line-height:1.25;font-weight:800;display:flex;align-items:center;justify-content:center;text-align:center;width:100%;margin:.15rem 0;}
+.scorecard-allocation-value {font-size:1.55rem;line-height:1.25;font-weight:800;text-align:center;margin:.15rem 0;}
+.scorecard-review-value {font-size:1.15rem;line-height:1.25;font-weight:800;color:#2563eb;margin:.2rem 0;}
+.scorecard-description {font-size:.9rem;line-height:1.4;color:#667085;}
 .pf-role-value-bad {color:#dc2626;}
 .pf-role-value-good {color:#0f9f6e;}
 .pf-interpretation {background:#eff6ff;border:1px solid #bfdbfe;border-radius:14px;padding:.75rem .95rem;color:#1d4ed8;line-height:1.45;margin:0 0 .8rem 0;}
-
-@media (max-width: 980px) {
-    .scorecard-grid {grid-template-columns:repeat(2,minmax(180px,1fr));}
-    .scorecard-grid .scorecard-cell:last-child {grid-column:1 / -1;}
-}
-
-@media (max-width: 760px) {
-    .scorecard-grid {grid-template-columns:1fr;}
-    .scorecard-divider {border-left:none;border-top:1px solid rgba(148,163,184,.35);padding-top:.85rem;margin-top:.6rem;}
-}
 
 /* Small phones: reduce title and metric pressure further. */
 @media (max-width: 520px) {
@@ -3341,7 +3330,7 @@ h2 {
         st.markdown(
             f"""
             <div class="pf-decision-card opportunity-scorecard">
-                <div class="scorecard-grid">
+                <div class="scorecard-row">
                     <div class="scorecard-cell">
                         <div class="scorecard-heading">Portfolio Role</div>
                         <div class="scorecard-role-value {portfolio_role_class}">{portfolio_role}</div>
