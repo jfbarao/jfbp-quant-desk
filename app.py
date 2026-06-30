@@ -1,5 +1,5 @@
 # =========================================================
-# JFBP APP ENTRYPOINT v24.24
+# JFBP APP ENTRYPOINT v24.25
 # STABLE ROUTER — SAAS LOGIN GATE ENABLED
 # FUTURE ASSET MODULES READY
 # =========================================================
@@ -210,7 +210,7 @@ st.set_page_config(
 )
 
 
-APP_VERSION = "v24.24"
+APP_VERSION = "v24.25"
 FOUNDER_FEEDBACK_EMAIL = "hello@jfbpquantdesk.com"
 FEEDBACK_CATEGORY_OPTIONS = ["Bug", "Suggestion", "Question", "Feature Request"]
 
