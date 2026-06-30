@@ -854,12 +854,58 @@ def _sidebar_nav_button(label: str, page_key: str, container=st.sidebar) -> None
 
 
 def navigate_to_page(page_key: str) -> None:
+    _bump_navigation_counter(page_key)
     st.session_state["jfbp_main_navigation"] = page_key
     try:
         remember_active_page(page_key)
     except Exception:
         pass
     st.rerun()
+
+
+def _bump_navigation_counter(page_key: str) -> None:
+    page_key = str(page_key or "").strip()
+    if not page_key:
+        return
+
+    previous = str(st.session_state.get("jfbp_last_navigation_page", "") or "").strip()
+    if previous == page_key:
+        return
+
+    try:
+        counter = int(st.session_state.get("jfbp_navigation_counter", 0) or 0)
+    except Exception:
+        counter = 0
+
+    st.session_state["jfbp_navigation_counter"] = counter + 1
+    st.session_state["jfbp_last_navigation_page"] = page_key
+    st.session_state["jfbp_needs_hard_nav_reset"] = True
+
+
+def _apply_navigation_url_marker() -> bool:
+    """Best-effort URL marker update for browser-level navigation reset.
+
+    This is a no-JS fallback when iframe-based scroll scripts cannot control the
+    parent document (for example, stricter sandbox behavior in some deployments).
+    """
+    try:
+        marker = str(int(st.session_state.get("jfbp_navigation_counter", 0) or 0))
+    except Exception:
+        marker = "0"
+
+    try:
+        current = str(st.query_params.get("_jfbp_nav", "") or "")
+    except Exception:
+        current = ""
+
+    if current == marker:
+        return False
+
+    try:
+        st.query_params["_jfbp_nav"] = marker
+        return True
+    except Exception:
+        return False
 
 
 def _section_is_active(current: str, page_keys: list[str]) -> bool:
@@ -1106,8 +1152,28 @@ def app():
 
     page = workflow_sidebar_navigation()
 
-    # UI infrastructure: enforce top-of-page viewport on every routed module load.
-    scroll_to_top()
+    # Global navigation hook: only bump when the routed page actually changes.
+    _bump_navigation_counter(page)
+    url_marker_changed = _apply_navigation_url_marker()
+    if url_marker_changed:
+        st.rerun()
+
+    if bool(st.session_state.get("jfbp_needs_hard_nav_reset", False)):
+        st.session_state["jfbp_needs_hard_nav_reset"] = False
+        st.session_state["jfbp_nav_reset_return_target"] = "run_app.py"
+        st.session_state["jfbp_nav_reset_return_candidates"] = [
+            "run_app.py",
+            "app.py",
+        ]
+        try:
+            st.switch_page("pages/Nav_Reset.py")
+        except Exception:
+            pass
+
+    nav_counter = int(st.session_state.get("jfbp_navigation_counter", 0) or 0)
+
+    # UI infrastructure: first pass reset before module render.
+    scroll_to_top(nav_counter * 2)
 
     st.markdown(
         """
