@@ -2141,7 +2141,7 @@ def render_auth_panel() -> None:
                             "• Check your Junk/Spam folder\n"
                             "• Click the verification link\n"
                             "• Return here and log in\n\n"
-                            "If you don't receive the email after **5-10 minutes**, check your **Junk/Spam** folder and mark it as **Not Spam** if necessary.\n\n"
+                            "If you don't receive the email after **5–10 minutes**, check your **Junk/Spam** folder and mark it as **Not Spam** if necessary.\n\n"
                             "If it's still missing, use **Reset Password** or contact **[support@jfbpquantdesk.com](mailto:support@jfbpquantdesk.com)**."
                         )
                         if st.session_state.get("saas_logged_in", False):
