@@ -2113,7 +2113,12 @@ def render_auth_panel() -> None:
                     format_func=lambda p: f"{PLAN_LABELS[p]} — {PLAN_PRICES[p]}",
                     index=0,
                 )
-                st.success("🚀 Start your 30-day trial today. No credit card required.")
+                st.success(
+                    "📧 **One More Step**\n\n"
+                    "After creating your account, we'll send a verification email to activate your access.\n\n"
+                    "Please check your **Inbox** first. If you don't receive it within a few minutes, check your **Junk/Spam** folder and mark the email as **Not Spam** to ensure future JFBP Quant Desk emails arrive correctly.\n\n"
+                    "Click the verification link before attempting to log in."
+                )
 
                 submitted = st.form_submit_button("Create Account & Start Trial", use_container_width=True)
 
@@ -2127,7 +2132,18 @@ def render_auth_panel() -> None:
                 else:
                     ok, message = supabase_sign_up(email=email, password=password, full_name=full_name, plan=plan)
                     if ok:
-                        st.success(message)
+                        st.success(
+                            "✅ **Almost Done!**\n\n"
+                            "Your account has been created successfully.\n\n"
+                            "We've sent a verification email to your email address.\n\n"
+                            "Please:\n\n"
+                            "• Check your Inbox\n"
+                            "• Check your Junk/Spam folder\n"
+                            "• Click the verification link\n"
+                            "• Return here and log in\n\n"
+                            "If you don't receive the email after **5-10 minutes**, check your **Junk/Spam** folder and mark it as **Not Spam** if necessary.\n\n"
+                            "If it's still missing, use **Reset Password** or contact **[support@jfbpquantdesk.com](mailto:support@jfbpquantdesk.com)**."
+                        )
                         if st.session_state.get("saas_logged_in", False):
                             st.rerun()
                     else:
