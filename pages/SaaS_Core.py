@@ -2119,7 +2119,6 @@ def render_auth_panel() -> None:
                     "Please check your **Inbox** first. If you don't receive it within a few minutes, check your **Junk/Spam** folder and mark the email as **Not Spam** to ensure future JFBP Quant Desk emails arrive correctly.\n\n"
                     "Click the verification link before attempting to log in."
                 )
-                st.caption("ACTIVE AUTH RENDERER CONFIRMED — v1.1.3")
 
                 submitted = st.form_submit_button("Create Account & Start Trial", use_container_width=True)
 
