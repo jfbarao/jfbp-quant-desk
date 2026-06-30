@@ -10,6 +10,11 @@ def scroll_to_top(navigation_counter: int = 0) -> None:
     Uses a tiny components iframe script because it is the most reliable way to
     execute browser-side scrolling in Streamlit across reruns/navigation.
     """
+    try:
+        nav_counter = int(navigation_counter or 0)
+    except Exception:
+        nav_counter = 0
+
     html = """
         <script>
             (function () {
@@ -123,10 +128,26 @@ def scroll_to_top(navigation_counter: int = 0) -> None:
                 } catch (e) {}
             })();
         </script>
-        """.replace("__NAV_COUNTER__", str(int(navigation_counter)))
+        """.replace("__NAV_COUNTER__", str(nav_counter))
 
-    key = f"jfbp_scroll_reset_{int(navigation_counter)}"
+    key = f"jfbp_scroll_reset_{nav_counter}"
     try:
-        components.html(html, height=1, width=1, key=key)
-    except TypeError:
-        components.html(html, height=1, width=1)
+        # Newer Streamlit versions support key.
+        components.html(html, height=1, key=key)
+        return
+    except Exception:
+        pass
+
+    try:
+        # Compatibility fallback for older Streamlit components API.
+        components.html(html, height=1)
+        return
+    except Exception:
+        pass
+
+    try:
+        # Last fallback: default size/signature.
+        components.html(html)
+    except Exception:
+        # Never allow UI utility code to crash routing.
+        return

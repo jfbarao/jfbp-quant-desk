@@ -1173,7 +1173,10 @@ def app():
     nav_counter = int(st.session_state.get("jfbp_navigation_counter", 0) or 0)
 
     # UI infrastructure: first pass reset before module render.
-    scroll_to_top(nav_counter * 2)
+    try:
+        scroll_to_top(nav_counter * 2)
+    except Exception:
+        pass
 
     st.markdown(
         """
