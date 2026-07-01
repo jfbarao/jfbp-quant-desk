@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import re
 import time
 
 from dataclasses import dataclass
@@ -165,7 +164,8 @@ DISPOSABLE_EMAIL_DOMAINS = {
 
 # Temporary launch hardening flag for auth/metadata diagnostics.
 AUTH_DEBUG = False
-RESET_PASSWORD_COOLDOWN_DEFAULT_SECONDS = 60
+RESET_PASSWORD_BACKOFF_STEPS = (15, 30, 60)
+RESET_PASSWORD_RATE_LIMIT_MESSAGE = "Too many password reset requests. Please wait before trying again."
 
 
 # =========================================================
@@ -309,9 +309,23 @@ def _browser_auth_cache_key() -> str:
 
 
 @st.cache_resource(show_spinner=False)
-def _password_reset_cooldown_cache() -> Dict[str, float]:
-    """Cache reset-password cooldown by browser fingerprint across refreshes."""
+def _password_reset_cooldown_cache() -> Dict[str, Dict[str, float]]:
+    """Cache reset-password cooldown state by browser fingerprint."""
     return {}
+
+
+def _reset_password_backoff_level() -> int:
+    session_level = int(st.session_state.get("saas_reset_password_backoff_level", 0) or 0)
+    cache_level = 0
+
+    browser_key = _browser_auth_cache_key()
+    if browser_key:
+        cached = _password_reset_cooldown_cache().get(browser_key, {})
+        cache_level = int(cached.get("level", 0) or 0)
+
+    level = max(session_level, cache_level)
+    st.session_state["saas_reset_password_backoff_level"] = level
+    return level
 
 
 def _reset_password_cooldown_expires_at() -> float:
@@ -320,13 +334,18 @@ def _reset_password_cooldown_expires_at() -> float:
 
     browser_key = _browser_auth_cache_key()
     if browser_key:
-        cache_expiry = float(_password_reset_cooldown_cache().get(browser_key, 0.0) or 0.0)
+        cached = _password_reset_cooldown_cache().get(browser_key, {})
+        cache_expiry = float(cached.get("expires_at", 0.0) or 0.0)
 
     expires_at = max(session_expiry, cache_expiry)
     if expires_at <= time.time():
         st.session_state["saas_reset_password_cooldown_expires_at"] = 0.0
         if browser_key:
-            _password_reset_cooldown_cache().pop(browser_key, None)
+            cached = _password_reset_cooldown_cache().get(browser_key, {})
+            _password_reset_cooldown_cache()[browser_key] = {
+                "expires_at": 0.0,
+                "level": float(cached.get("level", 0) or 0),
+            }
         return 0.0
 
     if expires_at != session_expiry:
@@ -342,14 +361,37 @@ def _reset_password_cooldown_remaining() -> int:
     return max(0, int(expires_at - time.time() + 0.999))
 
 
-def _set_reset_password_cooldown(seconds: int) -> None:
-    cooldown_seconds = max(1, int(seconds or RESET_PASSWORD_COOLDOWN_DEFAULT_SECONDS))
+def _set_reset_password_cooldown(level: int, seconds: int) -> None:
+    bounded_level = max(1, min(int(level or 1), len(RESET_PASSWORD_BACKOFF_STEPS)))
+    cooldown_seconds = max(1, int(seconds or RESET_PASSWORD_BACKOFF_STEPS[bounded_level - 1]))
     expires_at = time.time() + cooldown_seconds
     st.session_state["saas_reset_password_cooldown_expires_at"] = expires_at
+    st.session_state["saas_reset_password_backoff_level"] = bounded_level
 
     browser_key = _browser_auth_cache_key()
     if browser_key:
-        _password_reset_cooldown_cache()[browser_key] = expires_at
+        _password_reset_cooldown_cache()[browser_key] = {
+            "expires_at": expires_at,
+            "level": float(bounded_level),
+        }
+
+
+def _reset_password_backoff_seconds_for_next_429() -> tuple[int, int]:
+    current_level = _reset_password_backoff_level()
+    next_level = min(current_level + 1, len(RESET_PASSWORD_BACKOFF_STEPS))
+    return next_level, RESET_PASSWORD_BACKOFF_STEPS[next_level - 1]
+
+
+def _reset_password_backoff_reset() -> None:
+    st.session_state["saas_reset_password_backoff_level"] = 0
+    st.session_state["saas_reset_password_cooldown_expires_at"] = 0.0
+
+    browser_key = _browser_auth_cache_key()
+    if browser_key:
+        _password_reset_cooldown_cache()[browser_key] = {
+            "expires_at": 0.0,
+            "level": 0.0,
+        }
 
 
 def _format_mmss(seconds: int) -> str:
@@ -357,44 +399,10 @@ def _format_mmss(seconds: int) -> str:
     return f"{minutes:02d}:{remaining_seconds:02d}"
 
 
-def _is_rate_limit_reset_error(message: str) -> bool:
-    text = str(message or "").lower()
-    signals = [
-        "rate limit",
-        "too many requests",
-        "over_email_send_rate_limit",
-        "request this after",
-        "for security purposes",
-    ]
-    return any(token in text for token in signals)
-
-
-def _retry_after_seconds_from_error(message: str) -> int:
-    text = str(message or "")
-    lowered = text.lower()
-
-    patterns = [
-        r"retry\s*[-_ ]?after\s*[:=]?\s*(\d+)",
-        r"request this after\s*(\d+)",
-        r"in\s*(\d+)\s*(?:s|sec|secs|second|seconds)\b",
-        r"(\d+)\s*(?:s|sec|secs|second|seconds)\b",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, lowered)
-        if match:
-            try:
-                return max(1, int(match.group(1)))
-            except Exception:
-                pass
-
-    minute_match = re.search(r"(\d+)\s*(?:m|min|mins|minute|minutes)\b", lowered)
-    if minute_match:
-        try:
-            return max(1, int(minute_match.group(1)) * 60)
-        except Exception:
-            pass
-
-    return RESET_PASSWORD_COOLDOWN_DEFAULT_SECONDS
+def _is_supabase_over_request_rate_limit(meta: Dict[str, Any]) -> bool:
+    status_code = int(meta.get("status_code", 0) or 0)
+    error_code = str(meta.get("error_code", "") or "").strip().lower()
+    return status_code == 429 and error_code == "over_request_rate_limit"
 
 
 def _session_cache_payload(session: Any) -> Dict[str, Any]:
@@ -1816,18 +1824,75 @@ def supabase_logout() -> tuple[bool, str]:
     return True, "Logged out."
 
 
-def supabase_reset_password(email: str) -> tuple[bool, str]:
+def supabase_reset_password(email: str) -> tuple[bool, str, Dict[str, Any]]:
     ready, message = supabase_ready()
     if not ready:
-        return False, message
+        return False, message, {"status_code": None, "error_code": "", "body": "", "headers": {}}
 
-    client = get_supabase_client()
+    url = str(st.secrets.get("SUPABASE_URL", "") or "").strip().rstrip("/")
+    key = str(st.secrets.get("SUPABASE_ANON_KEY", "") or "").strip()
+
+    if not url or not key:
+        return False, "Password reset failed: Supabase credentials unavailable.", {
+            "status_code": None,
+            "error_code": "",
+            "body": "",
+            "headers": {},
+        }
+
+    endpoint = f"{url}/auth/v1/recover"
+    headers = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "email": email.strip().lower(),
+        "redirect_to": "https://jfbpquantdesk.com/reset-password",
+    }
 
     try:
-        client.auth.reset_password_email(email.strip().lower())
-        return True, "Password reset email sent."
+        response = requests.post(endpoint, headers=headers, json=payload, timeout=30)
+
+        meta: Dict[str, Any] = {
+            "status_code": int(response.status_code),
+            "error_code": "",
+            "body": response.text,
+            "headers": dict(response.headers),
+        }
+
+        parsed = {}
+        try:
+            parsed = response.json() if response.text else {}
+        except Exception:
+            parsed = {}
+
+        if isinstance(parsed, dict):
+            meta["error_code"] = str(parsed.get("error_code", "") or "").strip().lower()
+
+        if response.status_code < 400:
+            return True, "Password reset email sent.", meta
+
+        error_message = ""
+        if isinstance(parsed, dict):
+            error_message = str(
+                parsed.get("msg")
+                or parsed.get("error_description")
+                or parsed.get("message")
+                or parsed.get("error")
+                or ""
+            ).strip()
+        if not error_message:
+            error_message = str(response.text or "Unknown Supabase error").strip()
+
+        return False, f"Password reset failed: {error_message}", meta
     except Exception as exc:
-        return False, f"Password reset failed: {exc}"
+        return False, f"Password reset failed: {exc}", {
+            "status_code": None,
+            "error_code": "",
+            "body": "",
+            "headers": {},
+        }
 
 
 # =========================================================
@@ -2245,7 +2310,7 @@ def render_auth_panel() -> None:
             cooldown_remaining = _reset_password_cooldown_remaining()
             if cooldown_remaining > 0:
                 st.warning(
-                    f"Too many reset attempts. Please try again in {_format_mmss(cooldown_remaining)}."
+                    f"{RESET_PASSWORD_RATE_LIMIT_MESSAGE} ({_format_mmss(cooldown_remaining)})"
                 )
 
             with st.form("saas_reset_form"):
@@ -2260,16 +2325,15 @@ def render_auth_panel() -> None:
                 if not email or "@" not in email:
                     st.error("Enter a valid email.")
                 else:
-                    ok, message = supabase_reset_password(email=email)
+                    ok, message, meta = supabase_reset_password(email=email)
                     if ok:
+                        _reset_password_backoff_reset()
                         st.success(message)
                     else:
-                        if _is_rate_limit_reset_error(message):
-                            retry_after = _retry_after_seconds_from_error(message)
-                            _set_reset_password_cooldown(retry_after)
-                            st.warning(
-                                f"Too many reset attempts. Please try again in {_format_mmss(retry_after)}."
-                            )
+                        if _is_supabase_over_request_rate_limit(meta):
+                            next_level, cooldown_seconds = _reset_password_backoff_seconds_for_next_429()
+                            _set_reset_password_cooldown(next_level, cooldown_seconds)
+                            st.warning(f"{RESET_PASSWORD_RATE_LIMIT_MESSAGE} ({_format_mmss(cooldown_seconds)})")
                             st.rerun()
                         else:
                             st.error(message)
