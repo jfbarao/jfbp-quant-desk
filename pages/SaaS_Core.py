@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
+import time
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -163,6 +165,7 @@ DISPOSABLE_EMAIL_DOMAINS = {
 
 # Temporary launch hardening flag for auth/metadata diagnostics.
 AUTH_DEBUG = False
+RESET_PASSWORD_COOLDOWN_DEFAULT_SECONDS = 60
 
 
 # =========================================================
@@ -303,6 +306,95 @@ def _browser_auth_cache_key() -> str:
         ]
     )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+@st.cache_resource(show_spinner=False)
+def _password_reset_cooldown_cache() -> Dict[str, float]:
+    """Cache reset-password cooldown by browser fingerprint across refreshes."""
+    return {}
+
+
+def _reset_password_cooldown_expires_at() -> float:
+    session_expiry = float(st.session_state.get("saas_reset_password_cooldown_expires_at", 0.0) or 0.0)
+    cache_expiry = 0.0
+
+    browser_key = _browser_auth_cache_key()
+    if browser_key:
+        cache_expiry = float(_password_reset_cooldown_cache().get(browser_key, 0.0) or 0.0)
+
+    expires_at = max(session_expiry, cache_expiry)
+    if expires_at <= time.time():
+        st.session_state["saas_reset_password_cooldown_expires_at"] = 0.0
+        if browser_key:
+            _password_reset_cooldown_cache().pop(browser_key, None)
+        return 0.0
+
+    if expires_at != session_expiry:
+        st.session_state["saas_reset_password_cooldown_expires_at"] = expires_at
+
+    return expires_at
+
+
+def _reset_password_cooldown_remaining() -> int:
+    expires_at = _reset_password_cooldown_expires_at()
+    if expires_at <= 0:
+        return 0
+    return max(0, int(expires_at - time.time() + 0.999))
+
+
+def _set_reset_password_cooldown(seconds: int) -> None:
+    cooldown_seconds = max(1, int(seconds or RESET_PASSWORD_COOLDOWN_DEFAULT_SECONDS))
+    expires_at = time.time() + cooldown_seconds
+    st.session_state["saas_reset_password_cooldown_expires_at"] = expires_at
+
+    browser_key = _browser_auth_cache_key()
+    if browser_key:
+        _password_reset_cooldown_cache()[browser_key] = expires_at
+
+
+def _format_mmss(seconds: int) -> str:
+    minutes, remaining_seconds = divmod(max(0, int(seconds or 0)), 60)
+    return f"{minutes:02d}:{remaining_seconds:02d}"
+
+
+def _is_rate_limit_reset_error(message: str) -> bool:
+    text = str(message or "").lower()
+    signals = [
+        "rate limit",
+        "too many requests",
+        "over_email_send_rate_limit",
+        "request this after",
+        "for security purposes",
+    ]
+    return any(token in text for token in signals)
+
+
+def _retry_after_seconds_from_error(message: str) -> int:
+    text = str(message or "")
+    lowered = text.lower()
+
+    patterns = [
+        r"retry\s*[-_ ]?after\s*[:=]?\s*(\d+)",
+        r"request this after\s*(\d+)",
+        r"in\s*(\d+)\s*(?:s|sec|secs|second|seconds)\b",
+        r"(\d+)\s*(?:s|sec|secs|second|seconds)\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, lowered)
+        if match:
+            try:
+                return max(1, int(match.group(1)))
+            except Exception:
+                pass
+
+    minute_match = re.search(r"(\d+)\s*(?:m|min|mins|minute|minutes)\b", lowered)
+    if minute_match:
+        try:
+            return max(1, int(minute_match.group(1)) * 60)
+        except Exception:
+            pass
+
+    return RESET_PASSWORD_COOLDOWN_DEFAULT_SECONDS
 
 
 def _session_cache_payload(session: Any) -> Dict[str, Any]:
@@ -2150,9 +2242,19 @@ def render_auth_panel() -> None:
                         st.error(message)
 
         else:
+            cooldown_remaining = _reset_password_cooldown_remaining()
+            if cooldown_remaining > 0:
+                st.warning(
+                    f"Too many reset attempts. Please try again in {_format_mmss(cooldown_remaining)}."
+                )
+
             with st.form("saas_reset_form"):
                 email = st.text_input("Email", value="")
-                submitted = st.form_submit_button("Send Password Reset Email", use_container_width=True)
+                submitted = st.form_submit_button(
+                    "Send Password Reset Email",
+                    use_container_width=True,
+                    disabled=cooldown_remaining > 0,
+                )
 
             if submitted:
                 if not email or "@" not in email:
@@ -2162,7 +2264,19 @@ def render_auth_panel() -> None:
                     if ok:
                         st.success(message)
                     else:
-                        st.error(message)
+                        if _is_rate_limit_reset_error(message):
+                            retry_after = _retry_after_seconds_from_error(message)
+                            _set_reset_password_cooldown(retry_after)
+                            st.warning(
+                                f"Too many reset attempts. Please try again in {_format_mmss(retry_after)}."
+                            )
+                            st.rerun()
+                        else:
+                            st.error(message)
+
+            if cooldown_remaining > 0:
+                time.sleep(1)
+                st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
