@@ -1848,17 +1848,20 @@ def supabase_reset_password(email: str) -> tuple[bool, str, Dict[str, Any]]:
     }
     payload = {
         "email": email.strip().lower(),
+    }
+    query = {
         "redirect_to": "https://jfbpquantdesk.com/reset-password",
     }
 
     try:
-        response = requests.post(endpoint, headers=headers, json=payload, timeout=30)
+        response = requests.post(endpoint, headers=headers, params=query, json=payload, timeout=30)
 
         meta: Dict[str, Any] = {
             "status_code": int(response.status_code),
             "error_code": "",
             "body": response.text,
             "headers": dict(response.headers),
+            "request_url": getattr(getattr(response, "request", None), "url", ""),
         }
 
         parsed = {}
