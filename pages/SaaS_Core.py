@@ -399,10 +399,16 @@ def _format_mmss(seconds: int) -> str:
     return f"{minutes:02d}:{remaining_seconds:02d}"
 
 
-def _is_supabase_over_request_rate_limit(meta: Dict[str, Any]) -> bool:
+def _supabase_reset_rate_limit_kind(meta: Dict[str, Any]) -> str:
     status_code = int(meta.get("status_code", 0) or 0)
     error_code = str(meta.get("error_code", "") or "").strip().lower()
-    return status_code == 429 and error_code == "over_request_rate_limit"
+    if status_code != 429:
+        return ""
+    if error_code == "over_request_rate_limit":
+        return "request"
+    if error_code == "over_email_send_rate_limit":
+        return "email"
+    return ""
 
 
 def _session_cache_payload(session: Any) -> Dict[str, Any]:
@@ -1829,6 +1835,8 @@ def supabase_reset_password(email: str) -> tuple[bool, str, Dict[str, Any]]:
     if not ready:
         return False, message, {"status_code": None, "error_code": "", "body": "", "headers": {}}
 
+    email_value = email.strip().lower()
+
     url = str(st.secrets.get("SUPABASE_URL", "") or "").strip().rstrip("/")
     key = str(st.secrets.get("SUPABASE_ANON_KEY", "") or "").strip()
 
@@ -1847,7 +1855,7 @@ def supabase_reset_password(email: str) -> tuple[bool, str, Dict[str, Any]]:
         "Content-Type": "application/json",
     }
     payload = {
-        "email": email.strip().lower(),
+        "email": email_value,
     }
     query = {
         "redirect_to": "https://jfbpquantdesk.com/reset-password",
@@ -1873,18 +1881,24 @@ def supabase_reset_password(email: str) -> tuple[bool, str, Dict[str, Any]]:
         if isinstance(parsed, dict):
             meta["error_code"] = str(parsed.get("error_code", "") or "").strip().lower()
 
-        if response.status_code < 400:
-            return True, "Password reset email sent.", meta
-
-        error_message = ""
+        raw_message = ""
         if isinstance(parsed, dict):
-            error_message = str(
+            raw_message = str(
                 parsed.get("msg")
                 or parsed.get("error_description")
                 or parsed.get("message")
                 or parsed.get("error")
                 or ""
             ).strip()
+        if not raw_message:
+            raw_message = str(response.text or "").strip()
+
+        if response.status_code < 400:
+            return True, "Password reset email sent.", meta
+
+        error_message = ""
+        if isinstance(parsed, dict):
+            error_message = raw_message
         if not error_message:
             error_message = str(response.text or "Unknown Supabase error").strip()
 
@@ -2333,7 +2347,8 @@ def render_auth_panel() -> None:
                         _reset_password_backoff_reset()
                         st.success(message)
                     else:
-                        if _is_supabase_over_request_rate_limit(meta):
+                        rate_limit_kind = _supabase_reset_rate_limit_kind(meta)
+                        if rate_limit_kind in {"request", "email"}:
                             next_level, cooldown_seconds = _reset_password_backoff_seconds_for_next_429()
                             _set_reset_password_cooldown(next_level, cooldown_seconds)
                             st.warning(f"{RESET_PASSWORD_RATE_LIMIT_MESSAGE} ({_format_mmss(cooldown_seconds)})")
