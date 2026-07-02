@@ -322,6 +322,12 @@ def inject_css() -> None:
                 min-width: 0 !important;
             }
 
+            div[data-testid="stButton"] > button p {
+                white-space: nowrap !important;
+                word-break: keep-all !important;
+                overflow-wrap: normal !important;
+            }
+
             .oc-grid {
                 display: grid;
                 grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
