@@ -127,6 +127,7 @@ PLAN_PAGES = {
         "Database",
         "Trade Command Center",
         "Options Center",
+        "Options Decision Center",
         "Navigation Guide",
         "User Guide Center",
         "Quant Executor",
@@ -148,6 +149,20 @@ PLAN_TRADING_MODE = {
     PLAN_PRO: "SIM + PAPER",
     PLAN_ELITE: "LIVE ENABLED",
 }
+
+# Canonical human-facing Elite feature bullets used across upgrade surfaces.
+ELITE_FEATURE_BULLETS: tuple[str, ...] = (
+    "Everything in Pro + live execution suite",
+    "Options Decision Center (Institutional Workflow)",
+    "Quant Executor, OMS Execution, Live IBKR",
+    "Automation Control Center",
+    "Crypto, Forex, Gold, and Oil Pulse",
+    "Telegram Alerts + Signal Watcher",
+)
+
+ELITE_FEATURE_MARKDOWN = "\n".join(
+    f"✓ {feature}  " for feature in ELITE_FEATURE_BULLETS
+)
 
 TRIAL_RISK_LOW = "LOW"
 TRIAL_RISK_MEDIUM = "MEDIUM"
@@ -2191,15 +2206,7 @@ def render_upgrade_required(user: SaaSUser, page_name: str) -> None:
         with elite_col:
             st.markdown("#### Quant Desk Elite")
             st.caption(f"{PLAN_PRICES[PLAN_ELITE]} · {PLAN_TRADING_MODE[PLAN_ELITE]}")
-            st.markdown(
-                """
-                ✓ Everything in Pro + live execution suite  
-                ✓ Quant Executor, OMS Execution, Live IBKR  
-                ✓ Automation Control Center  
-                ✓ Crypto, Forex, Gold, and Oil Pulse  
-                ✓ Telegram Alerts + Signal Watcher  
-                """
-            )
+            st.markdown(ELITE_FEATURE_MARKDOWN)
             render_checkout_button(user, PLAN_ELITE, "👑 Upgrade to Elite", "stripe_upgrade_elite_only")
         return
 
@@ -2222,15 +2229,7 @@ def render_upgrade_required(user: SaaSUser, page_name: str) -> None:
     with elite_col:
         st.markdown("#### Quant Desk Elite")
         st.caption(f"{PLAN_PRICES[PLAN_ELITE]} · {PLAN_TRADING_MODE[PLAN_ELITE]}")
-        st.markdown(
-            """
-            ✓ Everything in Pro + live execution suite  
-            ✓ Quant Executor, OMS Execution, Live IBKR  
-            ✓ Automation Control Center  
-            ✓ Crypto, Forex, Gold, and Oil Pulse  
-            ✓ Telegram Alerts + Signal Watcher  
-            """
-        )
+        st.markdown(ELITE_FEATURE_MARKDOWN)
         render_checkout_button(user, PLAN_ELITE, "👑 Upgrade to Elite", "stripe_upgrade_elite")
 
 
