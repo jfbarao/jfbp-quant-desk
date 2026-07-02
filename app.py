@@ -38,6 +38,15 @@ except Exception as options_center_import_error:
         st.exception(_err)
 
 try:
+    from pages.Options_Trade_Construction_Center import run_page as options_trade_construction_page
+except Exception as otcc_import_error:
+    def options_trade_construction_page(_err=otcc_import_error):
+        st.title("⚓ Options Decision Center")
+        st.error("Options Decision Center could not be loaded.")
+        st.caption("Make sure Options_Trade_Construction_Center.py is saved inside the pages folder.")
+        st.exception(_err)
+
+try:
     from pages.Trade_Command_Center import run_page as trade_command_center_page
 except Exception as trade_command_import_error:
     def trade_command_center_page(_err=trade_command_import_error):
@@ -964,6 +973,7 @@ def workflow_sidebar_navigation() -> str:
                 ("Scanner", "Scanner"),
                 ("Research Stock", "Research Stock"),
                 ("🧩 Options Center", "Options Center"),
+                ("⚓ Options Decision Center", "Options Decision Center"),
                 ("🎯 Trade Command Center", "Trade Command Center"),
             ],
             "always_open": False,
@@ -1050,6 +1060,7 @@ ACCESS_NAME_BY_PAGE = {
     "Research Stock": "Research Stock",
     "Trade Command Center": "Trade Command Center",
     "Options Center": "Options Center",
+    "Options Decision Center": "Options Decision Center",
     "Market Pulse": "Market Pulse",
     "Economic Calendar": "Economic Calendar",
     "Earnings Calendar": "Earnings Calendar",
@@ -1302,6 +1313,9 @@ def app():
 
     elif page == "Options Center":
         run_protected_page(page, options_center_page)
+
+    elif page == "Options Decision Center":
+        run_protected_page(page, options_trade_construction_page)
 
     elif page == "Market Pulse":
         run_protected_page(page, market_pulse_page)

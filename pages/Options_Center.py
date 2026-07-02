@@ -1,3 +1,4 @@
+# 🚧 BUILD MARKER: OP1-0702-A
 # =========================================================
 # 🧩 OPTIONS CENTER — v4.3 FREEZE READY
 # JFBP Quant Desk
@@ -17,6 +18,13 @@ from typing import Any, Dict, List, Tuple
 
 import pandas as pd
 import streamlit as st
+
+try:
+    from options_engine.trade_lifecycle_packet import TradeLifecyclePacket, TradeStage, run_shared_trade_lifecycle_engines
+except Exception:
+    TradeLifecyclePacket = None
+    TradeStage = None
+    run_shared_trade_lifecycle_engines = None
 
 try:
     import yfinance as yf
@@ -1444,6 +1452,9 @@ def publish_options_best_opportunity(ctx: Dict[str, Any], scorecard: Dict[str, A
     opp_grade, _, _ = opportunity_grade_from_score(scorecard)
     inst_grade, _, _ = institutional_grade_from_options(ctx, scorecard, market_snapshot(), event_ctx)
     st.session_state["options_best_opportunity"] = {"timestamp": now_iso(), "symbol": ctx.get("symbol"), "strategy": ctx.get("strategy"), "score": scorecard.get("total"), "allowed": allowed and safe_int(scorecard.get("total"), 0) >= 60, "opportunity_grade": opp_grade, "institutional_grade": inst_grade, "reason": strategy_confidence_reasons(ctx, market_snapshot(), scorecard), "volatility_regime": vol_ctx.get("regime"), "event_risk": event_ctx.get("status"), "source": "Options_Center_v5_1_freezer_ready"}
+    enrich_trade_lifecycle_from_options(ctx, scorecard, {}, event_ctx)
+    if run_shared_trade_lifecycle_engines is not None:
+        run_shared_trade_lifecycle_engines(st.session_state, overwrite=False, save=True)
 
 
 def prepare_options_oms_ticket(symbol: str, strategy: str, strike_plan: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
@@ -1458,9 +1469,148 @@ def prepare_options_oms_ticket(symbol: str, strategy: str, strike_plan: Dict[str
     return ticket
 
 
+
+
+
+def enrich_trade_lifecycle_from_options(ctx: Dict[str, Any], scorecard: Dict[str, Any] | None = None, strike_plan: Dict[str, Any] | None = None, event_ctx: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    """Append Options Center construction data to the canonical packet.
+
+    Options Center owns construction quality. It must preserve upstream
+    Opportunity Analysis fields such as institutional_score.
+    """
+    if TradeLifecyclePacket is None:
+        return {}
+
+    scorecard = scorecard if isinstance(scorecard, dict) else {}
+    strike_plan = strike_plan if isinstance(strike_plan, dict) else {}
+    symbol = str(ctx.get("symbol") or st.session_state.get("selected_symbol") or "").upper().strip()
+    strategy = str(ctx.get("strategy") or ctx.get("recommended_strategy") or "").strip()
+    options_quality = safe_float(scorecard.get("total") or ctx.get("score"), 0.0)
+
+    # OP1-0701-H: load-and-enrich only. Options Center must never replace
+    # Opportunity Analysis or Execution Review when adding construction data.
+    strike_rows = strike_plan.get("rows", []) if isinstance(strike_plan, dict) else []
+
+    def _first_numeric(fields: set[str]) -> float | None:
+        for item in strike_rows:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("Field") or "").strip() in fields:
+                raw = str(item.get("Value") or "").replace("$", "").replace(",", "").strip()
+                value = safe_float(raw, 0.0)
+                if value > 0:
+                    return value
+        return None
+
+    # OP1-0701-H: in the Options Center -> Options Decision Center workflow,
+    # Options Center owns BOTH the options-opportunity score and the construction
+    # quality score. There is no separate Opportunity Center dependency here.
+    opp_grade, _, opp_detail = opportunity_grade_from_score(scorecard)
+    inst_grade, _, inst_detail = institutional_grade_from_options(ctx, scorecard, market_snapshot(), event_ctx or {})
+
+    TradeLifecyclePacket.update_opportunity_in_session(
+        st.session_state,
+        source="Options Center",
+        overwrite=False,
+        symbol=symbol,
+        asset_class="Options",
+        strategy=strategy,
+        mission="Generate Income" if strategy in {"Cash-Secured Put", "Covered Call"} else "Evaluate Options Opportunity",
+        institutional_score=options_quality,
+        confidence=options_quality,
+        approval=inst_grade,
+        opportunity_grade=opp_grade,
+        institutional_grade=inst_grade,
+        summary=opp_detail,
+        next_action="Review in Options Decision Center.",
+        notes=str(ctx.get("risk") or inst_detail or "Options Center opportunity analysis."),
+    )
+
+    packet = TradeLifecyclePacket.update_construction_in_session(
+        st.session_state,
+        source="Options Center",
+        overwrite=False,
+        symbol=symbol,
+        asset_class="Options",
+        strategy=strategy,
+        strategy_type=strategy,
+        expiration=None,
+        strike=_first_numeric({"Target Strike", "Buy Call", "Buy Put", "Sell Call", "Sell Put", "Target Call", "Target Put"}),
+        credit=None,
+        debit=None,
+        max_profit=None,
+        max_loss=None,
+        breakeven=None,
+        options_quality=options_quality,
+        greeks={
+            "volatility_regime": ctx.get("volatility_regime"),
+            "event_risk": (event_ctx or {}).get("status") if isinstance(event_ctx, dict) else None,
+            "strike_plan": strike_plan,
+        },
+    )
+    if TradeStage is not None:
+        packet.advance_stage(TradeStage.TRADE_CONSTRUCTION, source="Options Center")
+        packet.save_to_session(st.session_state)
+    return packet.to_dict()
+
+
+def legacy_packet_from_trade_lifecycle(ctx: Dict[str, Any], scorecard: Dict[str, Any] | None = None, strike_plan: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    """Build a flat legacy packet mirror without losing canonical stage values."""
+    packet = TradeLifecyclePacket.from_session(st.session_state) if TradeLifecyclePacket is not None else None
+    scorecard = scorecard if isinstance(scorecard, dict) else {}
+    strike_plan = strike_plan if isinstance(strike_plan, dict) else {}
+    symbol = str(ctx.get("symbol") or (packet.identity.symbol if packet else "") or "").upper().strip()
+    strategy = str(ctx.get("strategy") or (packet.construction.strategy_type if packet else "") or "").strip()
+    mission = "Generate Income" if strategy in {"Cash-Secured Put", "Covered Call"} else "Bullish Directional Trade" if strategy == "Bull Call Spread" else "Hedge / Bearish Trade" if strategy in {"Bear Put Spread", "Long Put"} else "Evaluate Options Opportunity"
+    institutional_score = packet.opportunity.institutional_score if packet else None
+    options_quality = packet.construction.options_quality if packet else safe_float(scorecard.get("total") or ctx.get("score"), 0.0)
+    execution_confidence = packet.execution.execution_confidence if packet else None
+    best = st.session_state.get("options_best_opportunity", {})
+    best = best if isinstance(best, dict) else {}
+    return {
+        "timestamp": now_iso(),
+        "source": "Options Center",
+        "symbol": symbol,
+        "asset_class": "Options",
+        "mission": mission,
+        "recommended_strategy": strategy,
+        "strategy": strategy,
+        "market_bias": str(ctx.get("stance") or ctx.get("signal") or ""),
+        "stock_price": safe_float(ctx.get("price"), 0.0),
+        "score": safe_float(options_quality or institutional_score or 0.0, 0.0),
+        "institutional_score": institutional_score,
+        "opportunity_score": institutional_score,
+        "options_quality": options_quality,
+        "options_quality_score": options_quality,
+        "execution_confidence": execution_confidence,
+        "institutional_grade": str(best.get("institutional_grade") or (packet.opportunity.approval if packet else "") or ""),
+        "opportunity_grade": str(best.get("opportunity_grade") or (packet.opportunity.approval if packet else "") or ""),
+        "confidence": safe_float(options_quality or institutional_score or 0.0, 0.0),
+        "next_action": "Validate, construct, approve, and prepare the options trade.",
+        "reason": str(ctx.get("risk") or (packet.opportunity.summary if packet else "Published by Options Center.")),
+        "strike_plan": strike_plan,
+        "trade_lifecycle_packet": packet.to_dict() if packet else {},
+    }
+
+def prepare_options_decision_packet(ctx: Dict[str, Any], scorecard: Dict[str, Any] | None = None, strike_plan: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    """Publish the canonical TradeLifecyclePacket plus a flat legacy mirror."""
+    scorecard = scorecard if isinstance(scorecard, dict) else {}
+    strike_plan = strike_plan if isinstance(strike_plan, dict) else {}
+
+    enrich_trade_lifecycle_from_options(ctx, scorecard, strike_plan, {})
+    packet = legacy_packet_from_trade_lifecycle(ctx, scorecard, strike_plan)
+
+    st.session_state["decision_packet"] = packet
+    st.session_state["opportunity_packet"] = packet
+    st.session_state["options_decision_packet"] = packet
+    st.session_state["selected_symbol"] = packet.get("symbol")
+    st.session_state["options_manual_symbol"] = packet.get("symbol")
+    st.session_state["jfbp_main_navigation"] = "Options Decision Center"
+    return packet
+
 def render_options_handoff_panel(ctx: Dict[str, Any], strike_plan: Dict[str, Any]) -> None:
     section_open("📤 Options Workflow Handoff", "Prepares advisory tickets and sends symbols to Trade Command, Research, or OMS without retyping.")
-    h1, h2, h3, h4 = st.columns(4)
+    h1, h2, h3, h4, h5 = st.columns(5)
     with h1:
         if st.button("Send to Trade Command", width="stretch", key="ocx42_tcc"):
             st.session_state["trade_command_symbol"] = ctx.get("symbol")
@@ -1482,6 +1632,10 @@ def render_options_handoff_panel(ctx: Dict[str, Any], strike_plan: Dict[str, Any
         if st.button("Open OMS", width="stretch", key="ocx42_oms"):
             prepare_options_oms_ticket(ctx.get("symbol"), ctx.get("strategy"), strike_plan, ctx)
             st.session_state["jfbp_main_navigation"] = "OMS Execution"
+            st.rerun()
+    with h5:
+        if st.button("⚓ Decision Center", width="stretch", key="ocx42_decision_center"):
+            prepare_options_decision_packet(ctx, st.session_state.get("options_current_scorecard", {}), strike_plan)
             st.rerun()
     section_close()
 
@@ -1612,6 +1766,7 @@ def run_page() -> None:
     strike_plan = build_strike_builder(ctx, row, vol_ctx)
     ranking_df = strategy_ranking_table(ctx, scorecard, vol_ctx, event_ctx)
     publish_options_best_opportunity(ctx, scorecard, vol_ctx, event_ctx)
+    st.session_state["options_current_scorecard"] = scorecard
 
     cc_count = len(build_covered_call_candidates())
     wheel_df_summary = build_wheel_candidates()
@@ -1802,7 +1957,7 @@ def run_page() -> None:
         ("Probability", position_builder["Probability"]),
     ])
 
-    h1, h2, h3, h4 = st.columns(4)
+    h1, h2, h3, h4, h5 = st.columns(5)
     with h1:
         if st.button("Send to Trade Command", width="stretch", key="ocx60_tcc"):
             st.session_state["trade_command_symbol"] = ctx.get("symbol")
@@ -1823,6 +1978,10 @@ def run_page() -> None:
         if st.button("Open OMS", width="stretch", key="ocx60_oms"):
             prepare_options_oms_ticket(ctx.get("symbol"), ctx.get("strategy"), strike_plan, ctx)
             st.session_state["jfbp_main_navigation"] = "OMS Execution"
+            st.rerun()
+    with h5:
+        if st.button("⚓ Decision Center", width="stretch", key="ocx60_decision_center"):
+            prepare_options_decision_packet(ctx, scorecard, strike_plan)
             st.rerun()
     section_close()
 

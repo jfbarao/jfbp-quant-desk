@@ -1,3 +1,4 @@
+# 🚧 BUILD MARKER: TLP-0701-A
 # =========================================================
 # 🎯 OPPORTUNITY CENTER
 # JFBP Quant Desk
@@ -14,6 +15,12 @@ from typing import Any, Dict, List
 
 import pandas as pd
 import streamlit as st
+
+try:
+    from options_engine.trade_lifecycle_packet import TradeLifecyclePacket, TradeStage
+except Exception:
+    TradeLifecyclePacket = None
+    TradeStage = None
 
 from core.responsive import inject_responsive_css
 from core.ui_cards import inject_card_css
@@ -1212,6 +1219,101 @@ def best_overall_opportunity(scanner: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+
+
+def build_decision_packet_from_opportunity(row: Dict[str, Any], destination: str = "Options Decision Center") -> Dict[str, Any]:
+    """Create the universal Decision Packet consumed by Options Decision Center."""
+    symbol = str(row.get("_symbol") or row.get("Symbol") or row.get("Opportunity") or "").upper().strip()
+    symbol = symbol.split(" ")[0].strip()
+    setup = str(row.get("Setup") or "").strip()
+    asset_class = str(row.get("Asset Class") or "").strip()
+
+    if asset_class == "Options":
+        mission = "Generate Income" if setup in {"Cash-Secured Put", "Covered Call"} else "Bullish Directional Trade" if setup == "Bull Call Spread" else "Evaluate Options Opportunity"
+    else:
+        mission = "Evaluate Opportunity"
+
+    return {
+        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "source": "Opportunity Center",
+        "destination": destination,
+        "symbol": symbol,
+        "asset_class": asset_class,
+        "mission": mission,
+        "recommended_strategy": setup,
+        "strategy": setup,
+        "market_bias": str(row.get("Status") or ""),
+        "stock_price": 0.0,
+        "score": safe_float(row.get("Score"), 0.0),
+        "institutional_grade": str(row.get("Institutional Grade") or ""),
+        "opportunity_grade": str(row.get("Opportunity Grade") or ""),
+        "confidence": safe_float(row.get("Score"), 0.0),
+        "next_action": "Validate, construct, approve, and prepare the options trade.",
+        "reason": str(row.get("Reason") or "Published by Opportunity Center."),
+        "rank": str(row.get("Rank") or ""),
+        "opportunity": str(row.get("Opportunity") or ""),
+    }
+
+
+def publish_trade_lifecycle_from_opportunity(row: Dict[str, Any], destination: str = "Options Center") -> Dict[str, Any]:
+    """Create/enrich the canonical TradeLifecyclePacket from an Opportunity Center row.
+
+    This is intentionally non-destructive: Opportunity Center owns opportunity
+    analysis fields and must not erase construction/execution data already added
+    by downstream modules. Legacy flat keys are mirrored by save_to_session().
+    """
+    symbol = str(row.get("_symbol") or row.get("Symbol") or row.get("Opportunity") or "").upper().strip()
+    symbol = symbol.split(" ")[0].strip()
+    if not symbol or TradeLifecyclePacket is None:
+        return build_decision_packet_from_opportunity(row, destination)
+
+    setup = str(row.get("Setup") or "").strip()
+    score = safe_float(row.get("Score"), 0.0)
+    packet = TradeLifecyclePacket.from_session(st.session_state)
+
+    # Start a new packet only when the selected symbol changes. Otherwise enrich.
+    if packet.identity.symbol and packet.identity.symbol != symbol:
+        packet = TradeLifecyclePacket.create(symbol=symbol, source="Opportunity Center", asset_class=row.get("Asset Class"), strategy=setup)
+
+    packet.merge_update(
+        {
+            "identity": {
+                "symbol": symbol,
+                "asset_class": row.get("Asset Class"),
+                "strategy": setup,
+                "source": "Opportunity Center",
+            },
+            "opportunity": {
+                "institutional_score": score,
+                "approval": str(row.get("Institutional Grade") or row.get("Opportunity Grade") or ""),
+                "confidence": score,
+                "summary": str(row.get("Reason") or "Published by Opportunity Center."),
+            },
+        },
+        source="Opportunity Center",
+        overwrite=False,
+    )
+    if TradeStage is not None:
+        packet.mark_stage_complete(TradeStage.OPPORTUNITY_ANALYSIS, source="Opportunity Center")
+        packet.advance_stage(TradeStage.OPPORTUNITY_ANALYSIS, source="Opportunity Center")
+    packet.save_to_session(st.session_state)
+
+    # Legacy mirror used while Options Decision Center migration completes.
+    legacy = build_decision_packet_from_opportunity(row, destination)
+    legacy.update(
+        {
+            "trade_lifecycle_packet": packet.to_dict(),
+            "institutional_score": packet.opportunity.institutional_score,
+            "opportunity_score": packet.opportunity.institutional_score,
+            "options_quality": packet.construction.options_quality,
+            "options_quality_score": packet.construction.options_quality,
+            "execution_confidence": packet.execution.execution_confidence,
+        }
+    )
+    st.session_state["decision_packet"] = legacy
+    st.session_state["opportunity_packet"] = legacy
+    return legacy
+
 def publish_handoff(row: Dict[str, Any], destination: str | None = None) -> None:
     symbol = str(row.get("_symbol") or row.get("Symbol") or row.get("Opportunity") or "").upper().strip()
     symbol = symbol.split(" ")[0].strip()
@@ -1237,6 +1339,8 @@ def publish_handoff(row: Dict[str, Any], destination: str | None = None) -> None
         "rank": row.get("Rank"),
     }
 
+    publish_trade_lifecycle_from_opportunity(row, destination)
+
     # Publish the exact selected row everywhere downstream pages look for it.
     # This prevents handoff buttons from falling back to the #1 opportunity.
     st.session_state["opportunity_center_selected"] = row
@@ -1249,7 +1353,20 @@ def publish_handoff(row: Dict[str, Any], destination: str | None = None) -> None
     st.session_state["oms_order_symbol"] = symbol
     st.session_state["oms_prepared_ticket"] = handoff_ticket
 
-    if destination == "Options Center":
+    if destination == "Options Decision Center":
+        packet = st.session_state.get("decision_packet") or build_decision_packet_from_opportunity(row, destination)
+        st.session_state["decision_packet"] = packet
+        st.session_state["opportunity_packet"] = packet
+        st.session_state["options_decision_packet"] = packet
+        st.session_state["options_handoff_ticket"] = handoff_ticket
+        st.session_state["options_handoff_symbol"] = symbol
+        st.session_state["options_selected_symbol"] = symbol
+        st.session_state["options_symbol"] = symbol
+        st.session_state["options_underlying"] = symbol
+        st.session_state["selected_options_symbol"] = symbol
+        st.session_state["manual_options_symbol"] = symbol
+        st.session_state["options_manual_symbol"] = symbol
+    elif destination == "Options Center":
         # Options Center builds its own strategy rows. Keep this handoff simple:
         # publish the selected UNDERLYING symbol through every known symbol key,
         # but do not overwrite Options Center's internal best-opportunity object.
@@ -1268,7 +1385,7 @@ def publish_handoff(row: Dict[str, Any], destination: str | None = None) -> None
     elif destination == "OMS Execution":
         st.session_state["tcc_prepared_oms_ticket"] = handoff_ticket
 
-    if destination in {"Trade Command Center", "Options Center", "Research Stock", "OMS Execution", "Market Pulse", "Crypto Pulse", "Forex Pulse", "Gold Pulse", "Oil Pulse"}:
+    if destination in {"Trade Command Center", "Options Center", "Options Decision Center", "Research Stock", "OMS Execution", "Market Pulse", "Crypto Pulse", "Forex Pulse", "Gold Pulse", "Oil Pulse"}:
         st.session_state["jfbp_main_navigation"] = destination
 
     st.rerun()
@@ -1302,7 +1419,7 @@ def render_global_handoff_controls(scanner: Dict[str, Any]) -> None:
 
     selected = rows[selected_index]
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
         if st.button("Open Trade Command", width="stretch", key="oc_open_trade_command_selected_v2"):
             publish_handoff(selected, "Trade Command Center")
@@ -1310,9 +1427,12 @@ def render_global_handoff_controls(scanner: Dict[str, Any]) -> None:
         if st.button("Open Options Center", width="stretch", key="oc_open_options_selected_v2"):
             publish_handoff(selected, "Options Center")
     with c3:
+        if st.button("⚓ Options Decision", width="stretch", key="oc_open_options_decision_selected_v2"):
+            publish_handoff(selected, "Options Decision Center")
+    with c4:
         if st.button("Open Research", width="stretch", key="oc_open_research_selected_v2"):
             publish_handoff(selected, "Research Stock")
-    with c4:
+    with c5:
         if st.button("Send to OMS", width="stretch", key="oc_send_oms_selected_v2"):
             publish_handoff(selected, "OMS Execution")
 
