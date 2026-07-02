@@ -322,12 +322,6 @@ def inject_css() -> None:
                 min-width: 0 !important;
             }
 
-            div[data-testid="stButton"] > button p {
-                white-space: nowrap !important;
-                word-break: keep-all !important;
-                overflow-wrap: normal !important;
-            }
-
             .oc-grid {
                 display: grid;
                 grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
@@ -1425,7 +1419,7 @@ def render_global_handoff_controls(scanner: Dict[str, Any]) -> None:
 
     selected = rows[selected_index]
 
-    top_1, top_2, top_3 = st.columns(3)
+    top_1, top_2, top_3 = st.columns(3, gap="small")
     with top_1:
         if st.button("Trade Command", width="stretch", key="oc_open_trade_command_selected_v2"):
             publish_handoff(selected, "Trade Command Center")
@@ -1433,10 +1427,10 @@ def render_global_handoff_controls(scanner: Dict[str, Any]) -> None:
         if st.button("Options Center", width="stretch", key="oc_open_options_selected_v2"):
             publish_handoff(selected, "Options Center")
     with top_3:
-        if st.button("⚓ Options Decision", width="stretch", key="oc_open_options_decision_selected_v2"):
+        if st.button("Options Decision", width="stretch", key="oc_open_options_decision_selected_v2"):
             publish_handoff(selected, "Options Decision Center")
 
-    bottom_1, bottom_2 = st.columns(2)
+    bottom_1, bottom_2 = st.columns(2, gap="small")
     with bottom_1:
         if st.button("Research", width="stretch", key="oc_open_research_selected_v2"):
             publish_handoff(selected, "Research Stock")
