@@ -1612,8 +1612,9 @@ def render_options_handoff_panel(ctx: Dict[str, Any], strike_plan: Dict[str, Any
     section_open("📤 Options Workflow Handoff", "Prepares advisory tickets and sends symbols to Trade Command, Research, or OMS without retyping.")
     h1, h2, h3, h4, h5 = st.columns(5)
     with h1:
-        if st.button("Send to Options Decision", width="stretch", key="ocx42_decision_center"):
+        if st.button("Send to Options Decision Center", width="stretch", key="ocx42_decision_center"):
             prepare_options_decision_packet(ctx, st.session_state.get("options_current_scorecard", {}), strike_plan)
+            st.session_state["jfbp_main_navigation"] = "Options Decision Center"
             st.rerun()
     with h2:
         if st.button("Send to Trade Command", width="stretch", key="ocx42_tcc"):
@@ -1959,8 +1960,9 @@ def run_page() -> None:
 
     h1, h2, h3, h4, h5 = st.columns(5)
     with h1:
-        if st.button("Send to Options Decision", width="stretch", key="ocx60_decision_center"):
+        if st.button("Send to Options Decision Center", width="stretch", key="ocx60_decision_center"):
             prepare_options_decision_packet(ctx, scorecard, strike_plan)
+            st.session_state["jfbp_main_navigation"] = "Options Decision Center"
             st.rerun()
     with h2:
         if st.button("Send to Trade Command", width="stretch", key="ocx60_tcc"):
