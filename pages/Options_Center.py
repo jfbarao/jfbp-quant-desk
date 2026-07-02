@@ -1612,30 +1612,30 @@ def render_options_handoff_panel(ctx: Dict[str, Any], strike_plan: Dict[str, Any
     section_open("📤 Options Workflow Handoff", "Prepares advisory tickets and sends symbols to Trade Command, Research, or OMS without retyping.")
     h1, h2, h3, h4, h5 = st.columns(5)
     with h1:
+        if st.button("Send to Options Decision", width="stretch", key="ocx42_decision_center"):
+            prepare_options_decision_packet(ctx, st.session_state.get("options_current_scorecard", {}), strike_plan)
+            st.rerun()
+    with h2:
         if st.button("Send to Trade Command", width="stretch", key="ocx42_tcc"):
             st.session_state["trade_command_symbol"] = ctx.get("symbol")
             st.session_state["jfbp_main_navigation"] = "Trade Command Center"
             st.rerun()
-    with h2:
+    with h3:
         if st.button("Send to Research", width="stretch", key="ocx42_research"):
             st.session_state["research_ticker"] = ctx.get("symbol")
             st.session_state["research_ticker_input"] = ctx.get("symbol")
             st.session_state["research_symbol"] = ctx.get("symbol")
             st.session_state["jfbp_main_navigation"] = "Research Stock"
             st.rerun()
-    with h3:
+    with h4:
         if st.button("Prepare OMS Ticket", width="stretch", key="ocx42_ticket"):
             ticket = prepare_options_oms_ticket(ctx.get("symbol"), ctx.get("strategy"), strike_plan, ctx)
             st.success(f"Prepared advisory options OMS ticket for {ticket.get('symbol')}.")
             st.json(ticket)
-    with h4:
+    with h5:
         if st.button("Open OMS", width="stretch", key="ocx42_oms"):
             prepare_options_oms_ticket(ctx.get("symbol"), ctx.get("strategy"), strike_plan, ctx)
             st.session_state["jfbp_main_navigation"] = "OMS Execution"
-            st.rerun()
-    with h5:
-        if st.button("⚓ Decision Center", width="stretch", key="ocx42_decision_center"):
-            prepare_options_decision_packet(ctx, st.session_state.get("options_current_scorecard", {}), strike_plan)
             st.rerun()
     section_close()
 
@@ -1959,29 +1959,29 @@ def run_page() -> None:
 
     h1, h2, h3, h4, h5 = st.columns(5)
     with h1:
+        if st.button("Send to Options Decision", width="stretch", key="ocx60_decision_center"):
+            prepare_options_decision_packet(ctx, scorecard, strike_plan)
+            st.rerun()
+    with h2:
         if st.button("Send to Trade Command", width="stretch", key="ocx60_tcc"):
             st.session_state["trade_command_symbol"] = ctx.get("symbol")
             st.session_state["jfbp_main_navigation"] = "Trade Command Center"
             st.rerun()
-    with h2:
+    with h3:
         if st.button("Send to Research", width="stretch", key="ocx60_research"):
             st.session_state["research_ticker"] = ctx.get("symbol")
             st.session_state["research_ticker_input"] = ctx.get("symbol")
             st.session_state["research_symbol"] = ctx.get("symbol")
             st.session_state["jfbp_main_navigation"] = "Research Stock"
             st.rerun()
-    with h3:
+    with h4:
         if st.button("Prepare OMS Ticket", width="stretch", key="ocx60_ticket"):
             ticket = prepare_options_oms_ticket(ctx.get("symbol"), ctx.get("strategy"), strike_plan, ctx)
             st.success(f"Prepared advisory options OMS ticket for {ticket.get('symbol')}.")
-    with h4:
+    with h5:
         if st.button("Open OMS", width="stretch", key="ocx60_oms"):
             prepare_options_oms_ticket(ctx.get("symbol"), ctx.get("strategy"), strike_plan, ctx)
             st.session_state["jfbp_main_navigation"] = "OMS Execution"
-            st.rerun()
-    with h5:
-        if st.button("⚓ Decision Center", width="stretch", key="ocx60_decision_center"):
-            prepare_options_decision_packet(ctx, scorecard, strike_plan)
             st.rerun()
     section_close()
 

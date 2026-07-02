@@ -1421,19 +1421,19 @@ def render_global_handoff_controls(scanner: Dict[str, Any]) -> None:
 
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
-        if st.button("Open Trade Command", width="stretch", key="oc_open_trade_command_selected_v2"):
+        if st.button("Trade Command", width="stretch", key="oc_open_trade_command_selected_v2"):
             publish_handoff(selected, "Trade Command Center")
     with c2:
-        if st.button("Open Options Center", width="stretch", key="oc_open_options_selected_v2"):
+        if st.button("Options Center", width="stretch", key="oc_open_options_selected_v2"):
             publish_handoff(selected, "Options Center")
     with c3:
         if st.button("⚓ Options Decision", width="stretch", key="oc_open_options_decision_selected_v2"):
             publish_handoff(selected, "Options Decision Center")
     with c4:
-        if st.button("Open Research", width="stretch", key="oc_open_research_selected_v2"):
+        if st.button("Research", width="stretch", key="oc_open_research_selected_v2"):
             publish_handoff(selected, "Research Stock")
     with c5:
-        if st.button("Send to OMS", width="stretch", key="oc_send_oms_selected_v2"):
+        if st.button("OMS", width="stretch", key="oc_send_oms_selected_v2"):
             publish_handoff(selected, "OMS Execution")
 
 
