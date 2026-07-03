@@ -117,6 +117,37 @@ def calculate_bull_put_spread(trade: TradeModel) -> TradeModel:
 
 def calculate_bull_call_spread(trade: TradeModel) -> TradeModel:
     trade.reset_results()
+
+    long_strike = max(float(trade.long_strike or 0), 0)
+    short_strike = max(float(trade.strike or 0), 0)
+    long_premium = max(float(trade.long_premium or 0), 0)
+    short_premium = max(float(trade.premium or 0), 0)
+    contracts = safe_contracts(trade.contracts)
+    shares = contracts * 100
+
+    debit_per_share = max(long_premium - short_premium, 0.0)
+    spread_width = max(short_strike - long_strike, 0.0)
+
+    trade.debit = debit_per_share * shares
+    trade.credit = 0.0
+    trade.buying_power_required = trade.debit
+    trade.max_loss = trade.debit
+    trade.max_profit = max(spread_width - debit_per_share, 0.0) * shares
+    trade.breakeven = long_strike + debit_per_share
+
+    if trade.max_loss > 0:
+        trade.reward_risk_ratio = trade.max_profit / trade.max_loss
+        trade.roi = (trade.max_profit / trade.max_loss) * 100.0
+    else:
+        trade.reward_risk_ratio = 0.0
+        trade.roi = 0.0
+
+    dte = days_to_expiration(trade.expiration)
+    if dte > 0:
+        trade.annualized_return = trade.roi * 365 / dte
+    else:
+        trade.annualized_return = 0.0
+
     return trade
 
 

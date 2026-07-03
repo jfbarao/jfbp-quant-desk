@@ -383,42 +383,45 @@ Confirm strike ordering and net debit assumptions before approval.
     "Bull Call Spread": {
         "title": "🎓 Strategy Lesson — Bull Call Spread",
         "content": """
-### What this strategy is
+### Strategy Overview
 
-Debit spread: buy a lower-strike call and sell a higher-strike call.
+Bull Call Spread is a **defined-risk debit spread**:
 
-### When traders use it
+- Buy a lower-strike call
+- Sell a higher-strike call
 
-- Bullish outlook with controlled cost and capped upside.
+Use this when you are bullish but want controlled downside and lower capital than a standalone long call.
 
-### Required fields
+### Maximum Profit
 
-- Long Strike / Protection Strike = bought call strike
-- Long Premium = premium paid
-- Short Strike = sold call strike
-- Short Premium = premium received
-- Expiration
-- Contracts
+Occurs when stock closes at or above the short strike at expiration.
 
-### Which fields are not used
+- Formula: `(short strike - long strike - net debit) * 100 * contracts`
 
-- None of the core spread fields are skipped.
+### Maximum Loss
 
-### What the user enters
+Risk is predefined and limited to the net debit paid.
 
-- Both call strikes, both premiums, expiration, contracts
+- Formula: `net debit * 100 * contracts`
 
-### What the engine calculates
+### Breakeven
 
-- Net debit, max profit, max loss, break-even, ROI, annualized return
+Breakeven at expiration is long strike plus net debit.
 
-### Main risk
+- Formula: `long strike + net debit`
 
-If price does not rise enough by expiration, spread value can compress toward loss.
+### When to Exit
 
-### Beginner warning
+- Take gains as spread approaches target value.
+- Reduce exposure if momentum weakens before expected move develops.
+- Avoid holding low-liquidity spreads into expiration without a plan.
 
-Keep expiration realistic for the expected move; rushed timelines reduce probability.
+### Common Mistakes
+
+- Reversing leg order (short strike below long strike).
+- Entering with unrealistic time to expiration for expected move.
+- Ignoring bid/ask spread and assuming midpoint always fills.
+- Treating annualized return as a guaranteed realized return.
 
 > The platform recommends the strategy. The user does not need to choose from all option types manually.
 """,
@@ -517,79 +520,109 @@ class OptionChainProvider(Protocol):
         ...
 
 
+def strategy_option_chain_type(strategy: str) -> str:
+    strategy_key = str(strategy or "").strip()
+    call_strategies = {"Covered Call", "Bull Call Spread", "Bear Call Spread", "Long Call"}
+    put_strategies = {"Cash-Secured Put", "Bull Put Spread", "Bear Put Spread", "Long Put"}
+    if strategy_key in call_strategies:
+        return "CALLS"
+    if strategy_key in put_strategies:
+        return "PUTS"
+    if "CALL" in strategy_key.upper():
+        return "CALLS"
+    return "PUTS"
+
+
+def strategy_selected_leg_role(strategy: str) -> str:
+    strategy_key = str(strategy or "").strip()
+    long_first = {"Bull Call Spread", "Bear Put Spread", "Long Call", "Long Put"}
+    if strategy_key in long_first:
+        return "long"
+    return "short"
+
+
+def strategy_partner_leg_role(strategy: str) -> str | None:
+    strategy_key = str(strategy or "").strip()
+    if strategy_key in {"Bull Call Spread", "Bear Call Spread"}:
+        return "higher"
+    if strategy_key in {"Bull Put Spread", "Bear Put Spread"}:
+        return "lower"
+    return None
+
+
+def _build_mock_chain_contracts(symbol: str, option_chain_type: str, base_strike: float, base_expiration: date) -> list[OptionContract]:
+    if option_chain_type == "CALLS":
+        specs = [
+            (base_strike - 5.0, 6.20, 6.40, 6.30, 6.28, 0.48, 0.021, -0.044, 0.121, 0.26, 1360, 8420, 88.0, 7.8, 30.4, 98.0, True, 94.0),
+            (base_strike, 3.10, 3.30, 3.20, 3.18, 0.24, 0.019, -0.038, 0.108, 0.23, 980, 9150, 84.0, 6.5, 27.9, 96.0, False, 89.0),
+            (base_strike + 5.0, 1.28, 1.44, 1.36, 1.34, 0.12, 0.014, -0.026, 0.094, 0.20, 1540, 11140, 91.0, 4.1, 19.7, 92.0, False, 85.0),
+        ]
+        contract_type = "Call"
+    else:
+        specs = [
+            (base_strike - 5.0, 1.28, 1.44, 1.36, 1.34, -0.12, 0.014, -0.026, 0.094, 0.20, 1540, 11140, 91.0, 4.1, 19.7, 92.0, False, 85.0),
+            (base_strike, 3.10, 3.30, 3.20, 3.18, -0.24, 0.019, -0.038, 0.108, 0.23, 980, 9150, 84.0, 6.5, 27.9, 96.0, False, 89.0),
+            (base_strike + 5.0, 6.20, 6.40, 6.30, 6.28, -0.48, 0.021, -0.044, 0.121, 0.26, 1360, 8420, 88.0, 7.8, 30.4, 98.0, True, 94.0),
+        ]
+        contract_type = "Put"
+
+    return [
+        OptionContract(
+            underlying=symbol,
+            expiration=base_expiration,
+            strike=strike,
+            bid=bid,
+            ask=ask,
+            mid=mid,
+            last=last,
+            delta=delta,
+            gamma=gamma,
+            theta=theta,
+            vega=vega,
+            iv=iv,
+            volume=volume,
+            open_interest=open_interest,
+            pop=pop,
+            expected_return=expected_return,
+            annualized_return=annualized_return,
+            institutional_score=institutional_score,
+            preferred=preferred,
+            confidence=confidence,
+            contract_type=contract_type,
+        )
+        for (
+            strike,
+            bid,
+            ask,
+            mid,
+            last,
+            delta,
+            gamma,
+            theta,
+            vega,
+            iv,
+            volume,
+            open_interest,
+            pop,
+            expected_return,
+            annualized_return,
+            institutional_score,
+            preferred,
+            confidence,
+        ) in specs
+    ]
+
+
 class MockOptionChainProvider:
     def get_option_chain(self, underlying: str, strategy: str, reference_price: float = 0.0) -> list[OptionContract]:
         base_expiration = date.today() + timedelta(days=21)
         symbol = (underlying or "AAPL").strip().upper()
-        # Placeholder chain for workflow/UI validation only.
-        return [
-            OptionContract(
-                underlying=symbol,
-                expiration=base_expiration,
-                strike=345.0,
-                bid=3.00,
-                ask=3.20,
-                mid=3.10,
-                last=3.08,
-                delta=-0.20,
-                gamma=0.019,
-                theta=-0.042,
-                vega=0.118,
-                iv=0.29,
-                volume=1420,
-                open_interest=9050,
-                pop=86.0,
-                expected_return=6.4,
-                annualized_return=29.1,
-                institutional_score=98.0,
-                preferred=True,
-                confidence=94.0,
-            ),
-            OptionContract(
-                underlying=symbol,
-                expiration=base_expiration,
-                strike=342.5,
-                bid=4.15,
-                ask=4.35,
-                mid=4.25,
-                last=4.24,
-                delta=-0.24,
-                gamma=0.021,
-                theta=-0.047,
-                vega=0.122,
-                iv=0.31,
-                volume=980,
-                open_interest=7230,
-                pop=82.0,
-                expected_return=7.2,
-                annualized_return=31.8,
-                institutional_score=94.0,
-                preferred=False,
-                confidence=89.0,
-            ),
-            OptionContract(
-                underlying=symbol,
-                expiration=base_expiration,
-                strike=350.0,
-                bid=1.25,
-                ask=1.40,
-                mid=1.33,
-                last=1.32,
-                delta=-0.12,
-                gamma=0.014,
-                theta=-0.027,
-                vega=0.093,
-                iv=0.24,
-                volume=1670,
-                open_interest=11240,
-                pop=91.0,
-                expected_return=3.1,
-                annualized_return=18.9,
-                institutional_score=90.0,
-                preferred=False,
-                confidence=84.0,
-            ),
-        ]
+        chain_type = strategy_option_chain_type(strategy)
+        if reference_price > 0:
+            base_strike = round(reference_price / 5.0) * 5.0
+        else:
+            base_strike = 345.0
+        return _build_mock_chain_contracts(symbol, chain_type, base_strike, base_expiration)
 
 
 class InstitutionalRankingEngine:
@@ -627,17 +660,79 @@ def contract_tier_badge(contract: OptionContract) -> str:
     return "★★★ Aggressive"
 
 
-def apply_option_contract_to_trade(trade, contract: OptionContract) -> None:
+def _find_partner_contract(contracts: list[OptionContract], selected: OptionContract, strategy: str) -> OptionContract | None:
+    selected_type = str(getattr(selected, "contract_type", "") or "").strip()
+    selected_strike = float(getattr(selected, "strike", 0.0) or 0.0)
+    if not selected_type or selected_strike <= 0:
+        return None
+
+    partner_direction = strategy_partner_leg_role(strategy)
+    same_type_contracts = [c for c in contracts if str(getattr(c, "contract_type", "") or "").strip() == selected_type and float(getattr(c, "strike", 0.0) or 0.0) != selected_strike]
+    if partner_direction == "long" or partner_direction == "higher":
+        candidates = [c for c in same_type_contracts if float(getattr(c, "strike", 0.0) or 0.0) > selected_strike]
+        if candidates:
+            return min(candidates, key=lambda c: float(getattr(c, "strike", 0.0) or 0.0))
+    if partner_direction == "short" or partner_direction == "lower":
+        candidates = [c for c in same_type_contracts if float(getattr(c, "strike", 0.0) or 0.0) < selected_strike]
+        if candidates:
+            return max(candidates, key=lambda c: float(getattr(c, "strike", 0.0) or 0.0))
+    return None
+
+
+def apply_option_contract_to_trade(trade, contract: OptionContract, strategy: str, available_contracts: list[OptionContract] | None = None) -> None:
+    strategy_key = str(strategy or trade.active_strategy() or trade.recommended_strategy or "").strip()
+    selected_role = strategy_selected_leg_role(strategy_key)
+    partner_contract = _find_partner_contract(available_contracts or [], contract, strategy_key) if available_contracts else None
     trade.symbol = contract.underlying
     trade.expiration = contract.expiration
-    trade.strike = float(contract.strike)
-    trade.premium = float(contract.mid)
     trade.contracts = int(contract.contracts or 1)
+
+    selected_strike = float(contract.strike)
+    selected_premium = float(contract.mid)
+    partner_strike = float(getattr(partner_contract, "strike", 0.0) or 0.0) if partner_contract is not None else 0.0
+    partner_premium = float(getattr(partner_contract, "mid", 0.0) or 0.0) if partner_contract is not None else 0.0
+
+    trade.strike = selected_strike
+    trade.premium = selected_premium
+
+    if strategy_key in {"Cash-Secured Put", "Covered Call"}:
+        trade.long_strike = 0.0
+        trade.long_premium = 0.0
+    elif strategy_key in {"Long Call", "Long Put"}:
+        trade.long_strike = selected_strike
+        trade.long_premium = selected_premium
+    elif strategy_key in {"Bull Call Spread", "Bear Put Spread"}:
+        if selected_role == "long":
+            trade.long_strike = selected_strike
+            trade.long_premium = selected_premium
+            trade.strike = partner_strike
+            trade.premium = partner_premium
+        else:
+            trade.strike = selected_strike
+            trade.premium = selected_premium
+            trade.long_strike = partner_strike
+            trade.long_premium = partner_premium
+    elif strategy_key in {"Bear Call Spread", "Bull Put Spread"}:
+        if selected_role == "long":
+            trade.long_strike = selected_strike
+            trade.long_premium = selected_premium
+            trade.strike = partner_strike
+            trade.premium = partner_premium
+        else:
+            trade.strike = selected_strike
+            trade.premium = selected_premium
+            trade.long_strike = partner_strike
+            trade.long_premium = partner_premium
+    else:
+        trade.long_strike = 0.0
+        trade.long_premium = 0.0
 
     st.session_state["otcc_construction_symbol_display"] = trade.symbol
     st.session_state["otcc_expiration"] = trade.expiration
     st.session_state["otcc_short_strike"] = trade.strike
     st.session_state["otcc_short_premium"] = trade.premium
+    st.session_state["otcc_long_strike"] = trade.long_strike
+    st.session_state["otcc_long_premium"] = trade.long_premium
     st.session_state["otcc_contracts"] = trade.contracts
     st.session_state[SELECTED_CONTRACT_KEY] = {
         "label": contract.contract_label,
@@ -650,9 +745,11 @@ def apply_option_contract_to_trade(trade, contract: OptionContract) -> None:
         "expiration": trade.expiration,
         "short_strike": trade.strike,
         "short_premium": trade.premium,
-        "has_long_leg": bool(float(getattr(contract, "long_strike", 0.0) or 0.0) > 0),
-        "long_strike": float(getattr(contract, "long_strike", 0.0) or 0.0),
-        "long_premium": float(getattr(contract, "long_premium", 0.0) or 0.0),
+        "selected_role": selected_role,
+        "option_type": str(getattr(contract, "contract_type", "") or "").strip(),
+        "long_strike": trade.long_strike,
+        "long_premium": trade.long_premium,
+        "partner_label": partner_contract.contract_label if partner_contract is not None else "",
     }
 
 
@@ -664,12 +761,8 @@ def sync_trade_from_construction_state(trade) -> None:
         trade.expiration = selected.get("expiration") if selected.get("expiration") is not None else st.session_state.get("otcc_expiration", trade.expiration)
         trade.strike = float(selected.get("short_strike", trade.strike) or 0.0)
         trade.premium = float(selected.get("short_premium", trade.premium) or 0.0)
-        if bool(selected.get("has_long_leg", False)):
-            trade.long_strike = float(selected.get("long_strike", trade.long_strike) or 0.0)
-            trade.long_premium = float(selected.get("long_premium", trade.long_premium) or 0.0)
-        else:
-            trade.long_strike = float(st.session_state.get("otcc_long_strike", trade.long_strike) or 0.0)
-            trade.long_premium = float(st.session_state.get("otcc_long_premium", trade.long_premium) or 0.0)
+        trade.long_strike = float(selected.get("long_strike", st.session_state.get("otcc_long_strike", trade.long_strike)) or 0.0)
+        trade.long_premium = float(selected.get("long_premium", st.session_state.get("otcc_long_premium", trade.long_premium)) or 0.0)
     else:
         trade.symbol = str(st.session_state.get("otcc_construction_symbol_display", trade.symbol) or "").strip().upper()
         trade.expiration = st.session_state.get("otcc_expiration", trade.expiration)
@@ -720,6 +813,67 @@ def score_label(value: float | int | None, waiting_text: str = "Waiting...") -> 
     return f"{number:,.1f}" if number > 0 else waiting_text
 
 
+def strategy_uses_debit_capital(strategy: str) -> bool:
+    strategy_key = str(strategy or "").strip()
+    return strategy_key in {"Bull Call Spread", "Bear Put Spread", "Long Call", "Long Put"}
+
+
+def capital_requirement_label(strategy: str) -> str:
+    return "Required Debit" if strategy_uses_debit_capital(strategy) else "Buying Power Required"
+
+
+def capital_requirement_help(strategy: str) -> str:
+    if strategy_uses_debit_capital(strategy):
+        return "Maximum capital at risk is limited to the net debit paid for this strategy."
+    return "Cash your broker reserves because you may be required to purchase the shares if assigned."
+
+
+def strategy_max_loss_label(strategy: str) -> str:
+    if strategy_uses_debit_capital(strategy):
+        return "Maximum Loss (Defined Risk)"
+    return "Worst-Case Stock Ownership Loss"
+
+
+def institutional_grade_from_score(score: float) -> str:
+    value = float(score or 0.0)
+    if value >= 98.0:
+        return "A+"
+    if value >= 95.0:
+        return "A"
+    if value >= 90.0:
+        return "B+"
+    if value >= 85.0:
+        return "B"
+    if value >= 80.0:
+        return "C+"
+    if value >= 75.0:
+        return "C"
+    if value >= 70.0:
+        return "D"
+    return "Review Required"
+
+
+def institutional_grade_from_packet(packet, trade=None) -> str:
+    try:
+        score = float(getattr(getattr(packet, "approval", None), "score", 0.0) or 0.0)
+    except Exception:
+        score = 0.0
+    if score <= 0 and trade is not None:
+        score = float(compute_decision_readiness_score(trade, packet) or 0.0)
+    return institutional_grade_from_score(score)
+
+
+def validation_status_tone(status: str) -> str:
+    text = str(status or "").upper().strip()
+    if text in {"PASS", "OK", "APPROVED"} or "PASS" in text:
+        return "pass"
+    if text in {"REVIEW", "PASS / REVIEW", "WARN", "WARNING", "NEEDS ADJUSTMENT"}:
+        return "review"
+    if text in {"FAIL", "FAILED", "REJECT"}:
+        return "fail"
+    return "pending"
+
+
 def trace_packet(stage: str, packet) -> None:
     """No-op trace hook retained for local debugging compatibility."""
     return
@@ -758,22 +912,8 @@ def is_placeholder_decision_score(value) -> bool:
         return False
 
 
-def compute_decision_readiness_score(trade, packet=None) -> float:
-    """Checklist-based Decision Readiness score for Options Decision Center.
-
-    Replaces the old placeholder 35 with a score that reflects how much of the
-    approval workflow is actually complete.
-    """
-    score = 0.0
-    max_score = 0.0
-
-    def add(weight: float, passed: bool) -> None:
-        nonlocal score, max_score
-        max_score += float(weight)
-        if passed:
-            score += float(weight)
-
-    symbol = str(getattr(trade, "symbol", "") or getattr(packet, "symbol", "") or "").strip()
+def workflow_checkpoint_states(trade, packet=None) -> dict[str, bool]:
+    symbol = str(getattr(trade, "symbol", "") or getattr(packet, "symbol", "") or "").strip().upper()
     strategy = str(
         (trade.active_strategy() if hasattr(trade, "active_strategy") else "")
         or getattr(trade, "recommended_strategy", "")
@@ -781,61 +921,50 @@ def compute_decision_readiness_score(trade, packet=None) -> float:
         or ""
     ).strip()
 
-    opportunity_score = 0.0
-    construction_score = 0.0
-    if isinstance(packet, TradeLifecyclePacket):
-        opportunity_score = float(packet.opportunity.institutional_score or 0.0)
-        construction_score = float(packet.construction.options_quality or 0.0)
+    review_score = float(getattr(getattr(packet, "approval", None), "score", 0.0) or 0.0)
+    mission_complete = bool(symbol)
+    strategy_selected = bool(strategy and strategy not in {"Pending", "No Options Trade", "No options structure", "No New Long Premium"})
+    review_complete = review_score >= 75.0
+    construction_complete = bool(st.session_state.get(OTCC_CONSTRUCTION_COMPLETE_KEY, False) or getattr(trade, "construction_complete", False))
+    validation_status = str(getattr(trade, "validation_status", "") or "").upper().strip()
+    validation_complete = bool(st.session_state.get(OTCC_VALIDATION_COMPLETE_KEY, False) or validation_status not in {"", "PENDING"})
+    trade_approved = bool(getattr(getattr(packet, "approval", None), "approved", False)) or str(getattr(packet, "status", "")).upper() == "APPROVED"
 
-    add(8, bool(symbol))
-    add(10, bool(strategy) and strategy not in {"Pending", "No Options Trade", "No options structure", "No New Long Premium"})
-    add(12, opportunity_score >= 60)
-    add(18, construction_score >= 60)
+    return {
+        "Mission Briefing": mission_complete,
+        "Strategy Recommendation": strategy_selected,
+        "Institutional Review": review_complete,
+        "Trade Construction": construction_complete,
+        "Risk Validation": validation_complete,
+        "Trade Approval": trade_approved,
+    }
 
-    try:
-        checked_trade = validate_trade(trade)
-        checks = get_validation_checks(checked_trade)
-    except Exception:
-        checked_trade = trade
-        checks = {}
 
-    def check_pass(name: str) -> bool:
-        try:
-            status = str((checks.get(name) or ("", ""))[0]).upper().strip()
-            return status in {"PASS", "OK", "APPROVED"} or "PASS" in status
-        except Exception:
-            return False
+def construction_readiness_context(trade, packet=None) -> str:
+    states = workflow_checkpoint_states(trade, packet)
+    if states.get("Trade Approval", False):
+        return "Construction Complete"
+    if states.get("Risk Validation", False):
+        return "Awaiting Final Approval"
+    if states.get("Trade Construction", False):
+        return "Awaiting Validation"
+    return "In Progress"
 
-    add(8, check_pass("Premium Quality") or float(getattr(trade, "premium", 0.0) or 0.0) > 0)
-    add(8, check_pass("Position Size") or int(getattr(trade, "contracts", 0) or 0) >= 1)
-    add(10, check_pass("Buying Power"))
-    add(8, check_pass("Expiration"))
-    add(6, check_pass("Breakeven vs Stock"))
 
-    approval_status = str(getattr(checked_trade, "approval_status", "") or "").upper().strip()
-    validation_status = str(getattr(checked_trade, "validation_status", "") or "").upper().strip()
-    construction_complete = bool(getattr(checked_trade, "construction_complete", False))
-
-    add(6, validation_status in {"PASS", "OK", "APPROVED"} or "PASS" in validation_status)
-    add(6, construction_complete or "APPROVED" in approval_status)
-
-    try:
-        approved_trade = approve_trade(checked_trade)
-        approval_status = str(getattr(approved_trade, "approval_status", "") or approval_status).upper().strip()
-    except Exception:
-        approved_trade = checked_trade
-
-    add(6, "REJECT" not in approval_status and "FAIL" not in validation_status)
-
-    if max_score <= 0:
-        return 0.0
-    return max(0.0, min(100.0, round((score / max_score) * 100.0, 1)))
+def compute_decision_readiness_score(trade, packet=None) -> float:
+    """Deterministic workflow readiness based on completed institutional milestones."""
+    checkpoints = workflow_checkpoint_states(trade, packet)
+    total = max(len(checkpoints), 1)
+    completed = sum(1 for done in checkpoints.values() if done)
+    return round((completed / total) * 100.0, 1)
 
 
 def decision_readiness_label(score: float) -> str:
-    if score >= 85:
-        return "🟢 READY"
+    if score >= 100:
+        return "🟢 COMPLETE"
     if score >= 65:
+        return "🟢 READY"
+    if score >= 35:
         return "🟡 REVIEW"
     if score > 0:
         return "🔴 NOT READY"
@@ -953,6 +1082,7 @@ def render_live_explanation_card(trade) -> None:
     has_trade_inputs = bool(strike > 0 and contracts > 0)
 
     credit_value = float(getattr(trade, "credit", 0.0) or 0.0)
+    debit_value = float(getattr(trade, "debit", 0.0) or 0.0)
     buying_power_value = float(getattr(trade, "buying_power_required", 0.0) or 0.0)
     max_loss_value = float(getattr(trade, "max_loss", 0.0) or 0.0)
     breakeven_value = float(getattr(trade, "breakeven", 0.0) or 0.0)
@@ -960,7 +1090,7 @@ def render_live_explanation_card(trade) -> None:
     annualized_value = float(getattr(trade, "annualized_return", 0.0) or 0.0)
 
     premium_collected = money(credit_value) if credit_value > 0 else "Waiting for premium"
-    buying_power_reserved = money(buying_power_value) if strike > 0 else "Waiting for strike"
+    required_capital = money(buying_power_value) if buying_power_value > 0 else "Waiting for trade details"
     max_loss = money(max_loss_value) if has_trade_inputs and max_loss_value > 0 else "Waiting for trade details"
     breakeven = money(breakeven_value) if strike > 0 and premium > 0 else "Waiting for strike and premium"
     roi = percent(roi_value) if has_trade_inputs and abs(roi_value) > 0 else "Waiting for completed trade"
@@ -972,27 +1102,58 @@ def render_live_explanation_card(trade) -> None:
             "If the option is assigned, you become the owner of 100 shares per contract. "
             "This number represents the maximum theoretical loss only if the stock eventually falls to $0 after assignment."
         )
+        capital_label = "Buying Power"
+        capital_line = f"Cash your broker reserves because you may be required to purchase the shares if assigned. Current reserved amount: {required_capital}."
+        risk_label = "Worst-Case Stock Ownership Loss"
     elif strategy == "Covered Call":
         strategy_line = f"This covered call collects {premium_collected} against shares you already own."
         risk_line = f"Your key risk is equity downside in owned shares, with option-side max loss shown as {max_loss}."
+        capital_label = "Buying Power"
+        capital_line = f"Broker reserve shown for this covered position is {required_capital}."
+        risk_label = "Worst-Case Stock Ownership Loss"
+    elif strategy == "Bull Call Spread":
+        net_debit = money(debit_value) if debit_value > 0 else "Waiting for debit"
+        strategy_line = (
+            f"This Bull Call Spread is a defined-risk debit strategy. Maximum profit occurs if the stock closes "
+            "at or above the short strike at expiration."
+        )
+        risk_line = "Maximum loss is limited to the net debit paid. Risk is predefined and no stock ownership is required to enter this trade."
+        capital_label = "Required Debit"
+        capital_line = f"Capital at risk is limited to the net debit paid. Current required debit: {net_debit}."
+        risk_label = "Maximum Loss (Defined Risk)"
     elif strategy in {"Bull Put Spread", "Bear Put Spread", "Bull Call Spread", "Bear Call Spread"}:
         strategy_line = f"This spread structure shows defined-risk math with premium impact of {premium_collected}."
         risk_line = f"Defined spread risk is capped at {max_loss} if the trade performs as poorly as possible."
+        capital_label = capital_requirement_label(strategy)
+        capital_line = f"{capital_requirement_help(strategy)} Current required capital: {required_capital}."
+        risk_label = strategy_max_loss_label(strategy)
     elif strategy == "Long Call":
         strategy_line = f"This long call uses premium outlay math. Current net premium effect is {premium_collected}."
         risk_line = f"Long-call style risk is primarily premium paid; maximum modeled loss here is {max_loss}."
+        capital_label = capital_requirement_label(strategy)
+        capital_line = f"{capital_requirement_help(strategy)} Current required capital: {required_capital}."
+        risk_label = strategy_max_loss_label(strategy)
     elif strategy == "Long Put":
         strategy_line = f"This long put can be used for protection or bearish positioning. Current net premium effect is {premium_collected}."
         risk_line = f"Long-put style risk is primarily premium paid; maximum modeled loss here is {max_loss}."
+        capital_label = capital_requirement_label(strategy)
+        capital_line = f"{capital_requirement_help(strategy)} Current required capital: {required_capital}."
+        risk_label = strategy_max_loss_label(strategy)
     else:
         strategy_line = f"Trade economics currently show premium impact of {premium_collected}."
         risk_line = f"Worst-case modeled loss is {max_loss}."
+        capital_label = capital_requirement_label(strategy)
+        capital_line = f"{capital_requirement_help(strategy)} Current required capital: {required_capital}."
+        risk_label = strategy_max_loss_label(strategy)
 
     def _render_content() -> None:
         st.markdown("### 📖 How to Read This Trade")
-        st.markdown(f"**Premium Collected**  \nYou receive {premium_collected} immediately if your order fills.")
-        st.markdown(f"**Buying Power**  \nCash your broker reserves because you may be required to purchase the shares if assigned. Current reserved amount: {buying_power_reserved}.")
-        st.markdown(f"**Worst-Case Stock Ownership Loss**  \n{risk_line}")
+        if strategy_uses_debit_capital(strategy):
+            st.markdown(f"**Net Debit**  \nCapital paid to enter the position. Current net debit: {money(debit_value) if debit_value > 0 else 'Waiting for debit' }.")
+        else:
+            st.markdown(f"**Premium Collected**  \nYou receive {premium_collected} immediately if your order fills.")
+        st.markdown(f"**{capital_label}**  \n{capital_line}")
+        st.markdown(f"**{risk_label}**  \n{risk_line}")
         st.markdown(f"**Break-even**  \nYou begin losing money only below {breakeven}.")
         st.markdown(f"**ROI**  \nYour expected return is {roi}.")
         st.markdown(f"**Annualized Return**  \nEquivalent yearly return based on this expiration is {annualized_return}.")
@@ -1046,6 +1207,10 @@ def render_institutional_trade_summary(trade, packet=None) -> None:
         readiness = 0.0
     status = str(getattr(trade, "approval_status", "") or "Pending")
     strategy = str(trade.active_strategy() or trade.recommended_strategy or "Pending")
+    readiness_context = construction_readiness_context(trade, packet)
+    capital_label = "Maximum Capital at Risk" if strategy_uses_debit_capital(strategy) else "Buying Power"
+    capital_help = "Net debit paid for defined-risk debit strategy." if strategy_uses_debit_capital(strategy) else "Cash your broker reserves because you may be required to purchase the shares if assigned."
+    risk_label = strategy_max_loss_label(strategy)
     summary_rows = [
         ("Underlying", str(getattr(trade, "symbol", "") or "Pending")),
         ("Strategy", strategy),
@@ -1054,20 +1219,20 @@ def render_institutional_trade_summary(trade, packet=None) -> None:
         ("Short Premium", money(float(getattr(trade, "premium", 0.0) or 0.0)) if float(getattr(trade, "premium", 0.0) or 0.0) > 0 else "Pending"),
         ("Expiration", str(getattr(trade, "expiration", "") or "Pending")),
         (
-            "Buying Power",
+            capital_label,
             money(float(getattr(trade, "buying_power_required", 0.0) or 0.0)) if float(getattr(trade, "buying_power_required", 0.0) or 0.0) > 0 else "Waiting for strike",
-            "Cash your broker reserves because you may be required to purchase the shares if assigned.",
+            capital_help,
         ),
         ("Break-even", money(float(getattr(trade, "breakeven", 0.0) or 0.0)) if float(getattr(trade, "breakeven", 0.0) or 0.0) > 0 else "Waiting for strike and premium"),
         ("Maximum Profit", money(float(getattr(trade, "max_profit", 0.0) or 0.0)) if float(getattr(trade, "max_profit", 0.0) or 0.0) > 0 else "Pending"),
         (
-            "Worst-Case Stock Ownership Loss",
+            risk_label,
             money(float(getattr(trade, "max_loss", 0.0) or 0.0)) if float(getattr(trade, "max_loss", 0.0) or 0.0) > 0 else "Waiting for trade details",
-            "Assumes assignment occurs and the underlying eventually falls to $0.",
+            "Defined-risk maximum loss from the current structure.",
         ),
-        ("ROI", percent(float(getattr(trade, "roi", 0.0) or 0.0)) if abs(float(getattr(trade, "roi", 0.0) or 0.0)) > 0 else "Waiting for completed trade"),
-        ("Annualized Return", percent(float(getattr(trade, "annualized_return", 0.0) or 0.0)) if abs(float(getattr(trade, "annualized_return", 0.0) or 0.0)) > 0 else "Waiting for completed trade"),
-        ("Approval Readiness", f"{readiness:,.1f}%" if readiness > 0 else "Pending"),
+        ("Holding Return", percent(float(getattr(trade, "roi", 0.0) or 0.0)) if abs(float(getattr(trade, "roi", 0.0) or 0.0)) > 0 else "Waiting for completed trade"),
+        ("Annualized Return (Info)", percent(float(getattr(trade, "annualized_return", 0.0) or 0.0)) if abs(float(getattr(trade, "annualized_return", 0.0) or 0.0)) > 0 else "Waiting for completed trade"),
+        ("Construction Readiness", (f"{readiness:,.1f}% • {readiness_context}") if readiness > 0 else readiness_context),
         ("Approval Status", status),
     ]
 
@@ -1075,8 +1240,14 @@ def render_institutional_trade_summary(trade, packet=None) -> None:
         st.markdown("### 📄 Institutional Trade Summary")
         render_native_metric_grid(summary_rows, columns=3, block_class="otcc-grid-3")
         premium_line = money(float(getattr(trade, "credit", 0.0) or 0.0)) if float(getattr(trade, "credit", 0.0) or 0.0) > 0 else "waiting premium"
+        debit_line = money(float(getattr(trade, "debit", 0.0) or 0.0)) if float(getattr(trade, "debit", 0.0) or 0.0) > 0 else "waiting debit"
         max_loss_line = money(float(getattr(trade, "max_loss", 0.0) or 0.0)) if float(getattr(trade, "max_loss", 0.0) or 0.0) > 0 else "waiting risk"
-        st.caption(f"This trade collects {premium_line} in premium. Worst-case stock ownership loss is {max_loss_line} only if assignment occurs and the underlying later falls to $0.")
+        if strategy == "Bull Call Spread":
+            debit_line_safe = debit_line.replace("$", "\\$")
+            max_loss_line_safe = max_loss_line.replace("$", "\\$")
+            st.caption(f"This debit spread requires {debit_line_safe} to enter. Maximum loss is limited to the net debit paid ({max_loss_line_safe}).")
+        else:
+            st.caption(f"This trade collects {premium_line} in premium. Worst-case stock ownership loss is {max_loss_line} only if assignment occurs and the underlying later falls to $0.")
 
 
 def render_live_trade_math_dashboard(trade) -> None:
@@ -1098,10 +1269,14 @@ def render_live_trade_math_dashboard(trade) -> None:
 
     capital_at_risk = max_loss
     risk_level = risk_level_label(max_loss, max_profit)
+    capital_label = capital_requirement_label(strategy)
+    capital_help = capital_requirement_help(strategy)
+    max_loss_label = strategy_max_loss_label(strategy)
+    capital_at_risk_help = "Maximum capital exposed in this defined-risk structure." if strategy_uses_debit_capital(strategy) else "Capital committed to purchasing the underlying shares if assignment occurs."
 
     premium_display = money(credit) if credit > 0 else "Waiting for premium"
     max_profit_display = money(max_profit) if has_trade_inputs and max_profit > 0 else "Waiting for trade details"
-    buying_power_display = money(buying_power) if strike > 0 else "Waiting for strike"
+    buying_power_display = money(buying_power) if buying_power > 0 else "Waiting for trade details"
     capital_at_risk_display = money(capital_at_risk) if has_trade_inputs and capital_at_risk > 0 else "Waiting for trade details"
     max_loss_display = money(max_loss) if has_trade_inputs and max_loss > 0 else "Waiting for trade details"
     breakeven_display = money(breakeven) if strike > 0 and premium > 0 else "Waiting for strike and premium"
@@ -1137,24 +1312,24 @@ def render_live_trade_math_dashboard(trade) -> None:
         risk_top_left, risk_top_right = st.columns(2, gap="small")
         with risk_top_left:
             _render_math_value_card(
-                "Buying Power Required",
+                capital_label,
                 buying_power_display,
                 tone="risk",
-                help_text="Cash your broker reserves because you may be required to purchase the shares if assigned.",
+                help_text=capital_help,
             )
         with risk_top_right:
             _render_math_value_card(
                 "Capital at Risk",
                 capital_at_risk_display,
                 tone="risk",
-                help_text="Capital committed to purchasing the underlying shares if assignment occurs.",
+                help_text=capital_at_risk_help,
             )
 
         _render_math_value_card(
-            "Worst-Case Stock Ownership Loss",
+            max_loss_label,
             max_loss_display,
             tone="risk",
-            help_text="Maximum theoretical loss after assignment if the stock ultimately becomes worthless.",
+            help_text="Maximum modeled loss for the current strategy structure.",
             emphasized=True,
         )
 
@@ -1171,7 +1346,7 @@ def render_live_trade_math_dashboard(trade) -> None:
                 "Risk Level",
                 risk_level,
                 tone="risk",
-                help_text="Display-only risk tier based on Worst-Case Stock Ownership Loss relative to Maximum Profit.",
+                help_text="Display-only risk tier based on maximum modeled loss relative to maximum profit.",
             )
 
     with st.container(border=True):
@@ -1179,17 +1354,17 @@ def render_live_trade_math_dashboard(trade) -> None:
         perf1, perf2, perf3 = st.columns(3, gap="small")
         with perf1:
             _render_math_value_card(
-                "ROI",
+                "Holding Return",
                 roi_display,
                 tone="performance",
-                help_text="Percentage return based on capital committed.",
+                help_text="Return over the planned holding period based on capital at risk.",
             )
         with perf2:
             _render_math_value_card(
-                "Annualized Return",
+                "Annualized Return (Info)",
                 annualized_display,
                 tone="performance",
-                help_text="ROI adjusted to a one-year equivalent.",
+                help_text="Informational annualized projection; compare with holding return for practical sizing decisions.",
             )
         with perf3:
             _render_math_value_card(
@@ -1367,15 +1542,8 @@ def institutional_review_checks(trade, packet=None) -> dict:
 
 def render_workflow_progress(trade, packet=None) -> None:
     """Institutional workflow timeline shown below Mission Briefing."""
-    mission_done = bool(getattr(packet, "symbol", "") or getattr(trade, "symbol", ""))
-    recommendation_done = bool(getattr(packet, "recommended_strategy", "") or trade.active_strategy() or getattr(trade, "recommended_strategy", ""))
-    review_score = float(getattr(getattr(packet, "approval", None), "score", 0.0) or 0.0)
-    review_done = review_score >= 75.0
-    review_partial = review_score > 0.0 and not review_done
-    construction_done = bool(getattr(trade, "construction_complete", False) or getattr(getattr(packet, "construction", None), "completed", False))
-    validation_status = str(getattr(trade, "validation_status", "") or "").upper().strip()
-    validation_done = validation_status not in {"", "PENDING"}
-    approval_done = bool(getattr(getattr(packet, "approval", None), "approved", False)) or str(getattr(packet, "status", "")).upper() == "APPROVED"
+    checkpoint_states = workflow_checkpoint_states(trade, packet)
+    approval_done = bool(checkpoint_states.get("Trade Approval", False))
     completed_stages = list(getattr(getattr(packet, "metadata", None), "completed_stages", []) or [])
     order = getattr(packet, "order", None)
     execution_handoff = bool(
@@ -1392,47 +1560,42 @@ def render_workflow_progress(trade, packet=None) -> None:
 
     stage_labels = [
         "Mission Briefing",
-        "Recommendation",
+        "Strategy Recommendation",
         "Institutional Review",
-        "Construction",
-        "Validation",
-        "Approval",
-        "Execution",
+        "Trade Construction",
+        "Risk Validation",
+        "Trade Approval",
+        "Execution Package",
     ]
 
-    if execution_handoff:
-        states = ["complete"] * len(stage_labels)
-    else:
-        if approval_done:
-            active_index = 6
-        elif validation_done:
-            active_index = 5
-        elif construction_done:
-            active_index = 4
-        elif review_done:
-            active_index = 3
-        elif review_partial:
-            active_index = 2
-        elif recommendation_done:
-            active_index = 2
-        elif mission_done:
-            active_index = 1
+    states = []
+    current_assigned = False
+    for label in stage_labels:
+        if label == "Execution Package":
+            done = execution_handoff
         else:
-            active_index = 0
+            done = bool(checkpoint_states.get(label, False))
+        if done:
+            states.append("complete")
+            continue
+        if not current_assigned:
+            states.append("current")
+            current_assigned = True
+        else:
+            states.append("pending")
 
-        states = []
-        for idx, _ in enumerate(stage_labels):
-            if idx < active_index:
-                states.append("complete")
-            elif idx == active_index:
-                states.append("current")
-            else:
-                states.append("pending")
+    if all(state == "complete" for state in states):
+        states = ["complete"] * len(stage_labels)
 
     node_html = []
     for idx, label in enumerate(stage_labels, start=1):
         state = states[idx - 1]
-        symbol = "✓" if state == "complete" else str(idx)
+        if state == "complete":
+            symbol = "🟢"
+        elif state == "current":
+            symbol = "🔵"
+        else:
+            symbol = "⚪"
         line_state = "complete" if idx < len(stage_labels) and states[idx - 1] == "complete" else "pending"
         node_html.append(
             f"""
@@ -1440,12 +1603,13 @@ def render_workflow_progress(trade, packet=None) -> None:
                 <div class="otcc-timeline-circle">{symbol}</div>
                 <div class="otcc-timeline-label">{label}</div>
             </div>
-            {"<div class='otcc-timeline-connector otcc-line-" + line_state + "'></div>" if idx < len(stage_labels) else ""}
+            {"<div class='otcc-timeline-connector otcc-line-" + line_state + "'>↓</div>" if idx < len(stage_labels) else ""}
             """
         )
 
     with st.container(border=True):
         st.markdown("### Workflow Progress")
+        st.caption("Mission Briefing ↓ Strategy Recommendation ↓ Institutional Review ↓ Trade Construction ↓ Risk Validation ↓ Trade Approval ↓ Execution Package")
         st.markdown(
             f"""
             <div class="otcc-timeline-wrap">
@@ -1666,7 +1830,7 @@ def render_commander_approval(trade, packet=None):
             st.markdown(
                 f"""
                 <div class="otcc-readiness-wrap">
-                    <div class="otcc-readiness-label">Approval Readiness</div>
+                    <div class="otcc-readiness-label">Review Readiness</div>
                     <div class="otcc-readiness-value">{score:,.1f}%</div>
                 </div>
                 """,
@@ -1676,8 +1840,8 @@ def render_commander_approval(trade, packet=None):
             st.markdown(f"<span style='color:{readiness_color};font-weight:800;'>{readiness_label} readiness</span>", unsafe_allow_html=True)
         with right:
             st.markdown("### Institutional Decision")
-            review_status = "READY FOR CONSTRUCTION"
-            review_readiness = "100.0%"
+            review_status = "Construction Authorized" if score >= 75.0 else "Review In Progress"
+            review_readiness = f"{compute_decision_readiness_score(trade, packet):,.1f}%"
             review_timestamp = str(getattr(approval, "approved_timestamp", "") or "Pending")
             decision_rows = [
                 ("Review Status", review_status),
@@ -2030,31 +2194,32 @@ def inject_commander_css():
                 width: 2rem;
                 height: 2rem;
                 border-radius: 999px;
-                border: 2px solid #cbd5e1;
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                font-size: 0.95rem;
-                font-weight: 800;
+                font-size: 1.02rem;
+                font-weight: 700;
                 line-height: 1;
             }
 
             .otcc-stage-complete .otcc-timeline-circle {
-                border-color: #16a34a;
-                background: #16a34a;
-                color: #ffffff;
+                background: transparent;
             }
 
             .otcc-stage-current .otcc-timeline-circle {
-                border-color: #2563eb;
-                background: #2563eb;
-                color: #ffffff;
+                background: rgba(37, 99, 235, 0.12);
+                transform: scale(1.24);
+                box-shadow: 0 0 0 6px rgba(37, 99, 235, 0.14), 0 0 18px rgba(37, 99, 235, 0.30);
+            }
+
+            .otcc-stage-current .otcc-timeline-label {
+                color: #1d4ed8;
+                font-weight: 800;
+                font-size: 0.75rem;
             }
 
             .otcc-stage-pending .otcc-timeline-circle {
-                border-color: #cbd5e1;
-                background: #f1f5f9;
-                color: #64748b;
+                background: transparent;
             }
 
             .otcc-timeline-label {
@@ -2069,22 +2234,23 @@ def inject_commander_css():
             .otcc-timeline-connector {
                 flex: 0 0 clamp(12px, 1.5vw, 24px);
                 height: 2rem;
-                position: relative;
                 margin-top: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 1rem;
+                color: #94a3b8;
+                font-weight: 800;
             }
 
-            .otcc-timeline-connector::before {
-                content: "";
-                position: absolute;
-                top: 50%;
-                left: 0;
-                right: 0;
-                border-top: 2px solid #cbd5e1;
-                transform: translateY(-50%);
+            .otcc-line-complete {
+                color: #16a34a;
             }
 
-            .otcc-line-complete::before {
-                border-top-color: #16a34a;
+            .otcc-stage-current + .otcc-timeline-connector {
+                color: #2563eb;
+                font-size: 1.2rem;
+                font-weight: 900;
             }
 
             .otcc-main-two-col [data-testid="stHorizontalBlock"] {
@@ -2805,6 +2971,7 @@ def render_contract_selection_panel(trade, strategy: str, locked: bool) -> None:
     selected = st.session_state.get(SELECTED_CONTRACT_KEY)
     contract_selected = bool(isinstance(selected, dict) and selected.get("label"))
     button_label = "Change Selected Contract" if contract_selected else "Select Option Contract"
+    chain_type = strategy_option_chain_type(strategy)
     if st.button(button_label, key="otcc_select_option_contract", use_container_width=False, disabled=locked):
         st.session_state[OPTION_CHAIN_PANEL_OPEN_KEY] = True
 
@@ -2817,8 +2984,8 @@ def render_contract_selection_panel(trade, strategy: str, locked: bool) -> None:
         )
         st.info("Contract-derived fields are locked. Use Change Selected Contract to choose a different strike, expiration, or premium.")
 
-    with st.expander("Option Chain Selection (Mock Provider)", expanded=bool(st.session_state.get(OPTION_CHAIN_PANEL_OPEN_KEY, False))):
-        st.caption("Option Chain Provider -> Institutional Ranking Engine -> Trade Construction -> Risk Validation -> Approval -> Execution")
+    with st.expander(f"Option Chain Selection ({chain_type})", expanded=bool(st.session_state.get(OPTION_CHAIN_PANEL_OPEN_KEY, False))):
+        st.caption(f"Option Chain Provider -> Institutional Ranking Engine -> Trade Construction -> Risk Validation -> Approval -> Execution | Strategy chain: {chain_type}")
         st.caption("Future placeholder: when IBKR is active, live chain download and ranking will feed this panel automatically.")
 
         contracts = get_ranked_option_chain(trade.symbol, strategy, reference_price=float(getattr(trade, "stock_price", 0.0) or 0.0))
@@ -2830,8 +2997,7 @@ def render_contract_selection_panel(trade, strategy: str, locked: bool) -> None:
             with st.container(border=True):
                 head_left, head_right = st.columns([1.15, 0.85], gap="small")
                 with head_left:
-                    st.markdown(f"#### {contract.contract_label}")
-                    st.caption(contract_tier_badge(contract))
+                    st.markdown(f"#### {contract.contract_label}{contract_tier_badge(contract)}")
                 with head_right:
                     st.markdown(f"**Bid/Ask:** {money(contract.bid)} / {money(contract.ask)}")
                     st.markdown(f"**Mid:** {money(contract.mid)}")
@@ -2853,7 +3019,7 @@ def render_contract_selection_panel(trade, strategy: str, locked: bool) -> None:
                     use_container_width=True,
                     disabled=locked,
                 ):
-                    apply_option_contract_to_trade(trade, contract)
+                    apply_option_contract_to_trade(trade, contract, strategy, contracts)
                     st.session_state[OPTION_CHAIN_PANEL_OPEN_KEY] = False
                     st.rerun()
 
@@ -2911,10 +3077,11 @@ def render_strategy_selection(trade, packet=None):
 def render_trade_construction(trade, packet=None):
     strategy = trade.active_strategy()
     locked = bool(packet and getattr(getattr(packet, "approval", None), "approved", False))
+    subtitle_text = "Review the completed strategy prior to validation and approval." if locked else "Enter the trade structure. Strategy math updates live from selected contract legs."
     section_header(
         "Step 4",
         f"{strategy or 'Trade'} Construction",
-        "Enter the trade structure. Cash-Secured Put math is live.",
+        subtitle_text,
     )
 
     if not strategy:
@@ -2976,7 +3143,7 @@ def render_trade_construction(trade, packet=None):
                     step=0.5,
                     key="otcc_short_strike",
                     disabled=lock_core_contract_fields,
-                    help=beginner_help("The strike is the price at which you agree to buy the stock if assigned. Lower strikes generally reduce assignment risk but collect less premium."),
+                    help=beginner_help("Short strike for the option leg you are selling. Confirm strike placement against your directional thesis and risk plan."),
                 )
 
                 trade.long_strike = st.number_input(
@@ -2985,7 +3152,7 @@ def render_trade_construction(trade, packet=None):
                     step=0.5,
                     key="otcc_long_strike",
                     disabled=lock_long_leg_fields,
-                    help=beginner_help("Used only when the strategy includes a protection leg. Cash-Secured Put usually stays at 0; spreads require a protection strike."),
+                    help=beginner_help("Used when the strategy includes a long protection or long debit leg. Single-leg strategies may leave this at 0."),
                 )
 
             with col3:
@@ -3004,7 +3171,7 @@ def render_trade_construction(trade, packet=None):
                     step=0.01,
                     key="otcc_long_premium",
                     disabled=lock_long_leg_fields,
-                    help=beginner_help("Long Premium is used when you buy a protection option. Cash-Secured Put is usually 0; spread strategies need this value."),
+                    help=beginner_help("Premium paid for the long option leg. Required for debit spreads and protection legs."),
                 )
 
                 trade.contracts = st.number_input(
@@ -3040,6 +3207,8 @@ def render_trade_construction(trade, packet=None):
             st.rerun()
         responsive_block_end()
 
+    return trade_math
+
 
 # ============================================================
 # Step 4 — Risk Validation
@@ -3058,8 +3227,11 @@ def render_risk_validation(trade, packet=None):
     trade = validate_trade(trade)
     checks = get_validation_checks(trade)
 
+    strategy = str(trade.active_strategy() or trade.recommended_strategy or "").strip()
+    capital_check_label = "Required Debit" if strategy_uses_debit_capital(strategy) else "Buying Power"
+
     display_checks = {
-        "Buying Power": checks["Buying Power"],
+        capital_check_label: checks["Buying Power"],
         "Expiration": checks["Expiration"],
         "Premium Quality": checks["Premium Quality"],
         "Position Size": checks["Position Size"],
@@ -3074,14 +3246,23 @@ def render_risk_validation(trade, packet=None):
 
         for index, (label, (status, message)) in enumerate(display_checks.items()):
             display_status = status
-            if label == "Buying Power" and str(status).strip().upper() == "REVIEW":
+            if label == capital_check_label and str(status).strip().upper() == "REVIEW":
                 display_status = "PASS / REVIEW"
+            tone_class = validation_status_tone(display_status)
+            if tone_class == "pass":
+                status_badge = "🟢 PASS"
+            elif tone_class == "review":
+                status_badge = "🟡 REVIEW"
+            elif tone_class == "fail":
+                status_badge = "🔴 FAIL"
+            else:
+                status_badge = "⚪ PENDING"
             with cols[index % 3]:
                 st.markdown(
                     f"""
-                    <div class="otcc-status-card">
+                    <div class="otcc-status-card otcc-status-{tone_class}">
                         <div class="otcc-status-title">{html.escape(label)}</div>
-                        <div class="otcc-status-body">{html.escape(str(display_status))} — {html.escape(str(message))}</div>
+                        <div class="otcc-status-body">{html.escape(status_badge)} — {html.escape(str(message))}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -3099,8 +3280,12 @@ def render_risk_validation(trade, packet=None):
             for message in trade.validation_messages:
                     if str(message).startswith("Buying Power:"):
                         required_value = money(float(getattr(trade, "buying_power_required", 0.0) or 0.0))
-                        st.write(f"• Buying Power Required: {required_value}")
-                        st.write("• Trader Confirmation: Verify sufficient buying power exists before execution.")
+                        if strategy_uses_debit_capital(strategy):
+                            st.write(f"• Required Debit: {required_value}")
+                            st.write("• Trader Confirmation: Verify the net debit amount before execution.")
+                        else:
+                            st.write(f"• Buying Power Required: {required_value}")
+                            st.write("• Trader Confirmation: Verify sufficient buying power exists before execution.")
                     elif str(message).startswith("Position Size:"):
                         st.write("• Position Size: Trader should verify allocation against personal portfolio rules.")
                     else:
@@ -3109,9 +3294,9 @@ def render_risk_validation(trade, packet=None):
     construction_complete = bool(st.session_state.get(OTCC_CONSTRUCTION_COMPLETE_KEY, False))
     can_validate = construction_complete
     if validation_completed and stored_status not in {"", "PENDING"}:
-        st.success("✅ Risk validation completed.")
+        st.success("✅ Validation Complete")
 
-    action_label = "Risk Validation Complete" if validation_completed and stored_status not in {"", "PENDING"} else ("Validate Trade Risk" if can_validate else "Complete Step 4 before validation")
+    action_label = "Validation Complete" if validation_completed and stored_status not in {"", "PENDING"} else ("Validate Trade Risk" if can_validate else "Complete Step 4 before validation")
     if st.button(action_label, key="otcc_validate_trade_risk", use_container_width=True, disabled=not can_validate or (validation_completed and stored_status not in {"", "PENDING"})):
         trade = validate_trade(trade)
         status_text = str(getattr(trade, "validation_status", "") or "").upper().strip()
@@ -3166,6 +3351,8 @@ def render_trade_approval(trade, packet=None):
         ]
     )
     can_finalize_approval = bool(construction_complete and validation_complete and trade_math_ready)
+    computed_grade = institutional_grade_from_packet(packet, trade)
+    trade.institutional_grade = computed_grade
 
     with st.container(border=True):
         responsive_block_start("otcc-compact-card")
@@ -3178,9 +3365,9 @@ def render_trade_approval(trade, packet=None):
         st.markdown("### Institutional Decision")
         render_native_metric_grid(
             [
-                ("Institutional Grade", trade.institutional_grade or "Pending"),
+                ("Institutional Grade", computed_grade),
                 ("Decision Readiness", f"{readiness_score:,.1f}%"),
-                ("Approval Status", "APPROVED" if final_approved else (trade.approval_status or "WAIT")),
+                ("Approval Status", "Approved for Execution" if final_approved else (trade.approval_status or "WAIT")),
                 ("Outstanding Issues", str(outstanding)),
             ],
             columns=4,
@@ -3201,7 +3388,14 @@ def render_trade_approval(trade, packet=None):
             st.success("No outstanding issues.")
 
         st.markdown("**Decision Summary**")
-        st.info(approval_reason(trade))
+        approval_state = str(trade.approval_status or "").upper().strip()
+        if final_approved:
+            decision_summary = "All institutional reviews have been completed. Trade approved and ready for execution."
+        elif approval_state in {"REJECT", "FAILED", "FAIL", "NEEDS ADJUSTMENT"}:
+            decision_summary = "Trade requires additional review before execution."
+        else:
+            decision_summary = "Waiting for construction and validation."
+        st.info(decision_summary)
 
         if not construction_complete:
             st.warning("Construction is not marked complete yet. The approval engine will remain in WAIT mode.")
@@ -3215,13 +3409,17 @@ def render_trade_approval(trade, packet=None):
                 missing.append("Trade math not ready")
             st.warning("Final approval is blocked: " + " | ".join(missing))
 
+        strategy = str(trade.active_strategy() or trade.recommended_strategy or "").strip()
         if trade.warnings:
             with st.expander("Approval Warnings", expanded=False):
                 for warning in trade.warnings:
                     warning_text = str(warning)
                     if "Available buying power has not been entered" in warning_text:
                         required_value = money(float(getattr(trade, "buying_power_required", 0.0) or 0.0))
-                        st.warning(f"Verify that your brokerage account has at least {required_value} available buying power before execution.")
+                        if strategy_uses_debit_capital(strategy):
+                            st.warning(f"Verify that your broker order uses approximately {required_value} net debit before execution.")
+                        else:
+                            st.warning(f"Verify that your brokerage account has at least {required_value} available buying power before execution.")
                     elif "No account size or max risk limit is available" in warning_text:
                         st.warning("Verify this position size fits your portfolio allocation guidelines.")
                     else:
@@ -3232,8 +3430,12 @@ def render_trade_approval(trade, packet=None):
                 for message in trade.validation_messages:
                     if str(message).startswith("Buying Power:"):
                         required_value = money(float(getattr(trade, "buying_power_required", 0.0) or 0.0))
-                        st.write(f"• Buying Power Required: {required_value}")
-                        st.write("• Trader Confirmation: Verify sufficient buying power exists before execution.")
+                        if strategy_uses_debit_capital(strategy):
+                            st.write(f"• Required Debit: {required_value}")
+                            st.write("• Trader Confirmation: Verify the net debit amount before execution.")
+                        else:
+                            st.write(f"• Buying Power Required: {required_value}")
+                            st.write("• Trader Confirmation: Verify sufficient buying power exists before execution.")
                     elif str(message).startswith("Position Size:"):
                         st.write("• Position Size: Trader should verify allocation against personal portfolio rules.")
                     else:
@@ -3277,50 +3479,78 @@ def render_execution_package(trade):
     ticket = build_execution_ticket(trade)
 
     strategy = trade.active_strategy() or "Pending"
+    is_debit_strategy = strategy_uses_debit_capital(strategy)
+    capital_label = "Maximum Capital at Risk" if is_debit_strategy else "Buying Power"
     symbol = trade.symbol or "Pending"
+
+    summary_rows = [
+        ("Underlying", symbol),
+        ("Strategy", strategy),
+        ("Expiration", str(getattr(trade, "expiration", "") or "Pending")),
+        ("Strike", f"{float(getattr(trade, 'strike', 0.0) or 0.0):.2f}" if float(getattr(trade, 'strike', 0.0) or 0.0) > 0 else "Pending"),
+        ("Premium", money(getattr(trade, "premium", 0.0) or 0.0)),
+        ("Contracts", int(getattr(trade, "contracts", 0) or 0)),
+    ]
+    if is_debit_strategy:
+        summary_rows.extend(
+            [
+                ("Required Debit", money(getattr(trade, "debit", 0.0) or 0.0)),
+                ("Maximum Capital at Risk", money(getattr(trade, "buying_power_required", 0.0) or 0.0)),
+            ]
+        )
+    else:
+        summary_rows.append((capital_label, money(getattr(trade, "buying_power_required", 0.0) or 0.0)))
+    summary_rows.extend(
+        [
+            ("Maximum Risk", money(getattr(trade, "max_loss", 0.0) or 0.0)),
+            ("Maximum Profit", money(getattr(trade, "max_profit", 0.0) or 0.0)),
+            ("Reward / Risk", f"{float(getattr(trade, 'reward_risk_ratio', 0.0) or 0.0):,.4f}"),
+            ("Breakeven", money(getattr(trade, "breakeven", 0.0) or 0.0)),
+        ]
+    )
 
     with st.container(border=True):
         responsive_block_start("otcc-compact-card")
         st.markdown("### Execution Summary")
-        render_native_metric_grid(
-            [
-                ("Underlying", symbol),
-                ("Strategy", strategy),
-                ("Expiration", str(getattr(trade, "expiration", "") or "Pending")),
-                ("Strike", f"{float(getattr(trade, 'strike', 0.0) or 0.0):.2f}" if float(getattr(trade, 'strike', 0.0) or 0.0) > 0 else "Pending"),
-                ("Premium", money(getattr(trade, "premium", 0.0) or 0.0)),
-                ("Contracts", int(getattr(trade, "contracts", 0) or 0)),
-                ("Buying Power", money(getattr(trade, "buying_power_required", 0.0) or 0.0)),
-                ("Maximum Risk", money(getattr(trade, "max_loss", 0.0) or 0.0)),
-                ("Maximum Profit", money(getattr(trade, "max_profit", 0.0) or 0.0)),
-                ("Reward / Risk", f"{float(getattr(trade, 'reward_risk_ratio', 0.0) or 0.0):,.4f}"),
-                ("Breakeven", money(getattr(trade, "breakeven", 0.0) or 0.0)),
-            ],
-            columns=4,
-            block_class="otcc-grid-4",
-        )
+        render_native_metric_grid(summary_rows, columns=4, block_class="otcc-grid-4")
 
         with st.expander("OMS Ticket", expanded=False):
             st.code(ticket["order_summary"], language="text")
 
-        with st.expander("Entry Plan", expanded=False):
+        with st.expander("Entry Orders", expanded=False):
             trade.entry_plan = st.text_area(
-                "Entry Plan",
-                value=ticket["entry_plan"],
+                "Entry Orders",
+                value=ticket["entry_orders"],
                 key="otcc_entry_plan",
             )
 
-        with st.expander("Exit Plan", expanded=False):
+        with st.expander("Profit Target", expanded=False):
+            st.text_area(
+                "Profit Target",
+                value=ticket["profit_target"],
+                key="otcc_profit_target",
+                disabled=True,
+            )
+
+        with st.expander("Exit Rules", expanded=False):
             trade.exit_plan = st.text_area(
-                "Exit Plan",
-                value=ticket["exit_plan"],
+                "Exit Rules",
+                value=ticket["exit_rules"],
                 key="otcc_exit_plan",
             )
 
-        with st.expander("Assignment Plan", expanded=False):
+        with st.expander("Adjustment Plan", expanded=False):
+            st.text_area(
+                "Adjustment Plan",
+                value=ticket["adjustment_plan"],
+                key="otcc_adjustment_plan",
+                disabled=True,
+            )
+
+        with st.expander("Assignment / Exercise Notes", expanded=False):
             trade.assignment_plan = st.text_area(
-                "Assignment Plan",
-                value=ticket["assignment_plan"],
+                "Assignment / Exercise Notes",
+                value=ticket["assignment_exercise_notes"],
                 key="otcc_assignment_plan",
             )
 
@@ -3330,11 +3560,17 @@ def render_execution_package(trade):
                 value=ticket["risk_notes"],
                 key="otcc_risk_notes",
             )
-            st.info(
-                "Assignment is not a loss event by itself.\n\n"
-                "Assignment simply converts the option position into stock ownership.\n\n"
-                "Future profit or loss then depends on how the stock performs after assignment."
-            )
+            if strategy_uses_debit_capital(strategy):
+                st.info(
+                    "Defined-risk debit strategy: maximum loss is limited to the net debit paid.\n\n"
+                    "No stock ownership is required to open this trade."
+                )
+            else:
+                st.info(
+                    "Assignment is not a loss event by itself.\n\n"
+                    "Assignment simply converts the option position into stock ownership.\n\n"
+                    "Future profit or loss then depends on how the stock performs after assignment."
+                )
         responsive_block_end()
 
 
@@ -3477,18 +3713,18 @@ Review the final institutional trade ticket before sending the order to your bro
     responsive_block_end()
 
     render_step_separator()
-    render_trade_construction(trade, packet)
+    trade_math = render_trade_construction(trade, packet)
 
     render_step_separator()
-    packet = render_risk_validation(trade, packet)
+    packet = render_risk_validation(trade_math, packet)
 
     render_step_separator()
     responsive_block_start("otcc-step67-row")
     col_approval, col_execution = st.columns(2, gap="medium")
     with col_approval:
-        render_trade_approval(trade, packet)
+        render_trade_approval(trade_math, packet)
     with col_execution:
-        render_execution_package(trade)
+        render_execution_package(trade_math)
     responsive_block_end()
 
 

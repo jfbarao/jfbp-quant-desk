@@ -47,9 +47,18 @@ def _set_status(trade: TradeModel, status: str, messages: list[str], warnings: l
 
 def validate_buying_power(trade: TradeModel) -> tuple[str, str]:
     if trade.buying_power_required <= 0:
-        return PENDING, "Buying power requirement has not been calculated yet."
+        return PENDING, "Capital requirement has not been calculated yet."
 
     required = float(trade.buying_power_required or 0.0)
+    strategy = str(trade.active_strategy() or "").strip()
+    debit_strategies = {"Bull Call Spread", "Bear Put Spread", "Long Call", "Long Put"}
+    if strategy in debit_strategies:
+        return REVIEW, (
+            f"Required Debit: ${required:,.0f}. "
+            f"This defined-risk strategy requires approximately ${required:,.0f} in net debit capital. "
+            "Verify the debit amount before execution."
+        )
+
     return REVIEW, (
         f"Required Buying Power: ${required:,.0f}. "
         f"This trade requires approximately ${required:,.0f} of available buying power. "
