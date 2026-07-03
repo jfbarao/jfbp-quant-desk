@@ -17,6 +17,7 @@ PASS = "Pass"
 WARN = "Warning"
 FAIL = "Fail"
 PENDING = "Pending"
+REVIEW = "Review"
 
 
 def _set_status(trade: TradeModel, status: str, messages: list[str], warnings: list[str]) -> TradeModel:
@@ -48,13 +49,12 @@ def validate_buying_power(trade: TradeModel) -> tuple[str, str]:
     if trade.buying_power_required <= 0:
         return PENDING, "Buying power requirement has not been calculated yet."
 
-    if trade.buying_power <= 0:
-        return WARN, "Available buying power has not been entered."
-
-    if trade.buying_power_required <= trade.buying_power:
-        return PASS, "Buying power supports this trade."
-
-    return FAIL, "Required buying power exceeds available buying power."
+    required = float(trade.buying_power_required or 0.0)
+    return REVIEW, (
+        f"Required Buying Power: ${required:,.0f}. "
+        f"This trade requires approximately ${required:,.0f} of available buying power. "
+        "Verify that your brokerage account has sufficient available buying power before execution."
+    )
 
 
 def validate_expiration(trade: TradeModel) -> tuple[str, str]:
@@ -86,29 +86,29 @@ def validate_premium(trade: TradeModel) -> tuple[str, str]:
         return PENDING, "Strike must be entered before premium can be judged."
 
     premium_yield = trade.premium / trade.strike
+    premium_yield_pct = premium_yield * 100.0
 
-    if premium_yield >= 0.01:
-        return PASS, "Premium is at least 1% of the short strike."
+    # Phase 1 institutional premium quality bands.
+    # Future enhancement: replace fixed bands with chain-aware scoring inputs
+    # (delta, IV rank/percentile, DTE, POP, expected return, option score,
+    # confidence score).
+    if premium_yield_pct >= 1.25:
+        return PASS, f"EXCELLENT. Premium yield {premium_yield_pct:,.2f}% is strong for this strike and expiration."
 
-    if premium_yield >= 0.005:
-        return WARN, "Premium is modest relative to the short strike."
+    if premium_yield_pct >= 0.80:
+        return PASS, f"GOOD. Premium yield {premium_yield_pct:,.2f}% is appropriate for this strike and expiration."
 
-    return FAIL, "Premium is too small relative to the capital at risk."
+    if premium_yield_pct >= 0.50:
+        return PASS, f"ACCEPTABLE. Premium yield {premium_yield_pct:,.2f}% is acceptable for this strike and expiration."
+
+    return WARN, f"WEAK. Premium yield {premium_yield_pct:,.2f}% is below the preferred range for this strike and expiration."
 
 
 def validate_position_size(trade: TradeModel) -> tuple[str, str]:
-    risk_reference = trade.max_risk_allowed or (trade.account_size * 0.05 if trade.account_size > 0 else 0)
-
     if trade.max_loss <= 0:
-        return PENDING, "Max loss has not been calculated yet."
+        return PENDING, "Worst-Case Stock Ownership Loss has not been calculated yet."
 
-    if risk_reference <= 0:
-        return WARN, "No account size or max risk limit is available for sizing."
-
-    if trade.max_loss <= risk_reference:
-        return PASS, "Position size is within the configured risk limit."
-
-    return WARN, "Max loss exceeds the configured risk reference."
+    return REVIEW, "Confirm this position fits your personal portfolio allocation and risk management rules."
 
 
 def validate_breakeven_vs_stock(trade: TradeModel) -> tuple[str, str]:
@@ -132,7 +132,7 @@ def get_validation_checks(trade: TradeModel) -> dict[str, tuple[str, str]]:
     return {
         "Buying Power": validate_buying_power(trade),
         "Expiration": validate_expiration(trade),
-        "Premium": validate_premium(trade),
+        "Premium Quality": validate_premium(trade),
         "Position Size": validate_position_size(trade),
         "Breakeven vs Stock": validate_breakeven_vs_stock(trade),
     }
@@ -161,5 +161,8 @@ def validate_trade(trade: TradeModel) -> TradeModel:
 
     if PENDING in statuses:
         return _set_status(trade, PENDING, messages, warnings)
+
+    if REVIEW in statuses:
+        return _set_status(trade, PASS, messages, warnings)
 
     return _set_status(trade, PASS, messages, warnings)

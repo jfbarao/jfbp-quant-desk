@@ -1,6 +1,8 @@
 import streamlit as st
 import html
 import textwrap
+from dataclasses import dataclass, replace
+from typing import Protocol
 
 try:
     from options_engine.trade_lifecycle_packet import TradeLifecyclePacket, TradeStage, run_shared_trade_lifecycle_engines
@@ -8,7 +10,7 @@ except Exception:
     TradeLifecyclePacket = None
     TradeStage = None
     run_shared_trade_lifecycle_engines = None
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from options_engine.constants import (
     PAGE_TITLE,
@@ -41,6 +43,12 @@ st.set_page_config(
 
 
 BEGINNER_MODE_KEY = "otcc_beginner_mode"
+OPTION_CHAIN_PANEL_OPEN_KEY = "otcc_option_chain_panel_open"
+SELECTED_CONTRACT_KEY = "otcc_selected_option_contract"
+STEP5_VALIDATION_COMPLETE_KEY = "otcc_step5_validation_complete"
+STEP5_VALIDATION_STATUS_KEY = "otcc_step5_validation_status"
+OTCC_CONSTRUCTION_COMPLETE_KEY = "otcc_construction_complete"
+OTCC_VALIDATION_COMPLETE_KEY = "otcc_validation_complete"
 
 
 BEGINNER_GLOSSARY_TABLE = """
@@ -65,53 +73,86 @@ STRATEGY_LESSONS: dict[str, dict[str, str]] = {
         "content": """
 ### What this strategy is
 
-You sell a put option, collect premium now, and accept the possibility of buying 100 shares if assigned.
+A **Cash-Secured Put** is an options strategy used to generate income while potentially buying a stock you already want to own.
 
-### When traders use it
+You receive premium immediately, and in exchange you agree to buy 100 shares if the stock finishes below your selected strike price at expiration.
 
-- Income while waiting to buy a stock.
-- Entering at a lower effective cost basis than current price.
+### Why JFBP Quant Desk recommended it
 
-### Required fields
+The Quant Engine determined that this opportunity satisfies the institutional conditions for a Cash-Secured Put.
 
-- Short Strike
-- Short Premium
-- Expiration
-- Contracts
+The recommendation considers multiple factors, including:
 
-### Which fields are not used
+- Market trend
+- Relative strength
+- Market regime
+- Institutional quality
+- Risk profile
+- Option suitability
 
-- Long Strike / Protection Strike = 0
-- Long Premium = 0
+**You do not need to decide which strategy to use - the platform has already selected the most appropriate strategy for this opportunity.**
 
-### What the user enters
+### Your role
 
-- Current stock price: for context
-- Short Strike: where you agree to buy if assigned
-- Short Premium: money received per share
-- Expiration: contract end date
-- Contracts: 1 contract = 100 shares
+The Options Decision Center is an **institutional trade review system**, not an option-chain scanner.
 
-### What the engine calculates
+Your job is to:
 
-- Credit
-- Buying Power
-- Max Profit
-- Max Loss
-- Break-even
-- ROI
+1. Review the recommended strategy.
+2. Select the option contract you prefer.
+3. Verify the live calculations.
+4. Review the institutional analysis.
+5. Approve the trade if it meets your standards.
+
+### What you may customize
+
+If you wish, you may choose a different option contract by changing:
+
+- Strike Price
+- Expiration Date
+- Number of Contracts
+
+As live option-chain integration expands, the platform will automatically update premiums and trade calculations whenever a different contract is selected.
+
+### What JFBP Quant Desk calculates automatically
+
+Once a contract is selected, the platform automatically calculates:
+
+- Premium Collected
+- Buying Power Required
+- Break-even Price
+- Maximum Profit
+- Maximum Loss
+- Return on Investment (ROI)
 - Annualized Return
 - Reward / Risk
+- Institutional Readiness Score
+
+All calculations update instantly whenever the selected contract changes.
+
+### Understanding the Risk
+
+A Cash-Secured Put does **not** create unlimited option risk.
+
+If the option expires worthless, you simply keep the premium.
+
+If the option is assigned, you purchase the shares at the strike price.
+
+From that point forward, your risk is identical to owning the stock.
+
+The Maximum Loss shown by the platform assumes the worst theoretical case in which the company becomes worthless after assignment.
 
 ### Main risk
 
-If the stock drops below your strike, you may be assigned and must buy shares.
+If the stock closes below your strike price at expiration, you may be assigned and required to purchase **100 shares per contract**.
 
-### Beginner warning
+### Beginner Tip
 
-Make sure buying power is available for potential assignment.
+Think of this page as an **Institutional Trade Review**.
 
-> The platform recommends the strategy. The user does not need to choose from all option types manually.
+The Quant Engine has already done the difficult work of identifying the opportunity and recommending the appropriate strategy.
+
+Your responsibility is to understand the recommendation, review the numbers, and decide whether to execute the trade.
 """,
     },
     "Covered Call": {
@@ -429,6 +470,237 @@ Credit spreads can lose quickly during sharp upside moves; size conservatively.
 
 
 # ============================================================
+# Institutional Option Chain Framework (Phase 1)
+# ============================================================
+
+@dataclass
+class OptionContract:
+    underlying: str
+    expiration: date
+    strike: float
+    bid: float
+    ask: float
+    mid: float
+    last: float
+    delta: float
+    gamma: float
+    theta: float
+    vega: float
+    iv: float
+    volume: int
+    open_interest: int
+    pop: float
+    expected_return: float
+    annualized_return: float
+    institutional_score: float
+    preferred: bool
+    confidence: float
+    contract_type: str = "Put"
+    contracts: int = 1
+
+    @property
+    def contract_label(self) -> str:
+        return f"{self.strike:g} {self.contract_type}"
+
+
+class OptionChainProvider(Protocol):
+    """Provider abstraction for options chain sourcing.
+
+    Future hook (not implemented in Phase 1):
+    When an IBKR/Tradier/Polygon/ORATS provider is active, fetch live chains
+    through this contract and keep Trade Construction provider-agnostic.
+    Supported future implementations can include: IBKR, Tradier, Polygon,
+    ORATS, and Manual Entry providers.
+    """
+
+    def get_option_chain(self, underlying: str, strategy: str, reference_price: float = 0.0) -> list[OptionContract]:
+        ...
+
+
+class MockOptionChainProvider:
+    def get_option_chain(self, underlying: str, strategy: str, reference_price: float = 0.0) -> list[OptionContract]:
+        base_expiration = date.today() + timedelta(days=21)
+        symbol = (underlying or "AAPL").strip().upper()
+        # Placeholder chain for workflow/UI validation only.
+        return [
+            OptionContract(
+                underlying=symbol,
+                expiration=base_expiration,
+                strike=345.0,
+                bid=3.00,
+                ask=3.20,
+                mid=3.10,
+                last=3.08,
+                delta=-0.20,
+                gamma=0.019,
+                theta=-0.042,
+                vega=0.118,
+                iv=0.29,
+                volume=1420,
+                open_interest=9050,
+                pop=86.0,
+                expected_return=6.4,
+                annualized_return=29.1,
+                institutional_score=98.0,
+                preferred=True,
+                confidence=94.0,
+            ),
+            OptionContract(
+                underlying=symbol,
+                expiration=base_expiration,
+                strike=342.5,
+                bid=4.15,
+                ask=4.35,
+                mid=4.25,
+                last=4.24,
+                delta=-0.24,
+                gamma=0.021,
+                theta=-0.047,
+                vega=0.122,
+                iv=0.31,
+                volume=980,
+                open_interest=7230,
+                pop=82.0,
+                expected_return=7.2,
+                annualized_return=31.8,
+                institutional_score=94.0,
+                preferred=False,
+                confidence=89.0,
+            ),
+            OptionContract(
+                underlying=symbol,
+                expiration=base_expiration,
+                strike=350.0,
+                bid=1.25,
+                ask=1.40,
+                mid=1.33,
+                last=1.32,
+                delta=-0.12,
+                gamma=0.014,
+                theta=-0.027,
+                vega=0.093,
+                iv=0.24,
+                volume=1670,
+                open_interest=11240,
+                pop=91.0,
+                expected_return=3.1,
+                annualized_return=18.9,
+                institutional_score=90.0,
+                preferred=False,
+                confidence=84.0,
+            ),
+        ]
+
+
+class InstitutionalRankingEngine:
+    def rank_contracts(self, contracts: list[OptionContract]) -> list[OptionContract]:
+        return sorted(
+            contracts,
+            key=lambda c: (
+                int(c.preferred),
+                c.institutional_score,
+                c.confidence,
+                c.pop,
+                c.annualized_return,
+            ),
+            reverse=True,
+        )
+
+
+def get_option_chain_provider() -> OptionChainProvider:
+    # Phase 1: fixed provider for localhost workflow validation.
+    return MockOptionChainProvider()
+
+
+def get_ranked_option_chain(underlying: str, strategy: str, reference_price: float = 0.0) -> list[OptionContract]:
+    provider = get_option_chain_provider()
+    contracts = provider.get_option_chain(underlying, strategy, reference_price=reference_price)
+    ranking_engine = InstitutionalRankingEngine()
+    return ranking_engine.rank_contracts(contracts)
+
+
+def contract_tier_badge(contract: OptionContract) -> str:
+    if contract.preferred or contract.institutional_score >= 97:
+        return "★★★★★ Preferred"
+    if contract.institutional_score >= 93:
+        return "★★★★ Conservative"
+    return "★★★ Aggressive"
+
+
+def apply_option_contract_to_trade(trade, contract: OptionContract) -> None:
+    trade.symbol = contract.underlying
+    trade.expiration = contract.expiration
+    trade.strike = float(contract.strike)
+    trade.premium = float(contract.mid)
+    trade.contracts = int(contract.contracts or 1)
+
+    st.session_state["otcc_construction_symbol_display"] = trade.symbol
+    st.session_state["otcc_expiration"] = trade.expiration
+    st.session_state["otcc_short_strike"] = trade.strike
+    st.session_state["otcc_short_premium"] = trade.premium
+    st.session_state["otcc_contracts"] = trade.contracts
+    st.session_state[SELECTED_CONTRACT_KEY] = {
+        "label": contract.contract_label,
+        "tier": contract_tier_badge(contract),
+        "score": contract.institutional_score,
+        "confidence": contract.confidence,
+        "pop": contract.pop,
+        "annualized": contract.annualized_return,
+        "symbol": trade.symbol,
+        "expiration": trade.expiration,
+        "short_strike": trade.strike,
+        "short_premium": trade.premium,
+        "has_long_leg": bool(float(getattr(contract, "long_strike", 0.0) or 0.0) > 0),
+        "long_strike": float(getattr(contract, "long_strike", 0.0) or 0.0),
+        "long_premium": float(getattr(contract, "long_premium", 0.0) or 0.0),
+    }
+
+
+def sync_trade_from_construction_state(trade) -> None:
+    """Synchronize canonical trade inputs from Step 4 widget state before calculations."""
+    selected = st.session_state.get(SELECTED_CONTRACT_KEY)
+    if isinstance(selected, dict) and selected.get("label"):
+        trade.symbol = str(selected.get("symbol") or trade.symbol or "").strip().upper()
+        trade.expiration = selected.get("expiration") if selected.get("expiration") is not None else st.session_state.get("otcc_expiration", trade.expiration)
+        trade.strike = float(selected.get("short_strike", trade.strike) or 0.0)
+        trade.premium = float(selected.get("short_premium", trade.premium) or 0.0)
+        if bool(selected.get("has_long_leg", False)):
+            trade.long_strike = float(selected.get("long_strike", trade.long_strike) or 0.0)
+            trade.long_premium = float(selected.get("long_premium", trade.long_premium) or 0.0)
+        else:
+            trade.long_strike = float(st.session_state.get("otcc_long_strike", trade.long_strike) or 0.0)
+            trade.long_premium = float(st.session_state.get("otcc_long_premium", trade.long_premium) or 0.0)
+    else:
+        trade.symbol = str(st.session_state.get("otcc_construction_symbol_display", trade.symbol) or "").strip().upper()
+        trade.expiration = st.session_state.get("otcc_expiration", trade.expiration)
+        trade.strike = float(st.session_state.get("otcc_short_strike", trade.strike) or 0.0)
+        trade.long_strike = float(st.session_state.get("otcc_long_strike", trade.long_strike) or 0.0)
+        trade.premium = float(st.session_state.get("otcc_short_premium", trade.premium) or 0.0)
+        trade.long_premium = float(st.session_state.get("otcc_long_premium", trade.long_premium) or 0.0)
+
+    trade.contracts = max(1, int(st.session_state.get("otcc_contracts", trade.contracts) or 1))
+
+
+def build_trade_math_snapshot(trade):
+    """Build one canonical trade_math object from current Step 4 widget/session values."""
+    sync_trade_from_construction_state(trade)
+    trade_math = replace(trade)
+    trade_math = calculate_trade(trade_math)
+
+    # Keep canonical trade object aligned for downstream validation/approval steps.
+    trade.credit = float(getattr(trade_math, "credit", 0.0) or 0.0)
+    trade.debit = float(getattr(trade_math, "debit", 0.0) or 0.0)
+    trade.max_profit = float(getattr(trade_math, "max_profit", 0.0) or 0.0)
+    trade.max_loss = float(getattr(trade_math, "max_loss", 0.0) or 0.0)
+    trade.breakeven = float(getattr(trade_math, "breakeven", 0.0) or 0.0)
+    trade.roi = float(getattr(trade_math, "roi", 0.0) or 0.0)
+    trade.annualized_return = float(getattr(trade_math, "annualized_return", 0.0) or 0.0)
+    trade.reward_risk_ratio = float(getattr(trade_math, "reward_risk_ratio", 0.0) or 0.0)
+    trade.buying_power_required = float(getattr(trade_math, "buying_power_required", 0.0) or 0.0)
+    return trade_math
+
+
+# ============================================================
 # Utility Helpers
 # ============================================================
 
@@ -534,7 +806,7 @@ def compute_decision_readiness_score(trade, packet=None) -> float:
         except Exception:
             return False
 
-    add(8, check_pass("Premium") or float(getattr(trade, "premium", 0.0) or 0.0) > 0)
+    add(8, check_pass("Premium Quality") or float(getattr(trade, "premium", 0.0) or 0.0) > 0)
     add(8, check_pass("Position Size") or int(getattr(trade, "contracts", 0) or 0) >= 1)
     add(10, check_pass("Buying Power"))
     add(8, check_pass("Expiration"))
@@ -614,9 +886,14 @@ def render_native_metric_grid(items: list[tuple[str, str]], columns: int = 4, bl
     cols = max(1, int(columns or 1))
     responsive_block_start(block_class)
     column_group = st.columns(cols)
-    for idx, (label, value) in enumerate(items):
+    for idx, item in enumerate(items):
+        if len(item) >= 3:
+            label, value, help_text = item[0], item[1], item[2]
+        else:
+            label, value = item[0], item[1]
+            help_text = None
         with column_group[idx % cols]:
-            st.metric(label, value)
+            st.metric(label, value, help=help_text)
     responsive_block_end()
 
 
@@ -691,7 +968,10 @@ def render_live_explanation_card(trade) -> None:
 
     if strategy == "Cash-Secured Put":
         strategy_line = f"You receive {premium_collected} immediately if your order fills."
-        risk_line = f"If the stock fell to $0, your worst possible loss would be {max_loss}."
+        risk_line = (
+            "If the option is assigned, you become the owner of 100 shares per contract. "
+            "This number represents the maximum theoretical loss only if the stock eventually falls to $0 after assignment."
+        )
     elif strategy == "Covered Call":
         strategy_line = f"This covered call collects {premium_collected} against shares you already own."
         risk_line = f"Your key risk is equity downside in owned shares, with option-side max loss shown as {max_loss}."
@@ -711,8 +991,8 @@ def render_live_explanation_card(trade) -> None:
     def _render_content() -> None:
         st.markdown("### 📖 How to Read This Trade")
         st.markdown(f"**Premium Collected**  \nYou receive {premium_collected} immediately if your order fills.")
-        st.markdown(f"**Buying Power**  \nYour broker reserves {buying_power_reserved} while the trade is open.")
-        st.markdown(f"**Maximum Loss**  \n{risk_line}")
+        st.markdown(f"**Buying Power**  \nCash your broker reserves because you may be required to purchase the shares if assigned. Current reserved amount: {buying_power_reserved}.")
+        st.markdown(f"**Worst-Case Stock Ownership Loss**  \n{risk_line}")
         st.markdown(f"**Break-even**  \nYou begin losing money only below {breakeven}.")
         st.markdown(f"**ROI**  \nYour expected return is {roi}.")
         st.markdown(f"**Annualized Return**  \nEquivalent yearly return based on this expiration is {annualized_return}.")
@@ -760,7 +1040,10 @@ def _render_math_value_card(label: str, value: str, tone: str = "neutral", help_
 
 
 def render_institutional_trade_summary(trade, packet=None) -> None:
-    readiness = float(getattr(getattr(packet, "approval", None), "score", 0.0) or 0.0) if packet is not None else 0.0
+    try:
+        readiness = float(compute_decision_readiness_score(trade, None) or 0.0)
+    except Exception:
+        readiness = 0.0
     status = str(getattr(trade, "approval_status", "") or "Pending")
     strategy = str(trade.active_strategy() or trade.recommended_strategy or "Pending")
     summary_rows = [
@@ -770,10 +1053,18 @@ def render_institutional_trade_summary(trade, packet=None) -> None:
         ("Short Strike", money(float(getattr(trade, "strike", 0.0) or 0.0)) if float(getattr(trade, "strike", 0.0) or 0.0) > 0 else "Pending"),
         ("Short Premium", money(float(getattr(trade, "premium", 0.0) or 0.0)) if float(getattr(trade, "premium", 0.0) or 0.0) > 0 else "Pending"),
         ("Expiration", str(getattr(trade, "expiration", "") or "Pending")),
-        ("Buying Power", money(float(getattr(trade, "buying_power_required", 0.0) or 0.0)) if float(getattr(trade, "buying_power_required", 0.0) or 0.0) > 0 else "Waiting for strike"),
+        (
+            "Buying Power",
+            money(float(getattr(trade, "buying_power_required", 0.0) or 0.0)) if float(getattr(trade, "buying_power_required", 0.0) or 0.0) > 0 else "Waiting for strike",
+            "Cash your broker reserves because you may be required to purchase the shares if assigned.",
+        ),
         ("Break-even", money(float(getattr(trade, "breakeven", 0.0) or 0.0)) if float(getattr(trade, "breakeven", 0.0) or 0.0) > 0 else "Waiting for strike and premium"),
         ("Maximum Profit", money(float(getattr(trade, "max_profit", 0.0) or 0.0)) if float(getattr(trade, "max_profit", 0.0) or 0.0) > 0 else "Pending"),
-        ("Maximum Loss", money(float(getattr(trade, "max_loss", 0.0) or 0.0)) if float(getattr(trade, "max_loss", 0.0) or 0.0) > 0 else "Waiting for trade details"),
+        (
+            "Worst-Case Stock Ownership Loss",
+            money(float(getattr(trade, "max_loss", 0.0) or 0.0)) if float(getattr(trade, "max_loss", 0.0) or 0.0) > 0 else "Waiting for trade details",
+            "Assumes assignment occurs and the underlying eventually falls to $0.",
+        ),
         ("ROI", percent(float(getattr(trade, "roi", 0.0) or 0.0)) if abs(float(getattr(trade, "roi", 0.0) or 0.0)) > 0 else "Waiting for completed trade"),
         ("Annualized Return", percent(float(getattr(trade, "annualized_return", 0.0) or 0.0)) if abs(float(getattr(trade, "annualized_return", 0.0) or 0.0)) > 0 else "Waiting for completed trade"),
         ("Approval Readiness", f"{readiness:,.1f}%" if readiness > 0 else "Pending"),
@@ -785,7 +1076,7 @@ def render_institutional_trade_summary(trade, packet=None) -> None:
         render_native_metric_grid(summary_rows, columns=3, block_class="otcc-grid-3")
         premium_line = money(float(getattr(trade, "credit", 0.0) or 0.0)) if float(getattr(trade, "credit", 0.0) or 0.0) > 0 else "waiting premium"
         max_loss_line = money(float(getattr(trade, "max_loss", 0.0) or 0.0)) if float(getattr(trade, "max_loss", 0.0) or 0.0) > 0 else "waiting risk"
-        st.caption(f"This trade collects {premium_line} in premium and risks up to {max_loss_line} if the trade moves fully against you.")
+        st.caption(f"This trade collects {premium_line} in premium. Worst-case stock ownership loss is {max_loss_line} only if assignment occurs and the underlying later falls to $0.")
 
 
 def render_live_trade_math_dashboard(trade) -> None:
@@ -849,21 +1140,21 @@ def render_live_trade_math_dashboard(trade) -> None:
                 "Buying Power Required",
                 buying_power_display,
                 tone="risk",
-                help_text="This is the cash your broker reserves while the position is open.",
+                help_text="Cash your broker reserves because you may be required to purchase the shares if assigned.",
             )
         with risk_top_right:
             _render_math_value_card(
                 "Capital at Risk",
                 capital_at_risk_display,
                 tone="risk",
-                help_text="The amount of capital exposed if the trade performs as poorly as possible.",
+                help_text="Capital committed to purchasing the underlying shares if assignment occurs.",
             )
 
         _render_math_value_card(
-            "Maximum Loss",
+            "Worst-Case Stock Ownership Loss",
             max_loss_display,
             tone="risk",
-            help_text="Worst-case loss if the trade reaches its maximum defined risk.",
+            help_text="Maximum theoretical loss after assignment if the stock ultimately becomes worthless.",
             emphasized=True,
         )
 
@@ -880,7 +1171,7 @@ def render_live_trade_math_dashboard(trade) -> None:
                 "Risk Level",
                 risk_level,
                 tone="risk",
-                help_text="Display-only risk tier based on Maximum Loss relative to Maximum Profit.",
+                help_text="Display-only risk tier based on Worst-Case Stock Ownership Loss relative to Maximum Profit.",
             )
 
     with st.container(border=True):
@@ -905,7 +1196,7 @@ def render_live_trade_math_dashboard(trade) -> None:
                 "Reward / Risk",
                 reward_risk_display,
                 tone="performance",
-                help_text="Potential reward divided by maximum possible loss.",
+                help_text="Potential reward divided by worst-case modeled loss.",
             )
 
     with st.container(border=True):
@@ -1006,7 +1297,7 @@ def approval_checklist_from_trade(trade, packet=None) -> dict:
 
     return {
         "trend_confirmed": bool(strategy) and strategy not in {"Pending", "No Options Trade", "No options structure", "No New Long Premium"} and (opportunity_score >= 60 or construction_score >= 60),
-        "premium_confirmed": check_pass("Premium") or premium > 0 or long_premium > 0,
+        "premium_confirmed": check_pass("Premium Quality") or premium > 0 or long_premium > 0,
         "liquidity_confirmed": construction_score >= 60,
         "strike_confirmed": strike > 0,
         "expiration_confirmed": check_pass("Expiration") or expiration is not None,
@@ -1034,8 +1325,8 @@ def institutional_review_checks(trade, packet=None) -> dict:
         "liquidity_confirmed": "Construction quality below liquidity threshold (60).",
         "strike_confirmed": "Short strike must be greater than zero.",
         "expiration_confirmed": "Expiration date must be in the future.",
-        "position_size_confirmed": "Contracts must be at least 1.",
-        "buying_power_confirmed": "Required buying power exceeds available buying power.",
+        "position_size_confirmed": "Verify this position size fits your portfolio allocation guidelines.",
+        "buying_power_confirmed": "Verify that your brokerage account has sufficient available buying power before execution.",
         "event_risk_confirmed": "Event risk requires manual confirmation.",
         "risk_reward_confirmed": "Risk / Reward requires manual review confirmation.",
     }
@@ -1215,12 +1506,66 @@ def clear_packet_approval(trade, packet=None):
         return packet
     if not isinstance(packet, TradeLifecyclePacket):
         packet = TradeLifecyclePacket.from_session(st.session_state)
+
+    checklist_fields = [
+        "trend_confirmed",
+        "premium_confirmed",
+        "liquidity_confirmed",
+        "strike_confirmed",
+        "expiration_confirmed",
+        "position_size_confirmed",
+        "buying_power_confirmed",
+        "event_risk_confirmed",
+        "risk_reward_confirmed",
+    ]
+    for field in checklist_fields:
+        try:
+            setattr(packet.approval, field, False)
+        except Exception:
+            pass
+
+    packet.approval.score = 0.0
     packet.approval.approved = False
     packet.approval.approved_by = ""
     packet.approval.approved_timestamp = ""
-    packet.approval.notes = "Approval cleared; trade reopened for editing."
+    packet.approval.notes = ""
+    packet.execution.approval = None
+    packet.execution.execution_confidence = None
     packet.status = "DRAFT"
+
+    try:
+        completed = list(getattr(getattr(packet, "metadata", None), "completed_stages", []) or [])
+        packet.metadata.completed_stages = [
+            stage for stage in completed if stage not in {"EXECUTION_REVIEW", "ORDER_EXECUTION", "COMPLETE"}
+        ]
+    except Exception:
+        pass
+
     packet.save_to_session(st.session_state)
+
+    # Clear approval/decision-related session mirrors and stale checkbox state.
+    for key in [
+        "approval",
+        "approval_score",
+        "approved",
+        "approved_by",
+        "approved_timestamp",
+        "approval_notes",
+        "execution_confidence",
+        "institutional_decision",
+        "institutional_decision_object",
+        "otcc_decision_readiness_override",
+        "otcc_decision_override",
+        STEP5_VALIDATION_COMPLETE_KEY,
+        STEP5_VALIDATION_STATUS_KEY,
+        OTCC_VALIDATION_COMPLETE_KEY,
+    ]:
+        st.session_state.pop(key, None)
+
+    for key in list(st.session_state.keys()):
+        if key.startswith("otcc_approval_check_"):
+            st.session_state.pop(key, None)
+
     try:
         trade.approval_status = PENDING_TEXT
         trade.reset_validation()
@@ -1304,12 +1649,6 @@ def render_commander_approval(trade, packet=None):
             approval.score = score
             changed = True
 
-        approved = bool(getattr(approval, "approved", False))
-        status_text = "APPROVED" if approved else "DRAFT"
-        if str(getattr(packet, "status", "DRAFT") or "DRAFT") != status_text:
-            packet.status = status_text
-            changed = True
-
         if changed:
             packet.save_to_session(st.session_state)
 
@@ -1337,11 +1676,14 @@ def render_commander_approval(trade, packet=None):
             st.markdown(f"<span style='color:{readiness_color};font-weight:800;'>{readiness_label} readiness</span>", unsafe_allow_html=True)
         with right:
             st.markdown("### Institutional Decision")
+            review_status = "READY FOR CONSTRUCTION"
+            review_readiness = "100.0%"
+            review_timestamp = str(getattr(approval, "approved_timestamp", "") or "Pending")
             decision_rows = [
-                ("Status", str(packet.status or "DRAFT")),
-                ("Readiness", f"{score:,.1f}%"),
-                ("Approved By", str(getattr(approval, "approved_by", "") or "Pending")),
-                ("Timestamp", str(getattr(approval, "approved_timestamp", "") or "Pending")),
+                ("Review Status", review_status),
+                ("Readiness", review_readiness),
+                ("Reviewed By", "Trade Review Desk"),
+                ("Review Timestamp", review_timestamp),
             ]
             st.markdown(
                 "<div class='otcc-kv-card'>"
@@ -1352,46 +1694,7 @@ def render_commander_approval(trade, packet=None):
                 + "</div>",
                 unsafe_allow_html=True,
             )
-
-        if approved:
-            approved_ts = str(getattr(approval, "approved_timestamp", "") or "")
-            st.markdown(
-                f"""
-                <div class="otcc-approved-banner">
-                    <div class="otcc-approved-banner-title">✅ APPROVED</div>
-                    <div class="otcc-approved-banner-meta">
-                        Trade Review Desk<br>
-                        Trade Approved<br>
-                        Packet Status: {packet.status or "APPROVED"}<br>
-                        Timestamp: {approved_ts or "Pending"}
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-        responsive_block_start("otcc-actions-row")
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("Approve Trade", key="otcc_approve_trade_packet", use_container_width=True, type="primary", disabled=approved):
-                if score < 75.0:
-                    st.warning("Approval readiness must be at least 75% before this trade can be approved.")
-                else:
-                    approval.approved = True
-                    approval.approved_by = "Trade Review Desk"
-                    approval.approved_timestamp = datetime.now(timezone.utc).isoformat()
-                    packet.status = "APPROVED"
-                    packet.save_to_session(st.session_state)
-                    st.rerun()
-        with c2:
-            if st.button("Clear Approval", key="otcc_clear_trade_approval", use_container_width=True, disabled=not approved):
-                approval.approved = False
-                approval.approved_by = ""
-                approval.approved_timestamp = ""
-                packet.status = "DRAFT"
-                packet.save_to_session(st.session_state)
-                st.rerun()
-        responsive_block_end()
+        st.caption("Final trade approval is completed in Step 6 after construction and validation.")
 
     return packet
 
@@ -2498,6 +2801,63 @@ def render_other_strategy_selection(trade):
         responsive_block_end()
 
 
+def render_contract_selection_panel(trade, strategy: str, locked: bool) -> None:
+    selected = st.session_state.get(SELECTED_CONTRACT_KEY)
+    contract_selected = bool(isinstance(selected, dict) and selected.get("label"))
+    button_label = "Change Selected Contract" if contract_selected else "Select Option Contract"
+    if st.button(button_label, key="otcc_select_option_contract", use_container_width=False, disabled=locked):
+        st.session_state[OPTION_CHAIN_PANEL_OPEN_KEY] = True
+
+    if isinstance(selected, dict) and selected.get("label"):
+        st.caption(
+            "Selected contract: "
+            f"{selected.get('label')} | {selected.get('tier')} | "
+            f"Score {selected.get('score', 0):,.1f} | "
+            f"Confidence {selected.get('confidence', 0):,.1f}%"
+        )
+        st.info("Contract-derived fields are locked. Use Change Selected Contract to choose a different strike, expiration, or premium.")
+
+    with st.expander("Option Chain Selection (Mock Provider)", expanded=bool(st.session_state.get(OPTION_CHAIN_PANEL_OPEN_KEY, False))):
+        st.caption("Option Chain Provider -> Institutional Ranking Engine -> Trade Construction -> Risk Validation -> Approval -> Execution")
+        st.caption("Future placeholder: when IBKR is active, live chain download and ranking will feed this panel automatically.")
+
+        contracts = get_ranked_option_chain(trade.symbol, strategy, reference_price=float(getattr(trade, "stock_price", 0.0) or 0.0))
+        if not contracts:
+            st.info("No contracts available for selection yet.")
+            return
+
+        for idx, contract in enumerate(contracts):
+            with st.container(border=True):
+                head_left, head_right = st.columns([1.15, 0.85], gap="small")
+                with head_left:
+                    st.markdown(f"#### {contract.contract_label}")
+                    st.caption(contract_tier_badge(contract))
+                with head_right:
+                    st.markdown(f"**Bid/Ask:** {money(contract.bid)} / {money(contract.ask)}")
+                    st.markdown(f"**Mid:** {money(contract.mid)}")
+
+                metric_rows = [
+                    ("Institutional Score", score_label(contract.institutional_score, "Pending")),
+                    ("Confidence", percent(contract.confidence)),
+                    ("Expected POP", percent(contract.pop)),
+                    ("Expected Return", percent(contract.expected_return)),
+                    ("Annualized Return", percent(contract.annualized_return)),
+                    ("Delta", f"{contract.delta:,.2f}"),
+                    ("Volume / OI", f"{contract.volume:,} / {contract.open_interest:,}"),
+                ]
+                render_native_metric_grid(metric_rows, columns=3, block_class="otcc-grid-3")
+
+                if st.button(
+                    f"Use {contract.contract_label}",
+                    key=f"otcc_use_contract_{idx}",
+                    use_container_width=True,
+                    disabled=locked,
+                ):
+                    apply_option_contract_to_trade(trade, contract)
+                    st.session_state[OPTION_CHAIN_PANEL_OPEN_KEY] = False
+                    st.rerun()
+
+
 # ============================================================
 # Step 2 — Strategy Selection
 # ============================================================
@@ -2562,6 +2922,7 @@ def render_trade_construction(trade, packet=None):
         return
 
     st.success(f"Selected Strategy: {strategy}")
+    render_contract_selection_panel(trade, strategy, locked)
     if beginner_mode_enabled():
         st.info("Beginner Mode is on. Open the lesson below and use the help icons on the fields to stay oriented.")
     if locked:
@@ -2579,11 +2940,23 @@ def render_trade_construction(trade, packet=None):
             # Manual entry stays isolated here so a future broker option-chain picker can swap in without restructuring Step 4.
             responsive_block_start("otcc-grid-3")
             col1, col2, col3 = st.columns(3)
+            st.session_state.setdefault("otcc_construction_symbol_display", trade.symbol)
+            st.session_state.setdefault("otcc_expiration", trade.expiration or date.today())
+            st.session_state.setdefault("otcc_short_strike", float(trade.strike or 0.0))
+            st.session_state.setdefault("otcc_long_strike", float(trade.long_strike or 0.0))
+            st.session_state.setdefault("otcc_short_premium", float(trade.premium or 0.0))
+            st.session_state.setdefault("otcc_long_premium", float(trade.long_premium or 0.0))
+            st.session_state.setdefault("otcc_contracts", int(trade.contracts or 1))
+
+            selected_contract = st.session_state.get(SELECTED_CONTRACT_KEY)
+            contract_selected = bool(isinstance(selected_contract, dict) and selected_contract.get("label"))
+            has_long_leg = bool(selected_contract.get("has_long_leg", False)) if contract_selected else False
+            lock_core_contract_fields = bool(locked or contract_selected)
+            lock_long_leg_fields = bool(locked or (contract_selected and has_long_leg))
 
             with col1:
                 st.text_input(
                     "Underlying",
-                    value=trade.symbol,
                     key="otcc_construction_symbol_display",
                     disabled=True,
                     help=beginner_help("The stock or ETF you want to own."),
@@ -2591,9 +2964,8 @@ def render_trade_construction(trade, packet=None):
 
                 trade.expiration = st.date_input(
                     "Expiration",
-                    value=trade.expiration or date.today(),
                     key="otcc_expiration",
-                    disabled=locked,
+                    disabled=lock_core_contract_fields,
                     help=beginner_help("Select the expiration date of the option contract you are trading. Use your broker chain date, and do not treat the default date as a recommendation."),
                 )
 
@@ -2601,20 +2973,18 @@ def render_trade_construction(trade, packet=None):
                 trade.strike = st.number_input(
                     "Short Strike",
                     min_value=0.0,
-                    value=float(trade.strike or 0.0),
                     step=0.5,
                     key="otcc_short_strike",
-                    disabled=locked,
+                    disabled=lock_core_contract_fields,
                     help=beginner_help("The strike is the price at which you agree to buy the stock if assigned. Lower strikes generally reduce assignment risk but collect less premium."),
                 )
 
                 trade.long_strike = st.number_input(
                     "Long Strike / Protection Strike",
                     min_value=0.0,
-                    value=float(trade.long_strike or 0.0),
                     step=0.5,
                     key="otcc_long_strike",
-                    disabled=locked,
+                    disabled=lock_long_leg_fields,
                     help=beginner_help("Used only when the strategy includes a protection leg. Cash-Secured Put usually stays at 0; spreads require a protection strike."),
                 )
 
@@ -2622,27 +2992,24 @@ def render_trade_construction(trade, packet=None):
                 trade.premium = st.number_input(
                     "Short Premium",
                     min_value=0.0,
-                    value=float(trade.premium or 0.0),
                     step=0.01,
                     key="otcc_short_premium",
-                    disabled=locked,
+                    disabled=lock_core_contract_fields,
                     help=beginner_help("Short Premium is the money received for selling the option. Enter the premium from your broker's option chain."),
                 )
 
                 trade.long_premium = st.number_input(
                     "Long Premium",
                     min_value=0.0,
-                    value=float(trade.long_premium or 0.0),
                     step=0.01,
                     key="otcc_long_premium",
-                    disabled=locked,
+                    disabled=lock_long_leg_fields,
                     help=beginner_help("Long Premium is used when you buy a protection option. Cash-Secured Put is usually 0; spread strategies need this value."),
                 )
 
                 trade.contracts = st.number_input(
                     "Contracts",
                     min_value=1,
-                    value=int(trade.contracts or 1),
                     step=1,
                     key="otcc_contracts",
                     disabled=locked,
@@ -2650,21 +3017,26 @@ def render_trade_construction(trade, packet=None):
                 )
             responsive_block_end()
 
-        trade = calculate_trade(trade)
+        trade_math = build_trade_math_snapshot(trade)
+
+        with left:
+            render_live_explanation_card(trade_math)
+            render_institutional_trade_summary(trade_math, None)
 
         with right:
             responsive_block_start("otcc-live-math-panel")
-            render_live_trade_math_dashboard(trade)
+            render_live_trade_math_dashboard(trade_math)
             responsive_block_end()
-
-            render_live_explanation_card(trade)
-            render_institutional_trade_summary(trade, packet)
 
         responsive_block_end()
 
         if st.button("Mark Construction Complete", use_container_width=True, disabled=locked):
             trade.construction_complete = True
             trade.approval_status = "Pending validation"
+            st.session_state[OTCC_CONSTRUCTION_COMPLETE_KEY] = True
+            st.session_state[OTCC_VALIDATION_COMPLETE_KEY] = False
+            st.session_state[STEP5_VALIDATION_COMPLETE_KEY] = False
+            st.session_state[STEP5_VALIDATION_STATUS_KEY] = ""
             st.rerun()
         responsive_block_end()
 
@@ -2673,12 +3045,15 @@ def render_trade_construction(trade, packet=None):
 # Step 4 — Risk Validation
 # ============================================================
 
-def render_risk_validation(trade):
+def render_risk_validation(trade, packet=None):
     section_header(
         "Step 5",
         "Risk Validation",
         "Validate objective constraints before approval.",
     )
+
+    validation_completed = bool(st.session_state.get(STEP5_VALIDATION_COMPLETE_KEY, False))
+    stored_status = str(st.session_state.get(STEP5_VALIDATION_STATUS_KEY, "") or "").upper().strip()
 
     trade = validate_trade(trade)
     checks = get_validation_checks(trade)
@@ -2686,7 +3061,7 @@ def render_risk_validation(trade):
     display_checks = {
         "Buying Power": checks["Buying Power"],
         "Expiration": checks["Expiration"],
-        "Premium": checks["Premium"],
+        "Premium Quality": checks["Premium Quality"],
         "Position Size": checks["Position Size"],
         "Breakeven vs Stock": checks["Breakeven vs Stock"],
         "Overall Status": (trade.validation_status, "Aggregate validation result."),
@@ -2698,12 +3073,15 @@ def render_risk_validation(trade):
         cols = st.columns(3)
 
         for index, (label, (status, message)) in enumerate(display_checks.items()):
+            display_status = status
+            if label == "Buying Power" and str(status).strip().upper() == "REVIEW":
+                display_status = "PASS / REVIEW"
             with cols[index % 3]:
                 st.markdown(
                     f"""
                     <div class="otcc-status-card">
                         <div class="otcc-status-title">{html.escape(label)}</div>
-                        <div class="otcc-status-body">{html.escape(str(status))} — {html.escape(str(message))}</div>
+                        <div class="otcc-status-body">{html.escape(str(display_status))} — {html.escape(str(message))}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -2719,7 +3097,41 @@ def render_risk_validation(trade):
     if trade.validation_messages:
         with st.expander("Validation detail", expanded=False):
             for message in trade.validation_messages:
-                st.write(f"• {message}")
+                    if str(message).startswith("Buying Power:"):
+                        required_value = money(float(getattr(trade, "buying_power_required", 0.0) or 0.0))
+                        st.write(f"• Buying Power Required: {required_value}")
+                        st.write("• Trader Confirmation: Verify sufficient buying power exists before execution.")
+                    elif str(message).startswith("Position Size:"):
+                        st.write("• Position Size: Trader should verify allocation against personal portfolio rules.")
+                    else:
+                        st.write(f"• {message}")
+
+    construction_complete = bool(st.session_state.get(OTCC_CONSTRUCTION_COMPLETE_KEY, False))
+    can_validate = construction_complete
+    if validation_completed and stored_status not in {"", "PENDING"}:
+        st.success("✅ Risk validation completed.")
+
+    action_label = "Risk Validation Complete" if validation_completed and stored_status not in {"", "PENDING"} else ("Validate Trade Risk" if can_validate else "Complete Step 4 before validation")
+    if st.button(action_label, key="otcc_validate_trade_risk", use_container_width=True, disabled=not can_validate or (validation_completed and stored_status not in {"", "PENDING"})):
+        trade = validate_trade(trade)
+        status_text = str(getattr(trade, "validation_status", "") or "").upper().strip()
+        st.session_state[STEP5_VALIDATION_COMPLETE_KEY] = True
+        st.session_state[STEP5_VALIDATION_STATUS_KEY] = status_text
+        st.session_state[OTCC_VALIDATION_COMPLETE_KEY] = True
+        if isinstance(packet, TradeLifecyclePacket):
+            packet.merge_update(
+                {
+                    "approval": {
+                        "notes": f"Risk validation completed: {status_text or 'PENDING'}",
+                    }
+                },
+                source="Options Decision Center",
+                overwrite=True,
+            )
+            packet.save_to_session(st.session_state)
+        st.rerun()
+
+    return packet
 
 
 # ============================================================
@@ -2734,7 +3146,26 @@ def render_trade_approval(trade, packet=None):
     )
 
     trade = approve_trade(trade)
-    sync_execution_review_to_lifecycle(trade, packet)
+    packet = sync_execution_review_to_lifecycle(trade, packet)
+
+    packet_approval = getattr(packet, "approval", None)
+    final_approved = bool(getattr(packet_approval, "approved", False)) if packet_approval is not None else False
+    final_approved_by = str(getattr(packet_approval, "approved_by", "") or "Pending") if packet_approval is not None else "Pending"
+    final_approved_ts = str(getattr(packet_approval, "approved_timestamp", "") or "Pending") if packet_approval is not None else "Pending"
+
+    construction_complete = bool(st.session_state.get(OTCC_CONSTRUCTION_COMPLETE_KEY, False))
+    validation_complete = bool(st.session_state.get(OTCC_VALIDATION_COMPLETE_KEY, False))
+    trade_math_ready = all(
+        [
+            float(getattr(trade, "strike", 0.0) or 0.0) > 0,
+            float(getattr(trade, "premium", 0.0) or 0.0) > 0,
+            int(getattr(trade, "contracts", 0) or 0) >= 1,
+            float(getattr(trade, "buying_power_required", 0.0) or 0.0) > 0,
+            float(getattr(trade, "max_loss", 0.0) or 0.0) > 0,
+            float(getattr(trade, "breakeven", 0.0) or 0.0) > 0,
+        ]
+    )
+    can_finalize_approval = bool(construction_complete and validation_complete and trade_math_ready)
 
     with st.container(border=True):
         responsive_block_start("otcc-compact-card")
@@ -2749,11 +3180,19 @@ def render_trade_approval(trade, packet=None):
             [
                 ("Institutional Grade", trade.institutional_grade or "Pending"),
                 ("Decision Readiness", f"{readiness_score:,.1f}%"),
-                ("Approval Status", trade.approval_status or "WAIT"),
+                ("Approval Status", "APPROVED" if final_approved else (trade.approval_status or "WAIT")),
                 ("Outstanding Issues", str(outstanding)),
             ],
             columns=4,
             block_class="otcc-grid-4",
+        )
+
+        st.markdown(
+            "<div class='otcc-kv-card'>"
+            + f"<div class='otcc-kv-row'><div class='otcc-kv-key'>Approved By</div><div class='otcc-kv-val'>{html.escape(final_approved_by)}</div></div>"
+            + f"<div class='otcc-kv-row'><div class='otcc-kv-key'>Timestamp</div><div class='otcc-kv-val'>{html.escape(final_approved_ts)}</div></div>"
+            + "</div>",
+            unsafe_allow_html=True,
         )
 
         if outstanding > 0:
@@ -2764,18 +3203,60 @@ def render_trade_approval(trade, packet=None):
         st.markdown("**Decision Summary**")
         st.info(approval_reason(trade))
 
-        if not trade.construction_complete:
+        if not construction_complete:
             st.warning("Construction is not marked complete yet. The approval engine will remain in WAIT mode.")
+        if not can_finalize_approval:
+            missing = []
+            if not construction_complete:
+                missing.append("Construction not complete")
+            if not validation_complete:
+                missing.append("Validation not complete")
+            if not trade_math_ready:
+                missing.append("Trade math not ready")
+            st.warning("Final approval is blocked: " + " | ".join(missing))
 
         if trade.warnings:
             with st.expander("Approval Warnings", expanded=False):
                 for warning in trade.warnings:
-                    st.warning(warning)
+                    warning_text = str(warning)
+                    if "Available buying power has not been entered" in warning_text:
+                        required_value = money(float(getattr(trade, "buying_power_required", 0.0) or 0.0))
+                        st.warning(f"Verify that your brokerage account has at least {required_value} available buying power before execution.")
+                    elif "No account size or max risk limit is available" in warning_text:
+                        st.warning("Verify this position size fits your portfolio allocation guidelines.")
+                    else:
+                        st.warning(warning_text)
 
         if trade.validation_messages:
             with st.expander("Approval Evidence", expanded=False):
                 for message in trade.validation_messages:
-                    st.write(f"• {message}")
+                    if str(message).startswith("Buying Power:"):
+                        required_value = money(float(getattr(trade, "buying_power_required", 0.0) or 0.0))
+                        st.write(f"• Buying Power Required: {required_value}")
+                        st.write("• Trader Confirmation: Verify sufficient buying power exists before execution.")
+                    elif str(message).startswith("Position Size:"):
+                        st.write("• Position Size: Trader should verify allocation against personal portfolio rules.")
+                    else:
+                        st.write(f"• {message}")
+
+        responsive_block_start("otcc-actions-row")
+        a1, a2, a3 = st.columns(3)
+        with a1:
+            if st.button("Approve Trade", key="otcc_approve_trade_final", use_container_width=True, type="primary", disabled=final_approved):
+                if not can_finalize_approval:
+                    st.warning("Complete Step 4 construction and Step 5 validation before final approval.")
+                else:
+                    approve_packet_in_lifecycle(trade, packet)
+                    st.rerun()
+        with a2:
+            if st.button("Clear Approval", key="otcc_clear_trade_approval_final", use_container_width=True, disabled=not final_approved):
+                clear_packet_approval(trade, packet)
+                st.rerun()
+        with a3:
+            if st.button("Cancel Decision", key="otcc_cancel_trade_decision_final", use_container_width=True):
+                clear_packet_approval(trade, packet)
+                st.rerun()
+        responsive_block_end()
 
         st.caption("Phase 4 approval engine.")
         responsive_block_end()
@@ -2849,6 +3330,11 @@ def render_execution_package(trade):
                 value=ticket["risk_notes"],
                 key="otcc_risk_notes",
             )
+            st.info(
+                "Assignment is not a loss event by itself.\n\n"
+                "Assignment simply converts the option position into stock ownership.\n\n"
+                "Future profit or loss then depends on how the stock performs after assignment."
+            )
         responsive_block_end()
 
 
@@ -2860,6 +3346,9 @@ def main():
     trade = get_trade()
     inject_commander_css()
     st.session_state.setdefault(BEGINNER_MODE_KEY, False)
+    st.session_state.setdefault(OTCC_CONSTRUCTION_COMPLETE_KEY, bool(getattr(trade, "construction_complete", False)))
+    existing_validation_status = str(getattr(trade, "validation_status", "") or "").upper().strip()
+    st.session_state.setdefault(OTCC_VALIDATION_COMPLETE_KEY, existing_validation_status not in {"", "PENDING"})
     packet = apply_decision_packet_if_needed(trade)
 
     # On page load, resolve Decision Review immediately from current trade
@@ -2879,10 +3368,95 @@ def main():
 
     render_beginner_mode_toggle()
 
-    with st.expander("ℹ️ How to use Options Decision Center", expanded=False):
+    with st.expander("ℹ️ How to Use the Options Decision Center", expanded=False):
         st.markdown(
-            "Workflow: Mission Briefing -> Strategy Recommendation -> Institutional Review -> Trade Construction -> "
-            "Risk Validation -> Trade Approval -> Execution Package"
+            """
+## Before You Begin
+
+The **Options Decision Center** does **not** search for trading opportunities.
+
+It receives opportunities that have already been analyzed by the JFBP Quant Desk Quant Engine.
+
+Choose one of the following entry points:
+
+### 🎯 Opportunity Center
+
+Displays the highest-ranked opportunities across all asset classes.
+
+Use this when you want the Quant Engine to select the best opportunity available.
+
+### 🛡️ Options Center
+
+Displays opportunities specifically qualified for options strategies.
+
+Use this when you only want trades that are suitable for options.
+
+Click **Options Decision Center** to send the selected opportunity into the institutional trade workflow.
+
+## Institutional Workflow
+
+### 1. Receive Opportunity
+
+Receive a qualified opportunity from:
+
+- Opportunity Center
+- Options Center
+
+↓
+
+### 2. Mission Briefing
+
+Review why the Quant Engine selected this opportunity.
+
+↓
+
+### 3. Strategy Recommendation
+
+Review the recommended options strategy.
+
+↓
+
+### 4. Institutional Review
+
+Verify that institutional quality standards have been met.
+
+↓
+
+### 5. Trade Construction
+
+Select an option contract (or manually enter one) and review the live calculations.
+
+↓
+
+### 6. Risk Validation
+
+Confirm:
+
+- Buying Power
+- Break-even
+- Maximum Loss
+- ROI
+- Annualized Return
+- Risk Metrics
+
+↓
+
+### 7. Trade Approval
+
+Approve the completed trade after all institutional checks pass.
+
+↓
+
+### 8. Execution Package
+
+Review the final institutional trade ticket before sending the order to your broker.
+"""
+        )
+        st.info(
+            "💡 **New to Options?**\n\n"
+            "The Options Decision Center walks you through each step.\n\n"
+            "If you are unfamiliar with options terminology, open the **Strategy Lesson** and use the **ⓘ Help** icons beside each field. "
+            "The system explains each concept as you build the trade."
         )
 
     render_step_separator()
@@ -2906,7 +3480,7 @@ def main():
     render_trade_construction(trade, packet)
 
     render_step_separator()
-    render_risk_validation(trade)
+    packet = render_risk_validation(trade, packet)
 
     render_step_separator()
     responsive_block_start("otcc-step67-row")

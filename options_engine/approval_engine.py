@@ -101,7 +101,7 @@ def approval_reason(trade: TradeModel) -> str:
     status = str(trade.approval_status or "WAIT").upper()
 
     if status == "APPROVED":
-        return "Validation checks support the trade. Risk, buying power, premium, and structure appear acceptable for this phase."
+        return "Validation checks support the trade. Strategy quality, strike, premium, expiration, break-even, capital required, worst-case stock ownership loss, and structure appear acceptable for this phase."
 
     if status == "NEEDS ADJUSTMENT":
         return "One or more checks require adjustment before this trade should be considered execution-ready."

@@ -101,6 +101,9 @@ def build_risk_notes(trade: TradeModel) -> str:
     notes = [
         "Options involve risk and can lose money.",
         "Validate liquidity, earnings date, position size, and buying power before execution.",
+        "Assignment is not a loss event by itself.",
+        "Assignment simply converts the option position into stock ownership.",
+        "Future profit or loss then depends on how the stock performs after assignment.",
     ]
 
     if trade.approval_status:
