@@ -40,6 +40,394 @@ st.set_page_config(
 )
 
 
+BEGINNER_MODE_KEY = "otcc_beginner_mode"
+
+
+BEGINNER_GLOSSARY_TABLE = """
+| Term | Meaning |
+|---|---|
+| Underlying | The stock or ETF |
+| Strike | Price where shares may be bought or sold |
+| Premium | Money paid or received for the option |
+| Assignment | When the option obligation is triggered |
+| Expiration | Final day of the option contract |
+| Contract | Controls 100 shares |
+| DTE | Days to expiration |
+| Buying Power | Cash reserved by the broker |
+| Break-even | Stock price where profit becomes zero |
+| ROI | Return on invested capital |
+"""
+
+
+STRATEGY_LESSONS: dict[str, dict[str, str]] = {
+    "Cash-Secured Put": {
+        "title": "🎓 Strategy Lesson — Cash-Secured Put",
+        "content": """
+### What this strategy is
+
+You sell a put option, collect premium now, and accept the possibility of buying 100 shares if assigned.
+
+### When traders use it
+
+- Income while waiting to buy a stock.
+- Entering at a lower effective cost basis than current price.
+
+### Required fields
+
+- Short Strike
+- Short Premium
+- Expiration
+- Contracts
+
+### Which fields are not used
+
+- Long Strike / Protection Strike = 0
+- Long Premium = 0
+
+### What the user enters
+
+- Current stock price: for context
+- Short Strike: where you agree to buy if assigned
+- Short Premium: money received per share
+- Expiration: contract end date
+- Contracts: 1 contract = 100 shares
+
+### What the engine calculates
+
+- Credit
+- Buying Power
+- Max Profit
+- Max Loss
+- Break-even
+- ROI
+- Annualized Return
+- Reward / Risk
+
+### Main risk
+
+If the stock drops below your strike, you may be assigned and must buy shares.
+
+### Beginner warning
+
+Make sure buying power is available for potential assignment.
+
+> The platform recommends the strategy. The user does not need to choose from all option types manually.
+""",
+    },
+    "Covered Call": {
+        "title": "🎓 Strategy Lesson — Covered Call",
+        "content": """
+### What this strategy is
+
+You sell a call option against shares you already own and collect premium.
+
+### When traders use it
+
+- Generate income on existing shares.
+- Set a planned exit level if shares are called away.
+
+### Required fields
+
+- Short Strike
+- Short Premium
+- Expiration
+- Contracts
+
+### Which fields are not used
+
+- Long Strike / Protection Strike = 0
+- Long Premium = 0
+
+### What the user enters
+
+- Short Strike above or near intended sale price
+- Short Premium from the option chain
+- Expiration and Contracts
+
+### What the engine calculates
+
+- Credit
+- Buying Power impact
+- Max Profit / Max Loss estimates
+- Break-even
+- ROI / Annualized Return
+
+### Main risk
+
+Shares may be called away if price rises above strike by expiration.
+
+### Beginner warning
+
+Only use this if you own 100 shares per contract.
+
+> The platform recommends the strategy. The user does not need to choose from all option types manually.
+""",
+    },
+    "Long Call": {
+        "title": "🎓 Strategy Lesson — Long Call",
+        "content": """
+### What this strategy is
+
+You buy a call option to participate in upside with limited risk.
+
+### When traders use it
+
+- Bullish directional view.
+- Seeking leveraged upside with predefined risk.
+
+### Required fields
+
+- Strike (mapped to Short Strike for now)
+- Premium paid (mapped to Short Premium for now)
+- Expiration
+- Contracts
+
+### Which fields are not used
+
+- Long Strike / Protection Strike (not used in current shared-entry mapping)
+- Long Premium (not used in current shared-entry mapping)
+
+### What the user enters
+
+- Selected strike and premium from broker chain
+- Expiration and contracts
+
+### What the engine calculates
+
+- Cost basis and position sizing outputs
+- Max profit/loss framework, break-even, ROI, annualized return
+
+### Main risk
+
+Maximum loss is typically the premium paid.
+
+### Beginner warning
+
+Current construction fields are shared across strategies. Future UI will rename fields dynamically.
+
+> The platform recommends the strategy. The user does not need to choose from all option types manually.
+""",
+    },
+    "Long Put": {
+        "title": "🎓 Strategy Lesson — Long Put",
+        "content": """
+### What this strategy is
+
+You buy a put option for bearish positioning or portfolio protection.
+
+### When traders use it
+
+- Bearish directional view.
+- Hedging downside on shares or portfolio exposure.
+
+### Required fields
+
+- Strike (mapped to Short Strike for now)
+- Premium paid (mapped to Short Premium for now)
+- Expiration
+- Contracts
+
+### Which fields are not used
+
+- Long Strike / Protection Strike (not used in current shared-entry mapping)
+- Long Premium (not used in current shared-entry mapping)
+
+### What the user enters
+
+- Selected put strike and premium from broker chain
+- Expiration and contracts
+
+### What the engine calculates
+
+- Position economics, break-even, ROI, annualized return, and risk framework
+
+### Main risk
+
+Maximum loss is typically the premium paid.
+
+### Beginner warning
+
+Current construction fields are shared across strategies. Future UI will rename fields dynamically.
+
+> The platform recommends the strategy. The user does not need to choose from all option types manually.
+""",
+    },
+    "Bull Put Spread": {
+        "title": "🎓 Strategy Lesson — Bull Put Spread",
+        "content": """
+### What this strategy is
+
+Credit spread: sell a higher-strike put and buy a lower-strike put for protection.
+
+### When traders use it
+
+- Bullish to neutral outlook.
+- Income with defined downside risk.
+
+### Required fields
+
+- Short Strike = sold put strike
+- Short Premium = premium received
+- Long Strike / Protection Strike = bought put strike
+- Long Premium = premium paid
+- Expiration
+- Contracts
+
+### Which fields are not used
+
+- None of the core spread fields are skipped.
+
+### What the user enters
+
+- Both strikes, both premiums, expiration, contracts
+
+### What the engine calculates
+
+- Net credit, max profit, max loss, break-even, ROI, annualized return
+
+### Main risk
+
+Loss occurs if price declines through the short strike; risk is capped by long put.
+
+### Beginner warning
+
+Ensure strike ordering is correct: short put strike should be above protection strike.
+
+> The platform recommends the strategy. The user does not need to choose from all option types manually.
+""",
+    },
+    "Bear Put Spread": {
+        "title": "🎓 Strategy Lesson — Bear Put Spread",
+        "content": """
+### What this strategy is
+
+Debit spread: buy a higher-strike put and sell a lower-strike put.
+
+### When traders use it
+
+- Bearish outlook with defined risk and defined reward cap.
+
+### Required fields
+
+- Long Strike / Protection Strike = bought put strike
+- Long Premium = premium paid
+- Short Strike = sold put strike
+- Short Premium = premium received
+- Expiration
+- Contracts
+
+### Which fields are not used
+
+- None of the core spread fields are skipped.
+
+### What the user enters
+
+- Both strikes, both premiums, expiration, contracts
+
+### What the engine calculates
+
+- Net debit, max profit, max loss, break-even, ROI, annualized return
+
+### Main risk
+
+If move is too small or late, debit paid can decay in value before expiration.
+
+### Beginner warning
+
+Confirm strike ordering and net debit assumptions before approval.
+
+> The platform recommends the strategy. The user does not need to choose from all option types manually.
+""",
+    },
+    "Bull Call Spread": {
+        "title": "🎓 Strategy Lesson — Bull Call Spread",
+        "content": """
+### What this strategy is
+
+Debit spread: buy a lower-strike call and sell a higher-strike call.
+
+### When traders use it
+
+- Bullish outlook with controlled cost and capped upside.
+
+### Required fields
+
+- Long Strike / Protection Strike = bought call strike
+- Long Premium = premium paid
+- Short Strike = sold call strike
+- Short Premium = premium received
+- Expiration
+- Contracts
+
+### Which fields are not used
+
+- None of the core spread fields are skipped.
+
+### What the user enters
+
+- Both call strikes, both premiums, expiration, contracts
+
+### What the engine calculates
+
+- Net debit, max profit, max loss, break-even, ROI, annualized return
+
+### Main risk
+
+If price does not rise enough by expiration, spread value can compress toward loss.
+
+### Beginner warning
+
+Keep expiration realistic for the expected move; rushed timelines reduce probability.
+
+> The platform recommends the strategy. The user does not need to choose from all option types manually.
+""",
+    },
+    "Bear Call Spread": {
+        "title": "🎓 Strategy Lesson — Bear Call Spread",
+        "content": """
+### What this strategy is
+
+Credit spread: sell a lower-strike call and buy a higher-strike call for protection.
+
+### When traders use it
+
+- Bearish to neutral outlook with defined risk.
+
+### Required fields
+
+- Short Strike = sold call strike
+- Short Premium = premium received
+- Long Strike / Protection Strike = bought call strike
+- Long Premium = premium paid
+- Expiration
+- Contracts
+
+### Which fields are not used
+
+- None of the core spread fields are skipped.
+
+### What the user enters
+
+- Both call strikes, both premiums, expiration, contracts
+
+### What the engine calculates
+
+- Net credit, max profit, max loss, break-even, ROI, annualized return
+
+### Main risk
+
+Loss grows if price rallies through short strike; long call caps worst-case loss.
+
+### Beginner warning
+
+Credit spreads can lose quickly during sharp upside moves; size conservatively.
+
+> The platform recommends the strategy. The user does not need to choose from all option types manually.
+""",
+    },
+}
+
+
 # ============================================================
 # Utility Helpers
 # ============================================================
@@ -230,6 +618,322 @@ def render_native_metric_grid(items: list[tuple[str, str]], columns: int = 4, bl
         with column_group[idx % cols]:
             st.metric(label, value)
     responsive_block_end()
+
+
+def beginner_mode_enabled() -> bool:
+    return bool(st.session_state.get(BEGINNER_MODE_KEY, False))
+
+
+def beginner_help(text: str) -> str | None:
+    return text if beginner_mode_enabled() else None
+
+
+def render_beginner_mode_toggle() -> None:
+    with st.container(border=True):
+        left, right = st.columns([0.42, 0.58], gap="small")
+        with left:
+            st.toggle(
+                "☑ Beginner Mode",
+                key=BEGINNER_MODE_KEY,
+                value=bool(st.session_state.get(BEGINNER_MODE_KEY, False)),
+                help="Show guided lessons, contextual help, and live explanations for new options traders.",
+            )
+        with right:
+            if beginner_mode_enabled():
+                st.caption("Guided learning is on. Professional workflow stays the same when this is off.")
+            else:
+                st.caption("Professional workflow mode. Turn on Beginner Mode for guided learning and tips.")
+
+
+def render_strategy_lesson(selected_strategy: str) -> None:
+    if not beginner_mode_enabled():
+        return
+
+    strategy_key = str(selected_strategy or "").strip()
+    lesson = STRATEGY_LESSONS.get(strategy_key)
+    if lesson is None:
+        with st.expander("🎓 Strategy Crash Course", expanded=beginner_mode_enabled()):
+            st.markdown(
+                """
+A beginner lesson for this strategy is not published yet.
+
+Use the glossary below and confirm the trade structure before approval.
+"""
+            )
+            st.markdown("### Beginner Glossary")
+            st.markdown(BEGINNER_GLOSSARY_TABLE)
+        return
+
+    with st.expander(str(lesson.get("title") or "🎓 Strategy Crash Course"), expanded=beginner_mode_enabled()):
+        st.markdown(str(lesson.get("content") or ""))
+
+
+def render_live_explanation_card(trade) -> None:
+    strategy = str(trade.active_strategy() or trade.recommended_strategy or "").strip()
+    strike = float(getattr(trade, "strike", 0.0) or 0.0)
+    premium = float(getattr(trade, "premium", 0.0) or 0.0)
+    contracts = int(getattr(trade, "contracts", 0) or 0)
+    has_trade_inputs = bool(strike > 0 and contracts > 0)
+
+    credit_value = float(getattr(trade, "credit", 0.0) or 0.0)
+    buying_power_value = float(getattr(trade, "buying_power_required", 0.0) or 0.0)
+    max_loss_value = float(getattr(trade, "max_loss", 0.0) or 0.0)
+    breakeven_value = float(getattr(trade, "breakeven", 0.0) or 0.0)
+    roi_value = float(getattr(trade, "roi", 0.0) or 0.0)
+    annualized_value = float(getattr(trade, "annualized_return", 0.0) or 0.0)
+
+    premium_collected = money(credit_value) if credit_value > 0 else "Waiting for premium"
+    buying_power_reserved = money(buying_power_value) if strike > 0 else "Waiting for strike"
+    max_loss = money(max_loss_value) if has_trade_inputs and max_loss_value > 0 else "Waiting for trade details"
+    breakeven = money(breakeven_value) if strike > 0 and premium > 0 else "Waiting for strike and premium"
+    roi = percent(roi_value) if has_trade_inputs and abs(roi_value) > 0 else "Waiting for completed trade"
+    annualized_return = percent(annualized_value) if has_trade_inputs and abs(annualized_value) > 0 else "Waiting for completed trade"
+
+    if strategy == "Cash-Secured Put":
+        strategy_line = f"You receive {premium_collected} immediately if your order fills."
+        risk_line = f"If the stock fell to $0, your worst possible loss would be {max_loss}."
+    elif strategy == "Covered Call":
+        strategy_line = f"This covered call collects {premium_collected} against shares you already own."
+        risk_line = f"Your key risk is equity downside in owned shares, with option-side max loss shown as {max_loss}."
+    elif strategy in {"Bull Put Spread", "Bear Put Spread", "Bull Call Spread", "Bear Call Spread"}:
+        strategy_line = f"This spread structure shows defined-risk math with premium impact of {premium_collected}."
+        risk_line = f"Defined spread risk is capped at {max_loss} if the trade performs as poorly as possible."
+    elif strategy == "Long Call":
+        strategy_line = f"This long call uses premium outlay math. Current net premium effect is {premium_collected}."
+        risk_line = f"Long-call style risk is primarily premium paid; maximum modeled loss here is {max_loss}."
+    elif strategy == "Long Put":
+        strategy_line = f"This long put can be used for protection or bearish positioning. Current net premium effect is {premium_collected}."
+        risk_line = f"Long-put style risk is primarily premium paid; maximum modeled loss here is {max_loss}."
+    else:
+        strategy_line = f"Trade economics currently show premium impact of {premium_collected}."
+        risk_line = f"Worst-case modeled loss is {max_loss}."
+
+    def _render_content() -> None:
+        st.markdown("### 📖 How to Read This Trade")
+        st.markdown(f"**Premium Collected**  \nYou receive {premium_collected} immediately if your order fills.")
+        st.markdown(f"**Buying Power**  \nYour broker reserves {buying_power_reserved} while the trade is open.")
+        st.markdown(f"**Maximum Loss**  \n{risk_line}")
+        st.markdown(f"**Break-even**  \nYou begin losing money only below {breakeven}.")
+        st.markdown(f"**ROI**  \nYour expected return is {roi}.")
+        st.markdown(f"**Annualized Return**  \nEquivalent yearly return based on this expiration is {annualized_return}.")
+        st.caption(strategy_line)
+
+    if beginner_mode_enabled():
+        with st.container(border=True):
+            _render_content()
+    else:
+        with st.expander("📖 How to Read This Trade", expanded=False):
+            _render_content()
+
+
+def risk_level_label(max_loss: float, max_profit: float) -> str:
+    if max_loss <= 0:
+        return "Pending"
+    if max_loss <= max_profit * 5:
+        return "Low"
+    if max_loss <= max_profit * 20:
+        return "Moderate"
+    if max_loss <= max_profit * 50:
+        return "Elevated"
+    return "High"
+
+
+def _render_math_value_card(label: str, value: str, tone: str = "neutral", help_text: str = "", emphasized: bool = False) -> None:
+    tone_class = {
+        "income": "otcc-tone-income",
+        "risk": "otcc-tone-risk",
+        "performance": "otcc-tone-performance",
+        "position": "otcc-tone-position",
+        "neutral": "otcc-tone-position",
+    }.get(tone, "otcc-tone-position")
+    emphasis_class = " otcc-math-value-key" if emphasized else ""
+    st.markdown(
+        f"""
+        <div class="otcc-math-card {tone_class}">
+            <div class="otcc-math-label">{html.escape(label)}</div>
+            <div class="otcc-math-value{emphasis_class}">{html.escape(str(value))}</div>
+            {f'<div class="otcc-math-help">{html.escape(help_text)}</div>' if help_text else ''}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_institutional_trade_summary(trade, packet=None) -> None:
+    readiness = float(getattr(getattr(packet, "approval", None), "score", 0.0) or 0.0) if packet is not None else 0.0
+    status = str(getattr(trade, "approval_status", "") or "Pending")
+    strategy = str(trade.active_strategy() or trade.recommended_strategy or "Pending")
+    summary_rows = [
+        ("Underlying", str(getattr(trade, "symbol", "") or "Pending")),
+        ("Strategy", strategy),
+        ("Contracts", str(int(getattr(trade, "contracts", 0) or 0))),
+        ("Short Strike", money(float(getattr(trade, "strike", 0.0) or 0.0)) if float(getattr(trade, "strike", 0.0) or 0.0) > 0 else "Pending"),
+        ("Short Premium", money(float(getattr(trade, "premium", 0.0) or 0.0)) if float(getattr(trade, "premium", 0.0) or 0.0) > 0 else "Pending"),
+        ("Expiration", str(getattr(trade, "expiration", "") or "Pending")),
+        ("Buying Power", money(float(getattr(trade, "buying_power_required", 0.0) or 0.0)) if float(getattr(trade, "buying_power_required", 0.0) or 0.0) > 0 else "Waiting for strike"),
+        ("Break-even", money(float(getattr(trade, "breakeven", 0.0) or 0.0)) if float(getattr(trade, "breakeven", 0.0) or 0.0) > 0 else "Waiting for strike and premium"),
+        ("Maximum Profit", money(float(getattr(trade, "max_profit", 0.0) or 0.0)) if float(getattr(trade, "max_profit", 0.0) or 0.0) > 0 else "Pending"),
+        ("Maximum Loss", money(float(getattr(trade, "max_loss", 0.0) or 0.0)) if float(getattr(trade, "max_loss", 0.0) or 0.0) > 0 else "Waiting for trade details"),
+        ("ROI", percent(float(getattr(trade, "roi", 0.0) or 0.0)) if abs(float(getattr(trade, "roi", 0.0) or 0.0)) > 0 else "Waiting for completed trade"),
+        ("Annualized Return", percent(float(getattr(trade, "annualized_return", 0.0) or 0.0)) if abs(float(getattr(trade, "annualized_return", 0.0) or 0.0)) > 0 else "Waiting for completed trade"),
+        ("Approval Readiness", f"{readiness:,.1f}%" if readiness > 0 else "Pending"),
+        ("Approval Status", status),
+    ]
+
+    with st.container(border=True):
+        st.markdown("### 📄 Institutional Trade Summary")
+        render_native_metric_grid(summary_rows, columns=3, block_class="otcc-grid-3")
+        premium_line = money(float(getattr(trade, "credit", 0.0) or 0.0)) if float(getattr(trade, "credit", 0.0) or 0.0) > 0 else "waiting premium"
+        max_loss_line = money(float(getattr(trade, "max_loss", 0.0) or 0.0)) if float(getattr(trade, "max_loss", 0.0) or 0.0) > 0 else "waiting risk"
+        st.caption(f"This trade collects {premium_line} in premium and risks up to {max_loss_line} if the trade moves fully against you.")
+
+
+def render_live_trade_math_dashboard(trade) -> None:
+    strategy = str(trade.active_strategy() or trade.recommended_strategy or "").strip()
+    strike = float(getattr(trade, "strike", 0.0) or 0.0)
+    premium = float(getattr(trade, "premium", 0.0) or 0.0)
+    contracts = int(getattr(trade, "contracts", 0) or 0)
+    has_trade_inputs = bool(strike > 0 and contracts > 0)
+
+    credit = float(getattr(trade, "credit", 0.0) or 0.0)
+    debit = float(getattr(trade, "debit", 0.0) or 0.0)
+    max_profit = float(getattr(trade, "max_profit", 0.0) or 0.0)
+    max_loss = float(getattr(trade, "max_loss", 0.0) or 0.0)
+    breakeven = float(getattr(trade, "breakeven", 0.0) or 0.0)
+    buying_power = float(getattr(trade, "buying_power_required", 0.0) or 0.0)
+    roi = float(getattr(trade, "roi", 0.0) or 0.0)
+    annualized_return = float(getattr(trade, "annualized_return", 0.0) or 0.0)
+    reward_risk = float(getattr(trade, "reward_risk_ratio", 0.0) or 0.0)
+
+    capital_at_risk = max_loss
+    risk_level = risk_level_label(max_loss, max_profit)
+
+    premium_display = money(credit) if credit > 0 else "Waiting for premium"
+    max_profit_display = money(max_profit) if has_trade_inputs and max_profit > 0 else "Waiting for trade details"
+    buying_power_display = money(buying_power) if strike > 0 else "Waiting for strike"
+    capital_at_risk_display = money(capital_at_risk) if has_trade_inputs and capital_at_risk > 0 else "Waiting for trade details"
+    max_loss_display = money(max_loss) if has_trade_inputs and max_loss > 0 else "Waiting for trade details"
+    breakeven_display = money(breakeven) if strike > 0 and premium > 0 else "Waiting for strike and premium"
+    roi_display = percent(roi) if has_trade_inputs and abs(roi) > 0 else "Waiting for completed trade"
+    annualized_display = percent(annualized_return) if has_trade_inputs and abs(annualized_return) > 0 else "Waiting for completed trade"
+    reward_risk_display = f"{reward_risk:,.4f}" if has_trade_inputs and abs(reward_risk) > 0 else "Waiting for completed trade"
+    contracts_display = str(int(contracts)) if contracts > 0 else "Waiting for contracts"
+    credit_display = money(credit) if abs(credit) > 0 else "Waiting for premium"
+    debit_display = money(debit) if abs(debit) > 0 else "Waiting for trade details"
+
+    st.markdown("### Live Trade Math")
+
+    with st.container(border=True):
+        st.markdown("#### 🟢 Income")
+        income_left, income_right = st.columns(2, gap="small")
+        with income_left:
+            _render_math_value_card(
+                "Premium Collected",
+                premium_display,
+                tone="income",
+                help_text="Money received immediately if the order fills.",
+            )
+        with income_right:
+            _render_math_value_card(
+                "Maximum Profit",
+                max_profit_display,
+                tone="income",
+                help_text="Maximum modeled profit for this structure.",
+            )
+
+    with st.container(border=True):
+        st.markdown("#### 🟠 Risk")
+        risk_top_left, risk_top_right = st.columns(2, gap="small")
+        with risk_top_left:
+            _render_math_value_card(
+                "Buying Power Required",
+                buying_power_display,
+                tone="risk",
+                help_text="This is the cash your broker reserves while the position is open.",
+            )
+        with risk_top_right:
+            _render_math_value_card(
+                "Capital at Risk",
+                capital_at_risk_display,
+                tone="risk",
+                help_text="The amount of capital exposed if the trade performs as poorly as possible.",
+            )
+
+        _render_math_value_card(
+            "Maximum Loss",
+            max_loss_display,
+            tone="risk",
+            help_text="Worst-case loss if the trade reaches its maximum defined risk.",
+            emphasized=True,
+        )
+
+        risk_bottom_left, risk_bottom_right = st.columns(2, gap="small")
+        with risk_bottom_left:
+            _render_math_value_card(
+                "Break-even",
+                breakeven_display,
+                tone="risk",
+                help_text="Stock price where the trade begins to lose money at expiration.",
+            )
+        with risk_bottom_right:
+            _render_math_value_card(
+                "Risk Level",
+                risk_level,
+                tone="risk",
+                help_text="Display-only risk tier based on Maximum Loss relative to Maximum Profit.",
+            )
+
+    with st.container(border=True):
+        st.markdown("#### 🔵 Performance")
+        perf1, perf2, perf3 = st.columns(3, gap="small")
+        with perf1:
+            _render_math_value_card(
+                "ROI",
+                roi_display,
+                tone="performance",
+                help_text="Percentage return based on capital committed.",
+            )
+        with perf2:
+            _render_math_value_card(
+                "Annualized Return",
+                annualized_display,
+                tone="performance",
+                help_text="ROI adjusted to a one-year equivalent.",
+            )
+        with perf3:
+            _render_math_value_card(
+                "Reward / Risk",
+                reward_risk_display,
+                tone="performance",
+                help_text="Potential reward divided by maximum possible loss.",
+            )
+
+    with st.container(border=True):
+        st.markdown("#### 📋 Position")
+        pos1, pos2, pos3 = st.columns(3, gap="small")
+        with pos1:
+            _render_math_value_card(
+                "Contracts",
+                contracts_display,
+                tone="position",
+                help_text="One option contract controls 100 shares.",
+            )
+        with pos2:
+            _render_math_value_card("Credit", credit_display, tone="position")
+        with pos3:
+            _render_math_value_card("Debit", debit_display, tone="position")
+
+    if beginner_mode_enabled():
+        if strategy == "Cash-Secured Put":
+            st.caption("Income-oriented setup: premium now, potential share ownership later if assigned.")
+        elif strategy == "Covered Call":
+            st.caption("Share-ownership setup: call income is generated against stock already held.")
+        elif strategy in {"Bull Put Spread", "Bear Put Spread", "Bull Call Spread", "Bear Call Spread"}:
+            st.caption("Defined-risk spread setup: protection leg caps worst-case downside.")
+        elif strategy == "Long Call":
+            st.caption("Long call setup: directional upside with risk centered on premium paid.")
+        elif strategy == "Long Put":
+            st.caption("Long put setup: bearish/protective exposure with risk centered on premium paid.")
 
 
 # ============================================================
@@ -1127,6 +1831,57 @@ def inject_commander_css():
                 letter-spacing: -0.01em;
             }
 
+            .otcc-live-math-panel .otcc-math-card {
+                border: 1px solid rgba(148, 163, 184, 0.28);
+                border-radius: 12px;
+                background: rgba(15, 23, 42, 0.35);
+                padding: 0.7rem 0.85rem;
+                min-height: 102px;
+            }
+
+            .otcc-live-math-panel .otcc-math-label {
+                font-size: 0.76rem;
+                letter-spacing: 0.01em;
+                text-transform: uppercase;
+                color: #cbd5e1;
+                margin-bottom: 0.25rem;
+            }
+
+            .otcc-live-math-panel .otcc-math-value {
+                font-size: 1.1rem;
+                font-weight: 700;
+                line-height: 1.3;
+                color: #e2e8f0;
+            }
+
+            .otcc-live-math-panel .otcc-math-help {
+                margin-top: 0.28rem;
+                font-size: 0.74rem;
+                color: #94a3b8;
+                line-height: 1.35;
+            }
+
+            .otcc-live-math-panel .otcc-math-value-key {
+                color: #fecaca;
+                text-shadow: 0 0 18px rgba(239, 68, 68, 0.2);
+            }
+
+            .otcc-live-math-panel .otcc-tone-income {
+                border-left: 4px solid rgba(34, 197, 94, 0.55);
+            }
+
+            .otcc-live-math-panel .otcc-tone-risk {
+                border-left: 4px solid rgba(249, 115, 22, 0.62);
+            }
+
+            .otcc-live-math-panel .otcc-tone-performance {
+                border-left: 4px solid rgba(56, 189, 248, 0.62);
+            }
+
+            .otcc-live-math-panel .otcc-tone-position {
+                border-left: 4px solid rgba(148, 163, 184, 0.55);
+            }
+
             div[data-testid="stMetricLabel"] {
                 font-size: 0.74rem !important;
             }
@@ -1744,99 +2499,6 @@ def render_other_strategy_selection(trade):
 
 
 # ============================================================
-# Step 1 — Commander / Mission
-# ============================================================
-
-def render_opportunity_selection(trade):
-    section_header(
-        "Step 1",
-        "Trade Briefing",
-        "Define the mission, confirm the symbol, and give the engine basic context.",
-    )
-
-    resolve_symbol_handoff(trade)
-    render_commander_intro(trade)
-    recommend_strategy(trade)
-
-    responsive_block_start("otcc-grid-3")
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        trade.symbol = st.text_input(
-            "Which company are we discussing?",
-            value=trade.symbol,
-            placeholder="Example: AAPL",
-            key="otcc_symbol",
-        ).upper().strip()
-
-        trade.market_bias = st.selectbox(
-            "Market Bias",
-            ["", "Bullish", "Neutral", "Bearish"],
-            index=["", "Bullish", "Neutral", "Bearish"].index(trade.market_bias)
-            if trade.market_bias in ["", "Bullish", "Neutral", "Bearish"]
-            else 0,
-            key="otcc_market_bias",
-        )
-
-    with col2:
-        trade.stock_price = st.number_input(
-            "Current Stock Price",
-            min_value=0.0,
-            value=float(trade.stock_price or 0.0),
-            step=0.01,
-            key="otcc_stock_price",
-        )
-
-        trade.account_size = st.number_input(
-            "Account Size",
-            min_value=0.0,
-            value=float(trade.account_size or 0.0),
-            step=1000.0,
-            key="otcc_account_size",
-        )
-
-    with col3:
-        trade.buying_power = st.number_input(
-            "Available Buying Power",
-            min_value=0.0,
-            value=float(trade.buying_power or 0.0),
-            step=1000.0,
-            key="otcc_buying_power",
-        )
-
-        trade.max_risk_allowed = st.number_input(
-            "Maximum Risk Allowed",
-            min_value=0.0,
-            value=float(trade.max_risk_allowed or 0.0),
-            step=100.0,
-            key="otcc_max_risk_allowed",
-        )
-    responsive_block_end()
-
-    if trade.recommended_strategy:
-        with st.container(border=True):
-            st.markdown("### Strategy Recommendation")
-            st.metric("Recommended Strategy", trade.recommended_strategy)
-            st.metric("Options Quality", percent(trade.strategy_confidence))
-            st.write(trade.strategy_reason)
-
-            if st.button(
-                "Use Recommendation",
-                key="otcc_use_recommendation",
-                use_container_width=True,
-            ):
-                trade.user_selected_strategy = trade.recommended_strategy
-                trade.strategy = trade.recommended_strategy
-                trade.construction_complete = False
-                trade.approval_status = PENDING_TEXT
-                trade.reset_results()
-                trade.reset_validation()
-                st.rerun()
-    else:
-        st.info("Choose a mission and symbol. The strategy desk will prepare the first recommendation.")
-
-
-# ============================================================
 # Step 2 — Strategy Selection
 # ============================================================
 
@@ -1900,9 +2562,13 @@ def render_trade_construction(trade, packet=None):
         return
 
     st.success(f"Selected Strategy: {strategy}")
+    if beginner_mode_enabled():
+        st.info("Beginner Mode is on. Open the lesson below and use the help icons on the fields to stay oriented.")
     if locked:
         st.warning("🔒 Trade construction locked.")
         st.caption("Clear approval to modify this trade.")
+
+    render_strategy_lesson(strategy)
 
     with st.container(border=True):
         responsive_block_start("otcc-construction-card")
@@ -1910,6 +2576,7 @@ def render_trade_construction(trade, packet=None):
         left, right = st.columns([1.18, 0.92], gap="medium")
 
         with left:
+            # Manual entry stays isolated here so a future broker option-chain picker can swap in without restructuring Step 4.
             responsive_block_start("otcc-grid-3")
             col1, col2, col3 = st.columns(3)
 
@@ -1919,6 +2586,7 @@ def render_trade_construction(trade, packet=None):
                     value=trade.symbol,
                     key="otcc_construction_symbol_display",
                     disabled=True,
+                    help=beginner_help("The stock or ETF you want to own."),
                 )
 
                 trade.expiration = st.date_input(
@@ -1926,6 +2594,7 @@ def render_trade_construction(trade, packet=None):
                     value=trade.expiration or date.today(),
                     key="otcc_expiration",
                     disabled=locked,
+                    help=beginner_help("Select the expiration date of the option contract you are trading. Use your broker chain date, and do not treat the default date as a recommendation."),
                 )
 
             with col2:
@@ -1936,6 +2605,7 @@ def render_trade_construction(trade, packet=None):
                     step=0.5,
                     key="otcc_short_strike",
                     disabled=locked,
+                    help=beginner_help("The strike is the price at which you agree to buy the stock if assigned. Lower strikes generally reduce assignment risk but collect less premium."),
                 )
 
                 trade.long_strike = st.number_input(
@@ -1945,6 +2615,7 @@ def render_trade_construction(trade, packet=None):
                     step=0.5,
                     key="otcc_long_strike",
                     disabled=locked,
+                    help=beginner_help("Used only when the strategy includes a protection leg. Cash-Secured Put usually stays at 0; spreads require a protection strike."),
                 )
 
             with col3:
@@ -1955,6 +2626,7 @@ def render_trade_construction(trade, packet=None):
                     step=0.01,
                     key="otcc_short_premium",
                     disabled=locked,
+                    help=beginner_help("Short Premium is the money received for selling the option. Enter the premium from your broker's option chain."),
                 )
 
                 trade.long_premium = st.number_input(
@@ -1964,6 +2636,7 @@ def render_trade_construction(trade, packet=None):
                     step=0.01,
                     key="otcc_long_premium",
                     disabled=locked,
+                    help=beginner_help("Long Premium is used when you buy a protection option. Cash-Secured Put is usually 0; spread strategies need this value."),
                 )
 
                 trade.contracts = st.number_input(
@@ -1973,6 +2646,7 @@ def render_trade_construction(trade, packet=None):
                     step=1,
                     key="otcc_contracts",
                     disabled=locked,
+                    help=beginner_help("Each contract represents 100 shares. Example: 3 contracts = 300 shares."),
                 )
             responsive_block_end()
 
@@ -1980,26 +2654,11 @@ def render_trade_construction(trade, packet=None):
 
         with right:
             responsive_block_start("otcc-live-math-panel")
-            st.markdown("### Live Trade Math")
-            responsive_block_start("otcc-grid-2")
-            m1, m2 = st.columns(2)
-            m3, m4 = st.columns(2)
-            m5, m6 = st.columns(2)
-            m7, m8 = st.columns(2)
-            m9, m10 = st.columns(2)
+            render_live_trade_math_dashboard(trade)
+            responsive_block_end()
 
-            m1.metric("Credit", money(trade.credit))
-            m2.metric("Debit", money(trade.debit))
-            m3.metric("Buying Power Required", money(trade.buying_power_required))
-            m4.metric("Max Profit", money(trade.max_profit))
-            m5.metric("Max Loss", money(trade.max_loss))
-            m6.metric("Breakeven", money(trade.breakeven))
-            m7.metric("ROI", percent(trade.roi))
-            m8.metric("Annualized Return", percent(trade.annualized_return))
-            m9.metric("Reward / Risk", f"{trade.reward_risk_ratio:,.4f}")
-            m10.metric("Contracts", int(trade.contracts or 0))
-            responsive_block_end()
-            responsive_block_end()
+            render_live_explanation_card(trade)
+            render_institutional_trade_summary(trade, packet)
 
         responsive_block_end()
 
@@ -2200,6 +2859,7 @@ def render_execution_package(trade):
 def main():
     trade = get_trade()
     inject_commander_css()
+    st.session_state.setdefault(BEGINNER_MODE_KEY, False)
     packet = apply_decision_packet_if_needed(trade)
 
     # On page load, resolve Decision Review immediately from current trade
@@ -2216,6 +2876,8 @@ def main():
     st.caption(
         "Institutional workflow for receiving, evaluating, validating, and approving options trades."
     )
+
+    render_beginner_mode_toggle()
 
     with st.expander("ℹ️ How to use Options Decision Center", expanded=False):
         st.markdown(
