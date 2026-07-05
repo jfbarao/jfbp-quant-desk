@@ -936,6 +936,58 @@ def page():
     st.title("Live IBKR")
     st.caption("Institutional broker command bridge for connection state, account readiness, and controlled execution handoff.")
 
+    with st.expander("ℹ️ How to Use This Page", expanded=False):
+        st.markdown(
+            """
+            The Live IBKR page manages the connection between JFBP Quant Desk and Interactive
+            Brokers. After the OMS Execution Mode has been selected (Simulation, Paper, or Live),
+            this page verifies the broker connection before approved orders are submitted.
+
+            **Recommended workflow:**
+
+            1. **Market Pulse** - Assess overall market conditions.
+            2. **Opportunity Center** - Identify high-probability trading opportunities.
+            3. **Options Trade Construction Center** - Select option contracts, construct the trade,
+               validate risk, and obtain approval.
+            4. **OMS Execution Mode** - Choose where the order will be routed:
+
+            - Simulation
+            - Paper Trading
+            - Live Trading
+
+            5. **Live IBKR** - Connect JFBP Quant Desk to Interactive Brokers and verify communication.
+            6. **Execution Package** - Review the OMS ticket and submit the approved order to IBKR.
+
+            **Notes**
+
+            - OMS Execution Mode determines whether orders are routed to **Simulation, Paper, or Live**.
+            - Live IBKR verifies connectivity only - it does **not** determine the execution destination.
+            - JFBP Quant Desk performs the analysis, construction, validation, approval, and order generation.
+            - Interactive Brokers is the execution venue.
+            - A green connection status confirms communication with IBKR.
+            - Keep IBKR Gateway or TWS running while executing or monitoring trades.
+            - If the connection is lost, reconnect here before attempting to submit orders.
+
+            **Institutional Workflow**
+
+            Market Pulse
+            ↓
+            Opportunity Center
+            ↓
+            Options Trade Construction Center
+            ↓
+            OMS Execution Mode (Simulation | Paper | Live)
+            ↓
+            Live IBKR Connection
+            ↓
+            Execution Package
+            ↓
+            IBKR Order Submission
+            ↓
+            Position Monitoring
+            """
+        )
+
     st.markdown(
         """
         <div class="ibkr-flow">

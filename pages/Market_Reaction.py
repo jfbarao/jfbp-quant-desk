@@ -1794,6 +1794,25 @@ def run_page() -> None:
         "sector pressure, and megacap reaction."
     )
 
+    with st.expander("ℹ️ How to Use This Page", expanded=False):
+        st.markdown(
+            """
+            Market Pulse provides a high-level assessment of the current market environment.
+            Review the overall market regime, breadth, trend, volatility, and sector leadership
+            before looking for individual trading opportunities.
+
+            **Suggested workflow:**
+
+            1. Review Market Pulse.
+            2. Scan for opportunities.
+            3. Evaluate candidates in Opportunity Center.
+            4. Construct and validate the trade in the Options Trade Construction Center.
+
+            Market Pulse should normally be reviewed before Opportunity Center and
+            Options Trade Construction.
+            """
+        )
+
     refresh = st.button(
         "Refresh Market Pulse Data",
         width="stretch",
