@@ -2,7 +2,12 @@ import streamlit as st
 import html
 import textwrap
 from dataclasses import dataclass, replace
-from typing import Protocol
+from typing import Any, Protocol
+
+try:
+    import yfinance as yf
+except Exception:
+    yf = None
 
 try:
     from options_engine.trade_lifecycle_packet import TradeLifecyclePacket, TradeStage, run_shared_trade_lifecycle_engines
@@ -44,11 +49,23 @@ st.set_page_config(
 
 BEGINNER_MODE_KEY = "otcc_beginner_mode"
 OPTION_CHAIN_PANEL_OPEN_KEY = "otcc_option_chain_panel_open"
+SELECTOR_OPEN_KEY = "otcc_selector_open"
+CHAIN_MODE_KEY = "otcc_chain_mode"
+OPTION_CHAIN_CACHE_KEY = "otcc_option_chain"
+CHAIN_KEY_STATE = "otcc_chain_key"
+SELECTED_CHAIN_KEY_STATE = "otcc_selected_chain_key"
+GENERATED_STRIKES_KEY = "otcc_generated_strikes"
+CHAIN_TRACE_KEY = "otcc_chain_trace"
+ACTIVE_KEY_STATE = "otcc_active_key"
 SELECTED_CONTRACT_KEY = "otcc_selected_option_contract"
+DISCOVERY_MODE_KEY = "otcc_discovery_mode"
+STEP4_VALUE_SOURCE_KEY = "otcc_step4_value_source"
+CONSTRUCTION_CONTEXT_KEY = "otcc_construction_context"
 STEP5_VALIDATION_COMPLETE_KEY = "otcc_step5_validation_complete"
 STEP5_VALIDATION_STATUS_KEY = "otcc_step5_validation_status"
 OTCC_CONSTRUCTION_COMPLETE_KEY = "otcc_construction_complete"
 OTCC_VALIDATION_COMPLETE_KEY = "otcc_validation_complete"
+PRICE_CACHE_KEY = "otcc_price_cache"
 
 
 BEGINNER_GLOSSARY_TABLE = """
@@ -516,7 +533,13 @@ class OptionChainProvider(Protocol):
     ORATS, and Manual Entry providers.
     """
 
-    def get_option_chain(self, underlying: str, strategy: str, reference_price: float = 0.0) -> list[OptionContract]:
+    def get_option_chain(
+        self,
+        underlying: str,
+        strategy: str,
+        reference_price: float = 0.0,
+        requested_expiration: Any = None,
+    ) -> list[OptionContract]:
         ...
 
 
@@ -550,79 +573,388 @@ def strategy_partner_leg_role(strategy: str) -> str | None:
     return None
 
 
-def _build_mock_chain_contracts(symbol: str, option_chain_type: str, base_strike: float, base_expiration: date) -> list[OptionContract]:
-    if option_chain_type == "CALLS":
-        specs = [
-            (base_strike - 5.0, 6.20, 6.40, 6.30, 6.28, 0.48, 0.021, -0.044, 0.121, 0.26, 1360, 8420, 88.0, 7.8, 30.4, 98.0, True, 94.0),
-            (base_strike, 3.10, 3.30, 3.20, 3.18, 0.24, 0.019, -0.038, 0.108, 0.23, 980, 9150, 84.0, 6.5, 27.9, 96.0, False, 89.0),
-            (base_strike + 5.0, 1.28, 1.44, 1.36, 1.34, 0.12, 0.014, -0.026, 0.094, 0.20, 1540, 11140, 91.0, 4.1, 19.7, 92.0, False, 85.0),
-        ]
-        contract_type = "Call"
-    else:
-        specs = [
-            (base_strike - 5.0, 1.28, 1.44, 1.36, 1.34, -0.12, 0.014, -0.026, 0.094, 0.20, 1540, 11140, 91.0, 4.1, 19.7, 92.0, False, 85.0),
-            (base_strike, 3.10, 3.30, 3.20, 3.18, -0.24, 0.019, -0.038, 0.108, 0.23, 980, 9150, 84.0, 6.5, 27.9, 96.0, False, 89.0),
-            (base_strike + 5.0, 6.20, 6.40, 6.30, 6.28, -0.48, 0.021, -0.044, 0.121, 0.26, 1360, 8420, 88.0, 7.8, 30.4, 98.0, True, 94.0),
-        ]
-        contract_type = "Put"
+def _strategy_requires_second_leg(strategy: str) -> bool:
+    return str(strategy or "").strip() in {"Bull Call Spread", "Bull Put Spread", "Bear Call Spread", "Bear Put Spread"}
 
-    return [
-        OptionContract(
-            underlying=symbol,
-            expiration=base_expiration,
-            strike=strike,
-            bid=bid,
-            ask=ask,
-            mid=mid,
-            last=last,
-            delta=delta,
-            gamma=gamma,
-            theta=theta,
-            vega=vega,
-            iv=iv,
-            volume=volume,
-            open_interest=open_interest,
-            pop=pop,
-            expected_return=expected_return,
-            annualized_return=annualized_return,
-            institutional_score=institutional_score,
-            preferred=preferred,
-            confidence=confidence,
-            contract_type=contract_type,
+
+def _is_selection_complete(strategy: str, selection: dict[str, Any]) -> bool:
+    legs = selection.get("legs")
+    if isinstance(legs, list) and legs:
+        return len(legs) >= (2 if _strategy_requires_second_leg(strategy) else 1)
+    if _strategy_requires_second_leg(strategy):
+        return bool(selection.get("primary")) and bool(selection.get("secondary"))
+    return bool(selection.get("primary")) or bool(selection.get("label"))
+
+
+def _construction_context_key(trade) -> str:
+    symbol = str(getattr(trade, "symbol", "") or "").strip().upper()
+    strategy = str(getattr(trade, "active_strategy", lambda: "")() or getattr(trade, "recommended_strategy", "") or "").strip()
+    expiration = str(getattr(trade, "expiration", "") or "")
+    return f"{symbol}|{strategy}|{expiration}"
+
+
+def reset_otcc_construction_state(trade=None) -> None:
+    current_symbol = ""
+    current_expiration = date.today()
+    current_contracts = 1
+    if trade is not None:
+        try:
+            current_symbol = str(getattr(trade, "symbol", "") or "").strip().upper()
+            current_expiration = getattr(trade, "expiration", None) or date.today()
+            current_contracts = int(getattr(trade, "contracts", 1) or 1)
+            trade.legs.clear()
+            trade.strike = 0.0
+            trade.long_strike = 0.0
+            trade.premium = 0.0
+            trade.long_premium = 0.0
+            trade.stock_price = 0.0
+            trade.credit = 0.0
+            trade.debit = 0.0
+            trade.max_profit = 0.0
+            trade.max_loss = 0.0
+            trade.breakeven = 0.0
+            trade.buying_power_required = 0.0
+            trade.construction_complete = False
+            trade.approval_status = PENDING_TEXT
+            trade.reset_results()
+            trade.reset_validation()
+        except Exception:
+            pass
+
+    # Selected opportunity / handoff / packet state.
+    for key in [
+        "construction_request",
+        "recommendation_packet",
+        "trade_lifecycle_packet",
+        "decision_packet",
+        "opportunity_packet",
+        "otcc_loaded_packet_fingerprint",
+        "selected_symbol",
+        "scanner_selected_symbol",
+        "trade_command_symbol",
+        "option_symbol",
+        "trade_symbol",
+        "opportunity_symbol",
+        "active_symbol",
+        "ticker",
+    ]:
+        st.session_state.pop(key, None)
+
+    st.session_state[DISCOVERY_MODE_KEY] = True
+    st.session_state["otcc_construction_dirty"] = False
+    st.session_state.pop("otcc_selected_contract", None)
+    st.session_state.pop(SELECTED_CONTRACT_KEY, None)
+    st.session_state.pop("otcc_selected_long_leg", None)
+    st.session_state.pop("otcc_selected_short_leg", None)
+    st.session_state.pop("otcc_selected_put_leg", None)
+    st.session_state.pop("otcc_selected_call_leg", None)
+    st.session_state.pop("otcc_selected_contract_price", None)
+    st.session_state.pop("otcc_selected_contract_premium", None)
+    st.session_state.pop("otcc_selected_contract_strike", None)
+    st.session_state.pop("otcc_recommendation_cards", None)
+    st.session_state[OPTION_CHAIN_PANEL_OPEN_KEY] = False
+    st.session_state[SELECTOR_OPEN_KEY] = False
+    st.session_state.pop(CHAIN_MODE_KEY, None)
+    st.session_state.pop(OPTION_CHAIN_CACHE_KEY, None)
+    st.session_state.pop(CHAIN_KEY_STATE, None)
+    st.session_state.pop(SELECTED_CHAIN_KEY_STATE, None)
+    st.session_state.pop(GENERATED_STRIKES_KEY, None)
+    st.session_state.pop(ACTIVE_KEY_STATE, None)
+    st.session_state[OTCC_CONSTRUCTION_COMPLETE_KEY] = False
+    st.session_state[OTCC_VALIDATION_COMPLETE_KEY] = False
+    st.session_state[STEP5_VALIDATION_COMPLETE_KEY] = False
+    st.session_state[STEP5_VALIDATION_STATUS_KEY] = ""
+
+    # Step 4 fields.
+    st.session_state["otcc_short_strike"] = 0.0
+    st.session_state["otcc_long_strike"] = 0.0
+    st.session_state["otcc_short_premium"] = 0.0
+    st.session_state["otcc_long_premium"] = 0.0
+    st.session_state["short_strike"] = 0.0
+    st.session_state["long_strike"] = 0.0
+    st.session_state["short_premium"] = 0.0
+    st.session_state["long_premium"] = 0.0
+
+    # Step 4 math.
+    st.session_state["net_debit"] = 0.0
+    st.session_state["net_credit"] = 0.0
+    st.session_state["max_profit"] = 0.0
+    st.session_state["max_loss"] = 0.0
+    st.session_state["breakeven"] = 0.0
+    st.session_state["buying_power"] = 0.0
+    st.session_state["otcc_net_debit"] = 0.0
+    st.session_state["otcc_net_credit"] = 0.0
+    st.session_state["otcc_max_profit"] = 0.0
+    st.session_state["otcc_max_loss"] = 0.0
+    st.session_state["otcc_breakeven"] = 0.0
+    st.session_state["otcc_buying_power"] = 0.0
+
+    # Validation / approval / execution packet mirrors.
+    for key in [
+        "approval",
+        "approval_score",
+        "approved",
+        "approved_by",
+        "approved_timestamp",
+        "approval_notes",
+        "execution_confidence",
+        "institutional_decision",
+        "institutional_decision_object",
+        "otcc_decision_readiness_override",
+        "otcc_decision_override",
+        "trade_lifecycle_packet",
+    ]:
+        st.session_state.pop(key, None)
+
+    for key in list(st.session_state.keys()):
+        if key.startswith("otcc_approval_check_"):
+            st.session_state.pop(key, None)
+
+    st.session_state["otcc_construction_symbol_display"] = current_symbol
+    st.session_state["otcc_expiration"] = current_expiration
+    st.session_state["otcc_contracts"] = max(1, int(current_contracts or 1))
+
+
+def _clear_construction_selection_state(trade) -> None:
+    reset_otcc_construction_state(trade)
+
+
+def _safe_float(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except Exception:
+        return None
+    if parsed <= 0:
+        return None
+    return parsed
+
+
+def _normalize_expiration(value: Any) -> str:
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value or "").strip()
+
+
+def _active_construction_key(symbol: str, strategy: str, expiration: Any, stock_price: float) -> str:
+    symbol_norm = str(symbol or "").strip().upper()
+    strategy_norm = str(strategy or "").strip()
+    expiration_norm = _normalize_expiration(expiration)
+    return f"{symbol_norm}|{strategy_norm}|{expiration_norm}|{float(stock_price or 0.0):.2f}"
+
+
+def _selected_contract_matches_context(selected: dict[str, Any], symbol: str, expiration: Any, strategy: str) -> bool:
+    selected_symbol = str(selected.get("symbol") or "").strip().upper()
+    selected_expiration = _normalize_expiration(selected.get("expiration"))
+    selected_strategy = str(selected.get("strategy") or "").strip()
+    current_symbol = str(symbol or "").strip().upper()
+    current_expiration = _normalize_expiration(expiration)
+    current_strategy = str(strategy or "").strip()
+    return bool(
+        selected_symbol
+        and selected_symbol == current_symbol
+        and selected_expiration
+        and selected_expiration == current_expiration
+        and selected_strategy
+        and selected_strategy == current_strategy
+    )
+
+
+def _resolve_packet_price(symbol: str) -> float | None:
+    packet = st.session_state.get("trade_lifecycle_packet")
+    if TradeLifecyclePacket is not None and not isinstance(packet, TradeLifecyclePacket):
+        packet = TradeLifecyclePacket.from_session(st.session_state)
+    if packet is None:
+        return None
+
+    packet_symbol = str(getattr(packet.identity, "symbol", "") or "").strip().upper()
+    if packet_symbol and packet_symbol != symbol:
+        return None
+
+    return _safe_float(getattr(packet.identity, "stock_price", 0.0))
+
+
+def _resolve_underlying_price(symbol: str) -> float | None:
+    symbol = str(symbol or "").strip().upper()
+    if not symbol:
+        return None
+
+    packet_price = _resolve_packet_price(symbol)
+    if packet_price is not None:
+        return round(packet_price, 2)
+
+    cache = st.session_state.setdefault(PRICE_CACHE_KEY, {})
+    if isinstance(cache, dict):
+        cached = _safe_float(cache.get(symbol))
+        if cached is not None:
+            return round(cached, 2)
+
+    if yf is None:
+        return None
+
+    try:
+        ticker = yf.Ticker(symbol)
+        fast = getattr(ticker, "fast_info", {}) or {}
+        for candidate in [fast.get("lastPrice"), fast.get("regularMarketPrice"), fast.get("previousClose")]:
+            quote_price = _safe_float(candidate)
+            if quote_price is not None:
+                cache[symbol] = float(quote_price)
+                st.session_state[PRICE_CACHE_KEY] = cache
+                return round(float(quote_price), 2)
+        hist = ticker.history(period="1d", interval="1m")
+        if hist is not None and not hist.empty and "Close" in hist.columns:
+            quote_price = _safe_float(hist["Close"].dropna().iloc[-1])
+            if quote_price is not None:
+                cache[symbol] = float(quote_price)
+                st.session_state[PRICE_CACHE_KEY] = cache
+                return round(float(quote_price), 2)
+    except Exception:
+        return None
+    return None
+
+
+def _selected_leg_action(strategy_key: str, selected_role: str, leg_index: int) -> str:
+    if strategy_key in {"Long Call", "Long Put"}:
+        return "BUY"
+    if strategy_key in {"Cash-Secured Put", "Covered Call"}:
+        return "SELL"
+    if strategy_key in {"Bull Call Spread"}:
+        return "BUY" if leg_index == 0 else "SELL"
+    if strategy_key in {"Bull Put Spread", "Bear Call Spread"}:
+        return "SELL" if leg_index == 0 else "BUY"
+    if strategy_key == "Bear Put Spread":
+        return "SELL" if leg_index == 0 else "BUY"
+    return "BUY" if selected_role == "long" else "SELL"
+
+
+def _selected_leg_option_type(strategy_key: str, contract: OptionContract) -> str:
+    contract_type = str(getattr(contract, "contract_type", "") or "").upper().strip()
+    if contract_type in {"CALL", "PUT"}:
+        return contract_type
+    if strategy_key in {"Long Put", "Cash-Secured Put", "Bull Put Spread", "Bear Put Spread"}:
+        return "PUT"
+    return "CALL"
+
+
+def _contract_leg_payload(contract: OptionContract, strategy_key: str, leg_index: int) -> dict[str, Any]:
+    action = _selected_leg_action(strategy_key, strategy_selected_leg_role(strategy_key), leg_index)
+    option_type = _selected_leg_option_type(strategy_key, contract)
+    return {
+        "side": action,
+        "option_type": option_type,
+        "strike": float(getattr(contract, "strike", 0.0) or 0.0),
+        "premium": float(getattr(contract, "mid", 0.0) or 0.0),
+        "expiration": getattr(contract, "expiration", None),
+        "contract_id": getattr(contract, "contract_label", None) or getattr(contract, "contract_id", None) or "",
+        "quantity": int(getattr(contract, "contracts", 1) or 1),
+    }
+
+
+def _apply_trade_legs(trade, strategy_key: str, selected_contract: OptionContract, available_contracts: list[OptionContract] | None = None) -> None:
+    legs: list[dict[str, Any]] = list(getattr(trade, "legs", []) or [])
+    leg_index = len(legs)
+    if _strategy_requires_second_leg(strategy_key) and leg_index >= 2:
+        legs = []
+        leg_index = 0
+
+    primary_leg = _contract_leg_payload(selected_contract, strategy_key, leg_index)
+    legs.append(primary_leg)
+
+    if _strategy_requires_second_leg(strategy_key) and len(legs) == 1 and available_contracts:
+        partner_contract = _find_partner_contract(available_contracts, selected_contract, strategy_key)
+        if partner_contract is not None:
+            legs.append(_contract_leg_payload(partner_contract, strategy_key, 1))
+
+    trade.legs = legs
+    trade.construction_complete = _is_selection_complete(strategy_key, {"legs": legs})
+
+
+def _build_mock_chain_contracts(symbol: str, option_chain_type: str, stock_price: float, base_expiration: date) -> list[OptionContract]:
+    increment = 2.5 if stock_price < 100 else 5.0
+    center = round(stock_price / increment) * increment
+    strikes = [round(center + (i * increment), 2) for i in range(-2, 3)]
+    contract_type = "Call" if option_chain_type == "CALLS" else "Put"
+
+    contracts: list[OptionContract] = []
+    for strike in strikes:
+        distance = abs(strike - stock_price)
+        intrinsic = max(stock_price - strike, 0.0) if contract_type == "Call" else max(strike - stock_price, 0.0)
+        time_value = max(0.35, 5.5 / (1.0 + distance / max(increment, 0.1)))
+        mid = round(max(intrinsic + time_value, 0.15), 2)
+        bid = round(max(mid - 0.1, 0.01), 2)
+        ask = round(mid + 0.1, 2)
+        last = round(mid * 0.99, 2)
+        delta_base = 0.5 + (stock_price - strike) / (12.0 * increment)
+        delta = round(max(min(delta_base, 0.95), 0.05), 2)
+        if contract_type == "Put":
+            delta = -delta
+        gamma = round(0.015 + distance / 10000.0, 3)
+        theta = round(-0.025 - distance / 2000.0, 3)
+        vega = round(0.09 + distance / 1200.0, 3)
+        iv = round(0.18 + distance / 800.0, 2)
+        volume = int(max(75, 1200 - distance * 15))
+        open_interest = int(max(150, 9000 - distance * 35))
+        pop = round(max(20.0, 90.0 - distance * 1.5), 1)
+        expected_return = round(max(1.0, 8.0 - distance * 0.12), 1)
+        annualized_return = round(max(5.0, 24.0 - distance * 0.5), 1)
+        institutional_score = round(max(55.0, 98.0 - distance * 0.8 + (open_interest / 10000.0)), 1)
+        preferred = distance <= increment
+        confidence = round(max(60.0, 96.0 - distance * 0.9), 1)
+
+        contracts.append(
+            OptionContract(
+                underlying=symbol,
+                expiration=base_expiration,
+                strike=strike,
+                bid=bid,
+                ask=ask,
+                mid=mid,
+                last=last,
+                delta=delta,
+                gamma=gamma,
+                theta=theta,
+                vega=vega,
+                iv=iv,
+                volume=volume,
+                open_interest=open_interest,
+                pop=pop,
+                expected_return=expected_return,
+                annualized_return=annualized_return,
+                institutional_score=institutional_score,
+                preferred=preferred,
+                confidence=confidence,
+                contract_type=contract_type,
+            )
         )
-        for (
-            strike,
-            bid,
-            ask,
-            mid,
-            last,
-            delta,
-            gamma,
-            theta,
-            vega,
-            iv,
-            volume,
-            open_interest,
-            pop,
-            expected_return,
-            annualized_return,
-            institutional_score,
-            preferred,
-            confidence,
-        ) in specs
-    ]
+
+    return contracts
 
 
 class MockOptionChainProvider:
-    def get_option_chain(self, underlying: str, strategy: str, reference_price: float = 0.0) -> list[OptionContract]:
-        base_expiration = date.today() + timedelta(days=21)
+    def get_option_chain(
+        self,
+        underlying: str,
+        strategy: str,
+        reference_price: float = 0.0,
+        requested_expiration: Any = None,
+    ) -> list[OptionContract]:
+        if isinstance(requested_expiration, date):
+            base_expiration = requested_expiration
+        else:
+            base_expiration = date.today() + timedelta(days=21)
         symbol = (underlying or "AAPL").strip().upper()
         chain_type = strategy_option_chain_type(strategy)
         if reference_price > 0:
-            base_strike = round(reference_price / 5.0) * 5.0
+            stock_price = float(reference_price)
         else:
-            base_strike = 345.0
-        return _build_mock_chain_contracts(symbol, chain_type, base_strike, base_expiration)
+            return []
+        contracts = _build_mock_chain_contracts(symbol, chain_type, stock_price, base_expiration)
+        st.session_state[CHAIN_TRACE_KEY] = {
+            "requested_symbol": symbol,
+            "requested_expiration": _normalize_expiration(base_expiration),
+            "current_stock_price": round(stock_price, 2),
+            "generated_strikes": [float(getattr(contract, "strike", 0.0) or 0.0) for contract in contracts],
+        }
+        return contracts
 
 
 class InstitutionalRankingEngine:
@@ -645,9 +977,19 @@ def get_option_chain_provider() -> OptionChainProvider:
     return MockOptionChainProvider()
 
 
-def get_ranked_option_chain(underlying: str, strategy: str, reference_price: float = 0.0) -> list[OptionContract]:
+def get_ranked_option_chain(
+    underlying: str,
+    strategy: str,
+    reference_price: float = 0.0,
+    requested_expiration: Any = None,
+) -> list[OptionContract]:
     provider = get_option_chain_provider()
-    contracts = provider.get_option_chain(underlying, strategy, reference_price=reference_price)
+    contracts = provider.get_option_chain(
+        underlying,
+        strategy,
+        reference_price=reference_price,
+        requested_expiration=requested_expiration,
+    )
     ranking_engine = InstitutionalRankingEngine()
     return ranking_engine.rank_contracts(contracts)
 
@@ -681,51 +1023,40 @@ def _find_partner_contract(contracts: list[OptionContract], selected: OptionCont
 
 def apply_option_contract_to_trade(trade, contract: OptionContract, strategy: str, available_contracts: list[OptionContract] | None = None) -> None:
     strategy_key = str(strategy or trade.active_strategy() or trade.recommended_strategy or "").strip()
-    selected_role = strategy_selected_leg_role(strategy_key)
-    partner_contract = _find_partner_contract(available_contracts or [], contract, strategy_key) if available_contracts else None
+    context_fingerprint = _construction_context_key(trade)
+    previous_context = str(st.session_state.get(CONSTRUCTION_CONTEXT_KEY, "") or "")
+    if context_fingerprint != previous_context:
+        _clear_construction_selection_state(trade)
+        st.session_state[CONSTRUCTION_CONTEXT_KEY] = context_fingerprint
+
     trade.symbol = contract.underlying
     trade.expiration = contract.expiration
     trade.contracts = int(contract.contracts or 1)
+    trade.legs = list(getattr(trade, "legs", []) or [])
+    _apply_trade_legs(trade, strategy_key, contract, available_contracts)
 
-    selected_strike = float(contract.strike)
-    selected_premium = float(contract.mid)
-    partner_strike = float(getattr(partner_contract, "strike", 0.0) or 0.0) if partner_contract is not None else 0.0
-    partner_premium = float(getattr(partner_contract, "mid", 0.0) or 0.0) if partner_contract is not None else 0.0
+    trade.strike = 0.0
+    trade.long_strike = 0.0
+    trade.premium = 0.0
+    trade.long_premium = 0.0
 
-    trade.strike = selected_strike
-    trade.premium = selected_premium
+    legs = list(getattr(trade, "legs", []) or [])
+    buy_leg = next((leg for leg in legs if str(leg.get("side") or "").upper() == "BUY"), None)
+    sell_leg = next((leg for leg in legs if str(leg.get("side") or "").upper() == "SELL"), None)
 
-    if strategy_key in {"Cash-Secured Put", "Covered Call"}:
-        trade.long_strike = 0.0
-        trade.long_premium = 0.0
-    elif strategy_key in {"Long Call", "Long Put"}:
-        trade.long_strike = selected_strike
-        trade.long_premium = selected_premium
-    elif strategy_key in {"Bull Call Spread", "Bear Put Spread"}:
-        if selected_role == "long":
-            trade.long_strike = selected_strike
-            trade.long_premium = selected_premium
-            trade.strike = partner_strike
-            trade.premium = partner_premium
-        else:
-            trade.strike = selected_strike
-            trade.premium = selected_premium
-            trade.long_strike = partner_strike
-            trade.long_premium = partner_premium
-    elif strategy_key in {"Bear Call Spread", "Bull Put Spread"}:
-        if selected_role == "long":
-            trade.long_strike = selected_strike
-            trade.long_premium = selected_premium
-            trade.strike = partner_strike
-            trade.premium = partner_premium
-        else:
-            trade.strike = selected_strike
-            trade.premium = selected_premium
-            trade.long_strike = partner_strike
-            trade.long_premium = partner_premium
-    else:
-        trade.long_strike = 0.0
-        trade.long_premium = 0.0
+    if buy_leg and sell_leg:
+        trade.long_strike = float(buy_leg.get("strike", 0.0) or 0.0)
+        trade.long_premium = float(buy_leg.get("premium", 0.0) or 0.0)
+        trade.strike = float(sell_leg.get("strike", 0.0) or 0.0)
+        trade.premium = float(sell_leg.get("premium", 0.0) or 0.0)
+    elif buy_leg:
+        trade.long_strike = float(buy_leg.get("strike", 0.0) or 0.0)
+        trade.long_premium = float(buy_leg.get("premium", 0.0) or 0.0)
+        trade.strike = float(buy_leg.get("strike", 0.0) or 0.0)
+        trade.premium = float(buy_leg.get("premium", 0.0) or 0.0)
+    elif sell_leg:
+        trade.strike = float(sell_leg.get("strike", 0.0) or 0.0)
+        trade.premium = float(sell_leg.get("premium", 0.0) or 0.0)
 
     st.session_state["otcc_construction_symbol_display"] = trade.symbol
     st.session_state["otcc_expiration"] = trade.expiration
@@ -742,28 +1073,72 @@ def apply_option_contract_to_trade(trade, contract: OptionContract, strategy: st
         "pop": contract.pop,
         "annualized": contract.annualized_return,
         "symbol": trade.symbol,
+        "strategy": strategy_key,
         "expiration": trade.expiration,
         "short_strike": trade.strike,
         "short_premium": trade.premium,
-        "selected_role": selected_role,
         "option_type": str(getattr(contract, "contract_type", "") or "").strip(),
         "long_strike": trade.long_strike,
         "long_premium": trade.long_premium,
-        "partner_label": partner_contract.contract_label if partner_contract is not None else "",
+        "legs": list(getattr(trade, "legs", []) or []),
+        "has_long_leg": bool(buy_leg),
+        "has_short_leg": bool(sell_leg),
     }
+    st.session_state[SELECTED_CHAIN_KEY_STATE] = str(st.session_state.get(CHAIN_KEY_STATE, "") or "")
+    st.session_state["otcc_construction_dirty"] = True
+
+    trade.construction_complete = _is_selection_complete(strategy_key, st.session_state[SELECTED_CONTRACT_KEY])
+    st.session_state[OTCC_CONSTRUCTION_COMPLETE_KEY] = trade.construction_complete
+    if trade.construction_complete:
+        st.session_state[OPTION_CHAIN_PANEL_OPEN_KEY] = False
 
 
 def sync_trade_from_construction_state(trade) -> None:
     """Synchronize canonical trade inputs from Step 4 widget state before calculations."""
+    current_strategy = str(trade.active_strategy() or trade.recommended_strategy or "").strip()
     selected = st.session_state.get(SELECTED_CONTRACT_KEY)
     if isinstance(selected, dict) and selected.get("label"):
+        if not _selected_contract_matches_context(selected, trade.symbol, trade.expiration, current_strategy):
+            st.session_state.pop(SELECTED_CONTRACT_KEY, None)
+            st.session_state["otcc_short_strike"] = 0.0
+            st.session_state["otcc_short_premium"] = 0.0
+            st.session_state["otcc_long_strike"] = 0.0
+            st.session_state["otcc_long_premium"] = 0.0
+            st.session_state[STEP4_VALUE_SOURCE_KEY] = "selected_contract_discarded_context_mismatch"
+            selected = None
+    if isinstance(selected, dict) and selected.get("label"):
+        st.session_state[STEP4_VALUE_SOURCE_KEY] = "selected_contract"
         trade.symbol = str(selected.get("symbol") or trade.symbol or "").strip().upper()
         trade.expiration = selected.get("expiration") if selected.get("expiration") is not None else st.session_state.get("otcc_expiration", trade.expiration)
-        trade.strike = float(selected.get("short_strike", trade.strike) or 0.0)
-        trade.premium = float(selected.get("short_premium", trade.premium) or 0.0)
-        trade.long_strike = float(selected.get("long_strike", st.session_state.get("otcc_long_strike", trade.long_strike)) or 0.0)
-        trade.long_premium = float(selected.get("long_premium", st.session_state.get("otcc_long_premium", trade.long_premium)) or 0.0)
+        trade.contracts = max(1, int(st.session_state.get("otcc_contracts", trade.contracts) or 1))
+
+        legs = list(selected.get("legs") or getattr(trade, "legs", []) or [])
+        if legs:
+            trade.legs = legs
+            buy_leg = next((leg for leg in legs if str(leg.get("side") or "").upper() == "BUY"), None)
+            sell_leg = next((leg for leg in legs if str(leg.get("side") or "").upper() == "SELL"), None)
+            if buy_leg and sell_leg:
+                trade.long_strike = float(buy_leg.get("strike", 0.0) or 0.0)
+                trade.long_premium = float(buy_leg.get("premium", 0.0) or 0.0)
+                trade.strike = float(sell_leg.get("strike", 0.0) or 0.0)
+                trade.premium = float(sell_leg.get("premium", 0.0) or 0.0)
+            elif buy_leg:
+                trade.long_strike = float(buy_leg.get("strike", 0.0) or 0.0)
+                trade.long_premium = float(buy_leg.get("premium", 0.0) or 0.0)
+                trade.strike = 0.0
+                trade.premium = 0.0
+            elif sell_leg:
+                trade.strike = float(sell_leg.get("strike", 0.0) or 0.0)
+                trade.premium = float(sell_leg.get("premium", 0.0) or 0.0)
+                trade.long_strike = 0.0
+                trade.long_premium = 0.0
+        else:
+            trade.strike = float(selected.get("short_strike", trade.strike) or 0.0)
+            trade.premium = float(selected.get("short_premium", trade.premium) or 0.0)
+            trade.long_strike = float(selected.get("long_strike", st.session_state.get("otcc_long_strike", trade.long_strike)) or 0.0)
+            trade.long_premium = float(selected.get("long_premium", st.session_state.get("otcc_long_premium", trade.long_premium)) or 0.0)
     else:
+        st.session_state[STEP4_VALUE_SOURCE_KEY] = "step4_manual_fields"
         trade.symbol = str(st.session_state.get("otcc_construction_symbol_display", trade.symbol) or "").strip().upper()
         trade.expiration = st.session_state.get("otcc_expiration", trade.expiration)
         trade.strike = float(st.session_state.get("otcc_short_strike", trade.strike) or 0.0)
@@ -778,6 +1153,15 @@ def build_trade_math_snapshot(trade):
     """Build one canonical trade_math object from current Step 4 widget/session values."""
     sync_trade_from_construction_state(trade)
     trade_math = replace(trade)
+
+    if _strategy_requires_second_leg(str(trade.active_strategy() or trade.recommended_strategy or "")) and len(getattr(trade_math, "legs", []) or []) < 2:
+        trade_math.reset_results()
+        trade_math.buying_power_required = 0.0
+        trade_math.construction_complete = False
+        trade.buying_power_required = 0.0
+        trade.construction_complete = False
+        return trade_math
+
     trade_math = calculate_trade(trade_math)
 
     # Keep canonical trade object aligned for downstream validation/approval steps.
@@ -790,6 +1174,12 @@ def build_trade_math_snapshot(trade):
     trade.annualized_return = float(getattr(trade_math, "annualized_return", 0.0) or 0.0)
     trade.reward_risk_ratio = float(getattr(trade_math, "reward_risk_ratio", 0.0) or 0.0)
     trade.buying_power_required = float(getattr(trade_math, "buying_power_required", 0.0) or 0.0)
+    trade.construction_complete = bool(
+        getattr(trade_math, "construction_complete", False)
+        or (_strategy_requires_second_leg(str(trade.active_strategy() or trade.recommended_strategy or "")) and len(getattr(trade_math, "legs", []) or []) >= 2)
+        or (not _strategy_requires_second_leg(str(trade.active_strategy() or trade.recommended_strategy or "")) and len(getattr(trade_math, "legs", []) or []) >= 1)
+    )
+    st.session_state[OTCC_CONSTRUCTION_COMPLETE_KEY] = trade.construction_complete
     return trade_math
 
 
@@ -1235,9 +1625,29 @@ def render_institutional_trade_summary(trade, packet=None) -> None:
         ("Construction Readiness", (f"{readiness:,.1f}% • {readiness_context}") if readiness > 0 else readiness_context),
         ("Approval Status", status),
     ]
+    legs = list(getattr(trade, "legs", []) or [])
+    buy_leg = next((leg for leg in legs if str(leg.get("side") or "").upper() == "BUY"), None)
+    sell_leg = next((leg for leg in legs if str(leg.get("side") or "").upper() == "SELL"), None)
+    incomplete_spread = _strategy_requires_second_leg(strategy) and len(legs) < 2
 
     with st.container(border=True):
         st.markdown("### 📄 Institutional Trade Summary")
+        if buy_leg or sell_leg:
+            st.markdown("**Selected Legs**")
+            if buy_leg:
+                buy_qty = int(buy_leg.get("quantity", 1) or 1)
+                st.write(
+                    f"✓ Buy Leg: BUY TO OPEN {buy_qty} {trade.symbol} {float(buy_leg.get('strike', 0.0) or 0.0):.2f} "
+                    f"{str(buy_leg.get('option_type') or '').upper()} @ {float(buy_leg.get('premium', 0.0) or 0.0):.2f}"
+                )
+            if sell_leg:
+                sell_qty = int(sell_leg.get("quantity", 1) or 1)
+                st.write(
+                    f"✓ Sell Leg: SELL TO OPEN {sell_qty} {trade.symbol} {float(sell_leg.get('strike', 0.0) or 0.0):.2f} "
+                    f"{str(sell_leg.get('option_type') or '').upper()} @ {float(sell_leg.get('premium', 0.0) or 0.0):.2f}"
+                )
+            if incomplete_spread:
+                st.info("Select short call to complete spread." if strategy == "Bull Call Spread" else "Select the second leg to complete spread.")
         render_native_metric_grid(summary_rows, columns=3, block_class="otcc-grid-3")
         premium_line = money(float(getattr(trade, "credit", 0.0) or 0.0)) if float(getattr(trade, "credit", 0.0) or 0.0) > 0 else "waiting premium"
         debit_line = money(float(getattr(trade, "debit", 0.0) or 0.0)) if float(getattr(trade, "debit", 0.0) or 0.0) > 0 else "waiting debit"
@@ -1266,6 +1676,8 @@ def render_live_trade_math_dashboard(trade) -> None:
     roi = float(getattr(trade, "roi", 0.0) or 0.0)
     annualized_return = float(getattr(trade, "annualized_return", 0.0) or 0.0)
     reward_risk = float(getattr(trade, "reward_risk_ratio", 0.0) or 0.0)
+    legs = list(getattr(trade, "legs", []) or [])
+    incomplete_spread = _strategy_requires_second_leg(strategy) and len(legs) < 2
 
     capital_at_risk = max_loss
     risk_level = risk_level_label(max_loss, max_profit)
@@ -1288,6 +1700,7 @@ def render_live_trade_math_dashboard(trade) -> None:
     debit_display = money(debit) if abs(debit) > 0 else "Waiting for trade details"
 
     st.markdown("### Live Trade Math")
+    st.caption(f"Selected Legs: {len(legs)}")
 
     with st.container(border=True):
         st.markdown("#### 🟢 Income")
@@ -1388,6 +1801,9 @@ def render_live_trade_math_dashboard(trade) -> None:
             _render_math_value_card("Credit", credit_display, tone="position")
         with pos3:
             _render_math_value_card("Debit", debit_display, tone="position")
+
+    if incomplete_spread:
+        st.info("Select short call to complete spread." if strategy == "Bull Call Spread" else "Select the second leg to complete spread.")
 
     if beginner_mode_enabled():
         if strategy == "Cash-Secured Put":
@@ -2763,12 +3179,52 @@ def render_commander_intro(trade):
 
 
 
+def render_opportunity_selection(trade):
+    section_header(
+        "Step 1",
+        "Opportunity Selection",
+        "No upstream packet found. Select the underlying and mission to begin decision workflow.",
+    )
+
+    resolve_symbol_handoff(trade)
+
+    with st.container(border=True):
+        st.caption("Discovery Mode: manually define the symbol and objective when no lifecycle packet is available.")
+
+        st.session_state.setdefault("otcc_discovery_symbol", str(getattr(trade, "symbol", "") or ""))
+        previous_symbol = str(st.session_state.get("otcc_last_symbol_seen", "") or "").strip().upper()
+        symbol_value = st.text_input(
+            "Underlying Symbol",
+            key="otcc_discovery_symbol",
+            help=beginner_help("Enter the stock or ETF ticker to evaluate in the Options Decision Center."),
+        )
+
+        normalized_symbol = str(symbol_value or "").strip().upper()
+        if normalized_symbol:
+            if previous_symbol and normalized_symbol != previous_symbol:
+                reset_otcc_construction_state(trade)
+                st.session_state["otcc_last_symbol_seen"] = normalized_symbol
+                trade.symbol = normalized_symbol
+                st.rerun()
+            st.session_state["otcc_last_symbol_seen"] = normalized_symbol
+            trade.symbol = normalized_symbol
+            st.caption(f"Selected symbol: {normalized_symbol}")
+        else:
+            st.info("Enter a symbol to seed strategy selection and trade construction.")
+
+    render_commander_intro(trade)
+
+
 def apply_trade_lifecycle_packet_to_trade(packet, trade) -> None:
     """Apply canonical packet fields to the local construction trade state."""
     if packet is None or trade is None:
         return
     if packet.identity.symbol:
         trade.symbol = packet.identity.symbol
+    try:
+        trade.stock_price = float(getattr(packet.identity, "stock_price", 0.0) or 0.0)
+    except Exception:
+        trade.stock_price = 0.0
     if packet.identity.strategy or packet.construction.strategy_type:
         trade.recommended_strategy = packet.construction.strategy_type or packet.identity.strategy
         trade.strategy = trade.strategy or trade.recommended_strategy
@@ -2927,6 +3383,7 @@ def render_opportunity_briefing(trade, packet):
     c1, c2 = st.columns(2)
     with c1:
         if st.button("Construct Received Opportunity", key="otcc_construct_packet", use_container_width=True):
+            reset_otcc_construction_state(trade)
             trade.user_selected_strategy = strategy if strategy != "Pending" else trade.user_selected_strategy
             trade.strategy = trade.user_selected_strategy or trade.recommended_strategy
             trade.construction_complete = False
@@ -2934,9 +3391,20 @@ def render_opportunity_briefing(trade, packet):
             st.rerun()
 
     with c2:
-        if st.button("Clear Briefing / Use Discovery Mode", key="otcc_clear_packet", use_container_width=True):
+        if st.button("Begin New Analysis", key="otcc_clear_packet", use_container_width=True):
+            reset_otcc_construction_state(trade)
             clear_packet_from_session(st.session_state)
             st.session_state.pop("trade_lifecycle_packet", None)
+            st.session_state[DISCOVERY_MODE_KEY] = True
+            st.session_state["otcc_discovery_symbol"] = ""
+            st.session_state["otcc_last_symbol_seen"] = ""
+            st.session_state["otcc_last_strategy_seen"] = ""
+            st.session_state["otcc_last_expiration_seen"] = ""
+            trade.symbol = ""
+            trade.strategy = ""
+            trade.user_selected_strategy = ""
+            trade.recommended_strategy = ""
+            trade.expiration = date.today()
             st.rerun()
     responsive_block_end()
 
@@ -2957,6 +3425,7 @@ def render_other_strategy_selection(trade):
             with col:
                 selected = trade.active_strategy() == key
                 if strategy_card(key, strategy, selected=selected):
+                    reset_otcc_construction_state(trade)
                     trade.user_selected_strategy = key
                     trade.strategy = key
                     trade.construction_complete = False
@@ -2968,12 +3437,43 @@ def render_other_strategy_selection(trade):
 
 
 def render_contract_selection_panel(trade, strategy: str, locked: bool) -> None:
+    chain_type = strategy_option_chain_type(strategy)
+    requested_symbol = str(getattr(trade, "symbol", "") or "").strip().upper()
+    requested_expiration = getattr(trade, "expiration", None)
+
+    trade.stock_price = 0.0
+    if requested_symbol:
+        resolved_price = _resolve_underlying_price(requested_symbol)
+        if resolved_price is not None:
+            trade.stock_price = resolved_price
+
+    stock_price = float(getattr(trade, "stock_price", 0.0) or 0.0)
+    active_key = _active_construction_key(requested_symbol, strategy, requested_expiration, stock_price)
+    previous_active_key = str(st.session_state.get(ACTIVE_KEY_STATE, "") or "")
+    if previous_active_key != active_key:
+        reset_otcc_construction_state(trade)
+        st.session_state[ACTIVE_KEY_STATE] = active_key
+        trade.stock_price = stock_price
+
     selected = st.session_state.get(SELECTED_CONTRACT_KEY)
+    if isinstance(selected, dict) and selected.get("label"):
+        if not _selected_contract_matches_context(selected, requested_symbol, requested_expiration, strategy):
+            st.session_state.pop(SELECTED_CONTRACT_KEY, None)
+            st.session_state.pop("otcc_selected_contract", None)
+            st.session_state.pop("otcc_selected_long_leg", None)
+            st.session_state.pop("otcc_selected_short_leg", None)
+            st.session_state.pop("otcc_selected_put_leg", None)
+            st.session_state.pop("otcc_selected_call_leg", None)
+            st.session_state[STEP4_VALUE_SOURCE_KEY] = "selected_contract_discarded_context_mismatch"
+            selected = None
+
     contract_selected = bool(isinstance(selected, dict) and selected.get("label"))
     button_label = "Change Selected Contract" if contract_selected else "Select Option Contract"
-    chain_type = strategy_option_chain_type(strategy)
     if st.button(button_label, key="otcc_select_option_contract", use_container_width=False, disabled=locked):
+        st.session_state[SELECTOR_OPEN_KEY] = True
         st.session_state[OPTION_CHAIN_PANEL_OPEN_KEY] = True
+        st.session_state[CHAIN_MODE_KEY] = chain_type
+        st.rerun()
 
     if isinstance(selected, dict) and selected.get("label"):
         st.caption(
@@ -2984,14 +3484,69 @@ def render_contract_selection_panel(trade, strategy: str, locked: bool) -> None:
         )
         st.info("Contract-derived fields are locked. Use Change Selected Contract to choose a different strike, expiration, or premium.")
 
-    with st.expander(f"Option Chain Selection ({chain_type})", expanded=bool(st.session_state.get(OPTION_CHAIN_PANEL_OPEN_KEY, False))):
+    with st.expander(f"Option Chain Selection ({chain_type})", expanded=bool(st.session_state.get(SELECTOR_OPEN_KEY, False))):
         st.caption(f"Option Chain Provider -> Institutional Ranking Engine -> Trade Construction -> Risk Validation -> Approval -> Execution | Strategy chain: {chain_type}")
         st.caption("Future placeholder: when IBKR is active, live chain download and ranking will feed this panel automatically.")
 
-        contracts = get_ranked_option_chain(trade.symbol, strategy, reference_price=float(getattr(trade, "stock_price", 0.0) or 0.0))
+        chain_key = _active_construction_key(requested_symbol, strategy, requested_expiration, stock_price)
+        previous_chain_key = str(st.session_state.get(CHAIN_KEY_STATE, "") or "")
+        if chain_key != previous_chain_key:
+            reset_otcc_construction_state(trade)
+            st.session_state[CHAIN_KEY_STATE] = chain_key
+            st.session_state[ACTIVE_KEY_STATE] = chain_key
+            st.session_state[SELECTOR_OPEN_KEY] = True
+            st.session_state[OPTION_CHAIN_PANEL_OPEN_KEY] = True
+            st.session_state[CHAIN_MODE_KEY] = chain_type
+
+        # Always rebuild recommendation cards from the current request context.
+        contracts = get_ranked_option_chain(
+            requested_symbol,
+            strategy,
+            reference_price=stock_price,
+            requested_expiration=requested_expiration,
+        )
+        st.session_state[OPTION_CHAIN_CACHE_KEY] = {
+            "chain_key": chain_key,
+            "contracts": contracts,
+        }
+
+        st.session_state[GENERATED_STRIKES_KEY] = [float(getattr(c, "strike", 0.0) or 0.0) for c in contracts]
         if not contracts:
-            st.info("No contracts available for selection yet.")
+            st.info("No current price is available for this symbol yet, so recommendation cards cannot be generated.")
             return
+
+        current_legs = list(getattr(trade, "legs", []) or [])
+        if _strategy_requires_second_leg(strategy) and len(current_legs) == 1:
+            current_leg = current_legs[0]
+            current_side = str(current_leg.get("side") or "").upper()
+            current_strike = float(current_leg.get("strike", 0.0) or 0.0)
+            if strategy == "Bull Call Spread" and current_side == "BUY":
+                contracts = [c for c in contracts if str(getattr(c, "contract_type", "") or "").upper() == "CALL" and float(getattr(c, "strike", 0.0) or 0.0) > current_strike]
+                st.info("Select short call to complete spread.")
+            elif strategy == "Bull Put Spread" and current_side == "SELL":
+                contracts = [c for c in contracts if str(getattr(c, "contract_type", "") or "").upper() == "PUT" and float(getattr(c, "strike", 0.0) or 0.0) < current_strike]
+                contracts = list(reversed(contracts))
+                st.info("Select long put to complete spread.")
+            elif strategy == "Bear Call Spread" and current_side == "SELL":
+                contracts = [c for c in contracts if str(getattr(c, "contract_type", "") or "").upper() == "CALL" and float(getattr(c, "strike", 0.0) or 0.0) > current_strike]
+                st.info("Select long call to complete spread.")
+            elif strategy == "Bear Put Spread" and current_side == "SELL":
+                contracts = [c for c in contracts if str(getattr(c, "contract_type", "") or "").upper() == "PUT" and float(getattr(c, "strike", 0.0) or 0.0) < current_strike]
+                contracts = list(reversed(contracts))
+                st.info("Select long put to complete spread.")
+
+        rendered_strikes = [float(getattr(c, "strike", 0.0) or 0.0) for c in contracts]
+        generator_trace = st.session_state.get(CHAIN_TRACE_KEY)
+        if not isinstance(generator_trace, dict):
+            generator_trace = {}
+        st.session_state[CHAIN_TRACE_KEY] = {
+            "requested_symbol": requested_symbol,
+            "requested_expiration": _normalize_expiration(requested_expiration),
+            "current_stock_price": round(stock_price, 2),
+            "generated_strikes": list(generator_trace.get("generated_strikes", [])),
+            "rendered_strikes": rendered_strikes,
+            "chain_key": chain_key,
+        }
 
         for idx, contract in enumerate(contracts):
             with st.container(border=True):
@@ -3020,8 +3575,42 @@ def render_contract_selection_panel(trade, strategy: str, locked: bool) -> None:
                     disabled=locked,
                 ):
                     apply_option_contract_to_trade(trade, contract, strategy, contracts)
+                    sync_trade_from_construction_state(trade)
+                    build_trade_math_snapshot(trade)
+                    st.session_state["otcc_construction_dirty"] = False
+                    st.session_state[CHAIN_MODE_KEY] = chain_type
                     st.session_state[OPTION_CHAIN_PANEL_OPEN_KEY] = False
+                    st.session_state[SELECTOR_OPEN_KEY] = False
                     st.rerun()
+
+        with st.expander("Developer Debug", expanded=False):
+            selected_contract_dbg = st.session_state.get(SELECTED_CONTRACT_KEY)
+            if not isinstance(selected_contract_dbg, dict):
+                selected_contract_dbg = {}
+            chain_trace = st.session_state.get(CHAIN_TRACE_KEY)
+            if not isinstance(chain_trace, dict):
+                chain_trace = {}
+            st.json(
+                {
+                    "current_symbol": str(getattr(trade, "symbol", "") or "").strip().upper(),
+                    "current_strategy": str(strategy or "").strip(),
+                    "current_expiration": _normalize_expiration(getattr(trade, "expiration", None)),
+                    "step4_value_source": str(st.session_state.get(STEP4_VALUE_SOURCE_KEY, "") or "unknown"),
+                    "selected_contract_symbol": str(selected_contract_dbg.get("symbol") or ""),
+                    "selected_contract_strike": float(selected_contract_dbg.get("short_strike", 0.0) or 0.0),
+                    "selected_contract_premium": float(selected_contract_dbg.get("short_premium", 0.0) or 0.0),
+                    "current_stock_price": float(getattr(trade, "stock_price", 0.0) or 0.0),
+                    "active_key": str(st.session_state.get(ACTIVE_KEY_STATE, "") or ""),
+                    "current_chain_key": str(st.session_state.get(CHAIN_KEY_STATE, "") or ""),
+                    "selected_chain_key": str(st.session_state.get(SELECTED_CHAIN_KEY_STATE, "") or ""),
+                    "generated_strikes": list(st.session_state.get(GENERATED_STRIKES_KEY, []) or []),
+                    "requested_symbol": str(chain_trace.get("requested_symbol") or ""),
+                    "requested_expiration": str(chain_trace.get("requested_expiration") or ""),
+                    "requested_stock_price": float(chain_trace.get("current_stock_price", 0.0) or 0.0),
+                    "trace_generated_strikes": list(chain_trace.get("generated_strikes", []) or []),
+                    "trace_rendered_strikes": list(chain_trace.get("rendered_strikes", []) or []),
+                }
+            )
 
 
 # ============================================================
@@ -3057,6 +3646,7 @@ def render_strategy_selection(trade, packet=None):
         st.write(trade.strategy_reason or "Recommendation received from upstream context.")
 
         if st.button("Construct Recommended Trade", key="otcc_construct_recommended", use_container_width=True, disabled=locked):
+            reset_otcc_construction_state(trade)
             trade.user_selected_strategy = trade.recommended_strategy
             trade.strategy = trade.recommended_strategy
             trade.construction_complete = False
@@ -3077,6 +3667,39 @@ def render_strategy_selection(trade, packet=None):
 def render_trade_construction(trade, packet=None):
     strategy = trade.active_strategy()
     locked = bool(packet and getattr(getattr(packet, "approval", None), "approved", False))
+    symbol_seen = str(getattr(trade, "symbol", "") or "").strip().upper()
+    strategy_seen = str(strategy or "").strip()
+    expiration_seen = _normalize_expiration(st.session_state.get("otcc_expiration", getattr(trade, "expiration", None)))
+    previous_symbol_seen = str(st.session_state.get("otcc_last_symbol_seen", "") or "").strip().upper()
+    previous_strategy_seen = str(st.session_state.get("otcc_last_strategy_seen", "") or "").strip()
+    previous_expiration_seen = str(st.session_state.get("otcc_last_expiration_seen", "") or "").strip()
+    if previous_symbol_seen and symbol_seen and symbol_seen != previous_symbol_seen:
+        reset_otcc_construction_state(trade)
+        st.session_state["otcc_last_symbol_seen"] = symbol_seen
+        st.session_state["otcc_last_strategy_seen"] = strategy_seen
+        st.session_state["otcc_last_expiration_seen"] = expiration_seen
+        st.rerun()
+    if previous_strategy_seen and strategy_seen and strategy_seen != previous_strategy_seen:
+        reset_otcc_construction_state(trade)
+        st.session_state["otcc_last_symbol_seen"] = symbol_seen
+        st.session_state["otcc_last_strategy_seen"] = strategy_seen
+        st.session_state["otcc_last_expiration_seen"] = expiration_seen
+        st.rerun()
+    if previous_expiration_seen and expiration_seen and expiration_seen != previous_expiration_seen:
+        reset_otcc_construction_state(trade)
+        st.session_state["otcc_last_symbol_seen"] = symbol_seen
+        st.session_state["otcc_last_strategy_seen"] = strategy_seen
+        st.session_state["otcc_last_expiration_seen"] = expiration_seen
+        st.rerun()
+    st.session_state["otcc_last_symbol_seen"] = symbol_seen
+    st.session_state["otcc_last_strategy_seen"] = strategy_seen
+    st.session_state["otcc_last_expiration_seen"] = expiration_seen
+
+    context_fingerprint = _construction_context_key(trade)
+    previous_context = str(st.session_state.get(CONSTRUCTION_CONTEXT_KEY, "") or "")
+    if context_fingerprint != previous_context:
+        reset_otcc_construction_state(trade)
+        st.session_state[CONSTRUCTION_CONTEXT_KEY] = context_fingerprint
     subtitle_text = "Review the completed strategy prior to validation and approval." if locked else "Enter the trade structure. Strategy math updates live from selected contract legs."
     section_header(
         "Step 4",
@@ -3107,13 +3730,13 @@ def render_trade_construction(trade, packet=None):
             # Manual entry stays isolated here so a future broker option-chain picker can swap in without restructuring Step 4.
             responsive_block_start("otcc-grid-3")
             col1, col2, col3 = st.columns(3)
-            st.session_state.setdefault("otcc_construction_symbol_display", trade.symbol)
-            st.session_state.setdefault("otcc_expiration", trade.expiration or date.today())
-            st.session_state.setdefault("otcc_short_strike", float(trade.strike or 0.0))
-            st.session_state.setdefault("otcc_long_strike", float(trade.long_strike or 0.0))
-            st.session_state.setdefault("otcc_short_premium", float(trade.premium or 0.0))
-            st.session_state.setdefault("otcc_long_premium", float(trade.long_premium or 0.0))
-            st.session_state.setdefault("otcc_contracts", int(trade.contracts or 1))
+            st.session_state["otcc_construction_symbol_display"] = str(getattr(trade, "symbol", "") or "").strip().upper()
+            st.session_state["otcc_expiration"] = trade.expiration or date.today()
+            st.session_state["otcc_short_strike"] = float(trade.strike or 0.0)
+            st.session_state["otcc_long_strike"] = float(trade.long_strike or 0.0)
+            st.session_state["otcc_short_premium"] = float(trade.premium or 0.0)
+            st.session_state["otcc_long_premium"] = float(trade.long_premium or 0.0)
+            st.session_state["otcc_contracts"] = int(trade.contracts or 1)
 
             selected_contract = st.session_state.get(SELECTED_CONTRACT_KEY)
             contract_selected = bool(isinstance(selected_contract, dict) and selected_contract.get("label"))
@@ -3714,17 +4337,18 @@ Review the final institutional trade ticket before sending the order to your bro
 
     render_step_separator()
     trade_math = render_trade_construction(trade, packet)
+    trade_for_downstream = trade_math if trade_math is not None else trade
 
     render_step_separator()
-    packet = render_risk_validation(trade_math, packet)
+    packet = render_risk_validation(trade_for_downstream, packet)
 
     render_step_separator()
     responsive_block_start("otcc-step67-row")
     col_approval, col_execution = st.columns(2, gap="medium")
     with col_approval:
-        render_trade_approval(trade_math, packet)
+        render_trade_approval(trade_for_downstream, packet)
     with col_execution:
-        render_execution_package(trade_math)
+        render_execution_package(trade_for_downstream)
     responsive_block_end()
 
 
