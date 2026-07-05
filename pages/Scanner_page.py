@@ -4694,7 +4694,7 @@ def run_page():
     clear_btn = False
 
     scanner_help_seen_key = "scanner_help_seen"
-    scanner_help_expanded = not bool(st.session_state.get(scanner_help_seen_key, False))
+    scanner_help_expanded = False
 
     with st.container(border=True):
         scanner_help_expander(
