@@ -1605,17 +1605,11 @@ def prepare_options_decision_packet(ctx: Dict[str, Any], scorecard: Dict[str, An
     st.session_state["options_decision_packet"] = packet
     st.session_state["selected_symbol"] = packet.get("symbol")
     st.session_state["options_manual_symbol"] = packet.get("symbol")
-    st.session_state["jfbp_main_navigation"] = "Options Decision Center"
     return packet
 
 def render_options_handoff_panel(ctx: Dict[str, Any], strike_plan: Dict[str, Any]) -> None:
     section_open("📤 Options Workflow Handoff", "Prepares advisory tickets and sends symbols to Trade Command, Research, or OMS without retyping.")
-    h1, h2, h3, h4, h5 = st.columns(5)
-    with h1:
-        if st.button("Send to Options Decision Center", width="stretch", key="ocx42_decision_center"):
-            prepare_options_decision_packet(ctx, st.session_state.get("options_current_scorecard", {}), strike_plan)
-            st.session_state["jfbp_main_navigation"] = "Options Decision Center"
-            st.rerun()
+    h2, h3, h4, h5 = st.columns(4)
     with h2:
         if st.button("Send to Trade Command", width="stretch", key="ocx42_tcc"):
             st.session_state["trade_command_symbol"] = ctx.get("symbol")
@@ -1958,12 +1952,7 @@ def run_page() -> None:
         ("Probability", position_builder["Probability"]),
     ])
 
-    h1, h2, h3, h4, h5 = st.columns(5)
-    with h1:
-        if st.button("Send to Options Decision Center", width="stretch", key="ocx60_decision_center"):
-            prepare_options_decision_packet(ctx, scorecard, strike_plan)
-            st.session_state["jfbp_main_navigation"] = "Options Decision Center"
-            st.rerun()
+    h2, h3, h4, h5 = st.columns(4)
     with h2:
         if st.button("Send to Trade Command", width="stretch", key="ocx60_tcc"):
             st.session_state["trade_command_symbol"] = ctx.get("symbol")

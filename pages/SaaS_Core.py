@@ -127,7 +127,6 @@ PLAN_PAGES = {
         "Database",
         "Trade Command Center",
         "Options Center",
-        "Options Decision Center",
         "Navigation Guide",
         "User Guide Center",
         "Quant Executor",
@@ -153,7 +152,6 @@ PLAN_TRADING_MODE = {
 # Canonical human-facing Elite feature bullets used across upgrade surfaces.
 ELITE_FEATURE_BULLETS: tuple[str, ...] = (
     "Everything in Pro + live execution suite",
-    "Options Decision Center (Institutional Workflow)",
     "Quant Executor, OMS Execution, Live IBKR",
     "Automation Control Center",
     "Crypto, Forex, Gold, and Oil Pulse",

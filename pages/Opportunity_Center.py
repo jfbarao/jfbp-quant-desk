@@ -1385,7 +1385,7 @@ def publish_handoff(row: Dict[str, Any], destination: str | None = None) -> None
     elif destination == "OMS Execution":
         st.session_state["tcc_prepared_oms_ticket"] = handoff_ticket
 
-    if destination in {"Trade Command Center", "Options Center", "Options Decision Center", "Research Stock", "OMS Execution", "Market Pulse", "Crypto Pulse", "Forex Pulse", "Gold Pulse", "Oil Pulse"}:
+    if destination in {"Trade Command Center", "Options Center", "Research Stock", "OMS Execution", "Market Pulse", "Crypto Pulse", "Forex Pulse", "Gold Pulse", "Oil Pulse"}:
         st.session_state["jfbp_main_navigation"] = destination
 
     st.rerun()
@@ -1419,16 +1419,13 @@ def render_global_handoff_controls(scanner: Dict[str, Any]) -> None:
 
     selected = rows[selected_index]
 
-    top_1, top_2, top_3 = st.columns(3, gap="small")
+    top_1, top_2 = st.columns(2, gap="small")
     with top_1:
         if st.button("Trade Command", width="stretch", key="oc_open_trade_command_selected_v2"):
             publish_handoff(selected, "Trade Command Center")
     with top_2:
         if st.button("Options Center", width="stretch", key="oc_open_options_selected_v2"):
             publish_handoff(selected, "Options Center")
-    with top_3:
-        if st.button("Options Decision", width="stretch", key="oc_open_options_decision_selected_v2"):
-            publish_handoff(selected, "Options Decision Center")
 
     bottom_1, bottom_2 = st.columns(2, gap="small")
     with bottom_1:

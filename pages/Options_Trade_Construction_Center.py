@@ -1,6 +1,7 @@
 import streamlit as st
 import html
 import textwrap
+import os
 from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
@@ -50,6 +51,7 @@ st.set_page_config(
 BEGINNER_MODE_KEY = "otcc_beginner_mode"
 OPTION_CHAIN_PANEL_OPEN_KEY = "otcc_option_chain_panel_open"
 SELECTOR_OPEN_KEY = "otcc_selector_open"
+CONTRACT_SELECTION_ACTIVE_KEY = "otcc_contract_selection_active"
 CHAIN_MODE_KEY = "otcc_chain_mode"
 OPTION_CHAIN_CACHE_KEY = "otcc_option_chain"
 CHAIN_KEY_STATE = "otcc_chain_key"
@@ -66,6 +68,25 @@ STEP5_VALIDATION_STATUS_KEY = "otcc_step5_validation_status"
 OTCC_CONSTRUCTION_COMPLETE_KEY = "otcc_construction_complete"
 OTCC_VALIDATION_COMPLETE_KEY = "otcc_validation_complete"
 PRICE_CACHE_KEY = "otcc_price_cache"
+OTCC_TEMP_UNAVAILABLE_MESSAGE = "Options Decision Center is currently undergoing enhancements and is temporarily unavailable. It will return in a future update."
+
+
+def _otcc_dev_access_enabled() -> bool:
+    flag = str(os.getenv("OTCC_ENABLE_DEV_ACCESS", "")).strip().lower()
+    if flag in {"1", "true", "yes", "on"}:
+        return True
+
+    try:
+        query_flag = str(st.query_params.get("otcc_dev", "")).strip().lower()
+    except Exception:
+        query_flag = ""
+    return query_flag in {"1", "true", "yes", "on"}
+
+
+def _render_otcc_temporarily_unavailable() -> None:
+    st.title(f"{PAGE_ICON} Options Decision Center")
+    st.warning(f"**{OTCC_TEMP_UNAVAILABLE_MESSAGE}**")
+    st.stop()
 
 
 BEGINNER_GLOSSARY_TABLE = """
@@ -593,15 +614,16 @@ def _construction_context_key(trade) -> str:
     return f"{symbol}|{strategy}|{expiration}"
 
 
-def reset_otcc_construction_state(trade=None) -> None:
+def reset_otcc_construction_state(trade=None, *, preserve_identity: bool = True) -> None:
     current_symbol = ""
     current_expiration = date.today()
     current_contracts = 1
     if trade is not None:
         try:
-            current_symbol = str(getattr(trade, "symbol", "") or "").strip().upper()
-            current_expiration = getattr(trade, "expiration", None) or date.today()
-            current_contracts = int(getattr(trade, "contracts", 1) or 1)
+            if preserve_identity:
+                current_symbol = str(getattr(trade, "symbol", "") or "").strip().upper()
+                current_expiration = getattr(trade, "expiration", None) or date.today()
+                current_contracts = int(getattr(trade, "contracts", 1) or 1)
             trade.legs.clear()
             trade.strike = 0.0
             trade.long_strike = 0.0
@@ -618,6 +640,19 @@ def reset_otcc_construction_state(trade=None) -> None:
             trade.approval_status = PENDING_TEXT
             trade.reset_results()
             trade.reset_validation()
+            if not preserve_identity:
+                trade.symbol = ""
+                trade.strategy = ""
+                trade.user_selected_strategy = ""
+                trade.recommended_strategy = ""
+                trade.strategy_reason = ""
+                trade.strategy_confidence = 0.0
+                trade.institutional_grade = ""
+                trade.mission = ""
+                trade.objective = ""
+                trade.market_bias = ""
+                trade.expiration = date.today()
+                trade.contracts = 1
         except Exception:
             pass
 
@@ -626,8 +661,10 @@ def reset_otcc_construction_state(trade=None) -> None:
         "construction_request",
         "recommendation_packet",
         "trade_lifecycle_packet",
+        "trade_lifecycle_packet_memory",
         "decision_packet",
         "opportunity_packet",
+        "options_decision_packet",
         "otcc_loaded_packet_fingerprint",
         "selected_symbol",
         "scanner_selected_symbol",
@@ -637,6 +674,9 @@ def reset_otcc_construction_state(trade=None) -> None:
         "opportunity_symbol",
         "active_symbol",
         "ticker",
+        "symbol",
+        "options_manual_symbol",
+        "research_ticker",
     ]:
         st.session_state.pop(key, None)
 
@@ -659,7 +699,12 @@ def reset_otcc_construction_state(trade=None) -> None:
     st.session_state.pop(CHAIN_KEY_STATE, None)
     st.session_state.pop(SELECTED_CHAIN_KEY_STATE, None)
     st.session_state.pop(GENERATED_STRIKES_KEY, None)
+    st.session_state.pop(CHAIN_TRACE_KEY, None)
     st.session_state.pop(ACTIVE_KEY_STATE, None)
+    if not preserve_identity:
+        st.session_state.pop(CONTRACT_SELECTION_ACTIVE_KEY, None)
+    st.session_state.pop(STEP4_VALUE_SOURCE_KEY, None)
+    st.session_state.pop(CONSTRUCTION_CONTEXT_KEY, None)
     st.session_state[OTCC_CONSTRUCTION_COMPLETE_KEY] = False
     st.session_state[OTCC_VALIDATION_COMPLETE_KEY] = False
     st.session_state[STEP5_VALIDATION_COMPLETE_KEY] = False
@@ -703,12 +748,25 @@ def reset_otcc_construction_state(trade=None) -> None:
         "otcc_decision_readiness_override",
         "otcc_decision_override",
         "trade_lifecycle_packet",
+        "otcc_entry_plan",
+        "otcc_profit_target",
+        "otcc_exit_plan",
+        "otcc_adjustment_plan",
+        "otcc_assignment_plan",
+        "otcc_risk_notes",
     ]:
         st.session_state.pop(key, None)
 
     for key in list(st.session_state.keys()):
         if key.startswith("otcc_approval_check_"):
             st.session_state.pop(key, None)
+
+    if not preserve_identity:
+        clear_packet_from_session(st.session_state)
+        st.session_state["otcc_discovery_symbol"] = ""
+        st.session_state["otcc_last_symbol_seen"] = ""
+        st.session_state["otcc_last_strategy_seen"] = ""
+        st.session_state["otcc_last_expiration_seen"] = ""
 
     st.session_state["otcc_construction_symbol_display"] = current_symbol
     st.session_state["otcc_expiration"] = current_expiration
@@ -733,6 +791,67 @@ def _normalize_expiration(value: Any) -> str:
     if isinstance(value, date):
         return value.isoformat()
     return str(value or "").strip()
+
+
+def _parse_expiration_candidate(value: Any) -> date | None:
+    if isinstance(value, date):
+        return value
+
+    text = str(value or "").strip()
+    if not text:
+        return None
+
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+
+    try:
+        return date.fromisoformat(text)
+    except Exception:
+        return None
+
+
+def _resolve_packet_expiration(packet: Any) -> date | None:
+    field_names = (
+        "expiration",
+        "selected_expiration",
+        "recommended_expiration",
+        "target_expiration",
+        "expiry",
+        "expiration_date",
+    )
+
+    for field_name in field_names:
+        parsed = _parse_expiration_candidate(getattr(packet, field_name, None))
+        if parsed is not None:
+            return parsed
+
+    for section_name in ("construction", "identity", "opportunity"):
+        section = getattr(packet, section_name, None)
+        if section is None:
+            continue
+        for field_name in field_names:
+            parsed = _parse_expiration_candidate(getattr(section, field_name, None))
+            if parsed is not None:
+                return parsed
+
+    if isinstance(packet, dict):
+        for field_name in field_names:
+            parsed = _parse_expiration_candidate(packet.get(field_name))
+            if parsed is not None:
+                return parsed
+        for section_name in ("construction", "identity", "opportunity"):
+            section = packet.get(section_name)
+            if not isinstance(section, dict):
+                continue
+            for field_name in field_names:
+                parsed = _parse_expiration_candidate(section.get(field_name))
+                if parsed is not None:
+                    return parsed
+
+    return None
 
 
 def _active_construction_key(symbol: str, strategy: str, expiration: Any, stock_price: float) -> str:
@@ -3228,6 +3347,10 @@ def apply_trade_lifecycle_packet_to_trade(packet, trade) -> None:
     if packet.identity.strategy or packet.construction.strategy_type:
         trade.recommended_strategy = packet.construction.strategy_type or packet.identity.strategy
         trade.strategy = trade.strategy or trade.recommended_strategy
+    packet_expiration = _resolve_packet_expiration(packet)
+    if packet_expiration is not None:
+        trade.expiration = packet_expiration
+        st.session_state["otcc_expiration"] = packet_expiration
     if packet.opportunity.summary:
         trade.strategy_reason = packet.opportunity.summary
     if packet.construction.options_quality is not None:
@@ -3392,19 +3515,7 @@ def render_opportunity_briefing(trade, packet):
 
     with c2:
         if st.button("Begin New Analysis", key="otcc_clear_packet", use_container_width=True):
-            reset_otcc_construction_state(trade)
-            clear_packet_from_session(st.session_state)
-            st.session_state.pop("trade_lifecycle_packet", None)
-            st.session_state[DISCOVERY_MODE_KEY] = True
-            st.session_state["otcc_discovery_symbol"] = ""
-            st.session_state["otcc_last_symbol_seen"] = ""
-            st.session_state["otcc_last_strategy_seen"] = ""
-            st.session_state["otcc_last_expiration_seen"] = ""
-            trade.symbol = ""
-            trade.strategy = ""
-            trade.user_selected_strategy = ""
-            trade.recommended_strategy = ""
-            trade.expiration = date.today()
+            reset_otcc_construction_state(trade, preserve_identity=False)
             st.rerun()
     responsive_block_end()
 
@@ -3440,6 +3551,7 @@ def render_contract_selection_panel(trade, strategy: str, locked: bool) -> None:
     chain_type = strategy_option_chain_type(strategy)
     requested_symbol = str(getattr(trade, "symbol", "") or "").strip().upper()
     requested_expiration = getattr(trade, "expiration", None)
+    selection_requested = bool(st.session_state.get(CONTRACT_SELECTION_ACTIVE_KEY, False))
 
     trade.stock_price = 0.0
     if requested_symbol:
@@ -3454,6 +3566,10 @@ def render_contract_selection_panel(trade, strategy: str, locked: bool) -> None:
         reset_otcc_construction_state(trade)
         st.session_state[ACTIVE_KEY_STATE] = active_key
         trade.stock_price = stock_price
+        if selection_requested:
+            st.session_state[SELECTOR_OPEN_KEY] = True
+            st.session_state[OPTION_CHAIN_PANEL_OPEN_KEY] = True
+            st.session_state[CHAIN_MODE_KEY] = chain_type
 
     selected = st.session_state.get(SELECTED_CONTRACT_KEY)
     if isinstance(selected, dict) and selected.get("label"):
@@ -3471,6 +3587,7 @@ def render_contract_selection_panel(trade, strategy: str, locked: bool) -> None:
     button_label = "Change Selected Contract" if contract_selected else "Select Option Contract"
     if st.button(button_label, key="otcc_select_option_contract", use_container_width=False, disabled=locked):
         st.session_state[SELECTOR_OPEN_KEY] = True
+        st.session_state[CONTRACT_SELECTION_ACTIVE_KEY] = True
         st.session_state[OPTION_CHAIN_PANEL_OPEN_KEY] = True
         st.session_state[CHAIN_MODE_KEY] = chain_type
         st.rerun()
@@ -3494,9 +3611,10 @@ def render_contract_selection_panel(trade, strategy: str, locked: bool) -> None:
             reset_otcc_construction_state(trade)
             st.session_state[CHAIN_KEY_STATE] = chain_key
             st.session_state[ACTIVE_KEY_STATE] = chain_key
-            st.session_state[SELECTOR_OPEN_KEY] = True
-            st.session_state[OPTION_CHAIN_PANEL_OPEN_KEY] = True
-            st.session_state[CHAIN_MODE_KEY] = chain_type
+            if selection_requested:
+                st.session_state[SELECTOR_OPEN_KEY] = True
+                st.session_state[OPTION_CHAIN_PANEL_OPEN_KEY] = True
+                st.session_state[CHAIN_MODE_KEY] = chain_type
 
         # Always rebuild recommendation cards from the current request context.
         contracts = get_ranked_option_chain(
@@ -3578,6 +3696,7 @@ def render_contract_selection_panel(trade, strategy: str, locked: bool) -> None:
                     sync_trade_from_construction_state(trade)
                     build_trade_math_snapshot(trade)
                     st.session_state["otcc_construction_dirty"] = False
+                    st.session_state[CONTRACT_SELECTION_ACTIVE_KEY] = False
                     st.session_state[CHAIN_MODE_KEY] = chain_type
                     st.session_state[OPTION_CHAIN_PANEL_OPEN_KEY] = False
                     st.session_state[SELECTOR_OPEN_KEY] = False
@@ -4202,6 +4321,9 @@ def render_execution_package(trade):
 # ============================================================
 
 def main():
+    if not _otcc_dev_access_enabled():
+        _render_otcc_temporarily_unavailable()
+
     trade = get_trade()
     inject_commander_css()
     st.session_state.setdefault(BEGINNER_MODE_KEY, False)

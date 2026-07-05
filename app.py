@@ -241,6 +241,13 @@ def future_asset_page(title: str, asset_class: str):
         "The router is already prepared so this page can be upgraded later "
         "without changing the app navigation structure."
     )
+
+
+def options_decision_center_unavailable_page() -> None:
+    st.title("⚓ Options Decision Center")
+    st.warning(
+        "**Options Decision Center is currently undergoing enhancements and is temporarily unavailable. It will return in a future update.**"
+    )
     st.markdown(
         """
         **Planned structure:**
@@ -938,10 +945,15 @@ def workflow_sidebar_navigation() -> str:
     current = st.session_state.get("jfbp_main_navigation", "Opportunity Center")
     current_user = get_current_user()
     admin_pages = {"SaaS Core", "Admin Control Center"}
+    temporarily_disabled_pages = {"Options Decision Center"}
 
     # Never expose internal admin pages to regular users. If a non-admin
     # session was previously parked on an admin page, move it back to the
     # normal workflow start page before rendering the sidebar.
+    if current in temporarily_disabled_pages:
+        current = "Opportunity Center"
+        st.session_state["jfbp_main_navigation"] = current
+
     if current in admin_pages and not is_admin_user(current_user):
         current = "Opportunity Center"
         st.session_state["jfbp_main_navigation"] = current
@@ -973,7 +985,6 @@ def workflow_sidebar_navigation() -> str:
                 ("Scanner", "Scanner"),
                 ("Research Stock", "Research Stock"),
                 ("🧩 Options Center", "Options Center"),
-                ("⚓ Options Decision Center", "Options Decision Center"),
                 ("🎯 Trade Command Center", "Trade Command Center"),
             ],
             "always_open": False,
@@ -1315,7 +1326,7 @@ def app():
         run_protected_page(page, options_center_page)
 
     elif page == "Options Decision Center":
-        run_protected_page(page, options_trade_construction_page)
+        options_decision_center_unavailable_page()
 
     elif page == "Market Pulse":
         run_protected_page(page, market_pulse_page)
