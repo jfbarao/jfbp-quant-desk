@@ -952,6 +952,173 @@ def page():
         broker_status_tone,
     )
 
+    # =====================================================
+    # CONNECTION CONTROLS (PRIMARY WORKFLOW)
+    # =====================================================
+
+    st.subheader("Connection Controls")
+    ibkr_tip("Connect or disconnect the IBKR gateway. These controls manage connectivity only and do not send orders.")
+
+    st.info(
+        "Start TWS or IBKR Gateway before connecting. Paper accounts normally use port 7497; live accounts normally use port 7496."
+    )
+
+    st.warning(
+        "This page manages connectivity only. It does not execute trades."
+    )
+
+    intent_key = st.session_state.get("live_ibkr_intent_reset_id", 0)
+
+    connect_col, disconnect_col, stream_col = responsive_columns(3)
+
+    with connect_col:
+        confirm_connect = st.checkbox(
+            "Confirm IBKR connect",
+            value=False,
+            key=f"confirm_ibkr_connect_{intent_key}",
+        )
+
+        connect_btn = st.button(
+            "Connect Gateway",
+            width="stretch",
+            disabled=connected or not confirm_connect,
+        )
+
+        st.caption(
+            "Connect only after TWS/IBKR Gateway is open and logged in."
+        )
+
+    with disconnect_col:
+        confirm_disconnect = st.checkbox(
+            "Confirm IBKR disconnect",
+            value=False,
+            key=f"confirm_ibkr_disconnect_{intent_key}",
+        )
+
+        disconnect_btn = st.button(
+            "Disconnect Gateway",
+            width="stretch",
+            disabled=not connected or not confirm_disconnect,
+        )
+
+        st.caption(
+            "Disconnecting JFBP does not close TWS/IBKR Gateway or affect existing broker positions."
+        )
+
+    with stream_col:
+        confirm_stream_stop = st.checkbox(
+            "Confirm stream stop",
+            value=False,
+            key=f"confirm_stream_stop_{intent_key}",
+        )
+
+        stop_stream_btn = st.button(
+            "Stop Stream",
+            width="stretch",
+            disabled=not streaming or not confirm_stream_stop,
+        )
+
+    if connect_btn:
+        if gateway is None:
+            ok = False
+            reason = "Gateway object missing"
+
+        elif not hasattr(gateway, "connect"):
+            ok = False
+            reason = "Gateway has no connect() method"
+
+        else:
+            try:
+                result = gateway.connect(
+                    host="127.0.0.1",
+                    port=7497,
+                    client_id=1,
+                )
+
+                ok = bool(result)
+
+                if ok:
+                    reason = "OK"
+                else:
+                    reason = (
+                        getattr(gateway, "last_error", "")
+                        or getattr(gateway, "error", "")
+                        or "gateway.connect() returned False"
+                    )
+
+            except Exception as exc:
+                ok = False
+                reason = str(exc)
+
+        if ok:
+            reset_operator_intent()
+
+            st.session_state["live_ibkr_cached_status"] = {
+                "connected": True,
+                "status": "CONNECTED",
+                "detail": "connected after manual gateway connect",
+            }
+            st.session_state["live_ibkr_status_cached_at"] = 0.0
+            st.session_state["live_ibkr_last_refresh"] = now()
+
+            if st.session_state.get("ibkr_notify_connect", True):
+                send_ibkr_telegram(
+                    "📡 JFBP IBKR Connected",
+                    "Gateway connected successfully. Verify broker snapshot before trading.",
+                )
+
+            st.success("Gateway connected.")
+            st.rerun()
+        else:
+            st.error(f"Gateway connect failed: {reason}")
+
+    if disconnect_btn:
+        ok, reason = call_if_exists(gateway, "disconnect")
+
+        if ok:
+            reset_operator_intent()
+
+            st.session_state["live_ibkr_cached_status"] = {
+                "connected": False,
+                "status": "DISCONNECTED",
+                "detail": "disconnected after manual gateway disconnect",
+            }
+            st.session_state["live_ibkr_status_cached_at"] = 0.0
+            st.session_state["live_ibkr_last_refresh"] = now()
+
+            if st.session_state.get("ibkr_notify_disconnect", True):
+                send_ibkr_telegram(
+                    "📡 JFBP IBKR Disconnected",
+                    "Gateway disconnect requested. JFBP broker connection is offline.",
+                )
+
+            st.success("Gateway disconnect requested.")
+            st.rerun()
+        else:
+            st.error(f"Gateway disconnect failed: {reason}")
+
+    if stop_stream_btn:
+        ok, reason = call_if_exists(stream_engine, "stop")
+
+        if ok:
+            reset_operator_intent()
+
+            st.success("Stream stop requested.")
+            st.rerun()
+        else:
+            st.error(f"Stream stop failed: {reason}")
+
+    quick_sync_btn = st.button(
+        "Load Account Snapshot / Synchronize Account",
+        width="stretch",
+        type="primary",
+        disabled=not connected,
+        help="Primary action: pull the read-only broker account snapshot into session cache.",
+        key="live_ibkr_quick_sync_top",
+    )
+    st.caption("Connect -> Synchronize -> Validate -> Trade")
+    st.divider()
+
     exec_status = "READY" if readiness_passed else "NOT READY"
     snapshot_loaded = "LOADED" if snapshot_cached else "NOT LOADED"
     if not connected:
@@ -1339,7 +1506,7 @@ def page():
             "No blocking IBKR refresh calls are made here."
         )
 
-    if pull_snapshot_btn:
+    if pull_snapshot_btn or quick_sync_btn:
 
         broker_positions = []
         broker_open_orders = []
@@ -2196,164 +2363,6 @@ def page():
             "Live trading is armed from the Live IBKR safety panel.",
         )
     st.session_state["ibkr_last_notified_live_armed"] = current_live_armed
-
-    st.divider()
-
-    # =====================================================
-    # CONNECTION CONTROLS
-    # =====================================================
-
-    st.subheader("Connection Controls")
-    ibkr_tip("Connect or disconnect the IBKR gateway. These controls manage connectivity only and do not send orders.")
-
-    st.info(
-        "Start TWS or IBKR Gateway before connecting. Paper accounts normally use port 7497; live accounts normally use port 7496."
-    )
-
-    st.warning(
-        "This page manages connectivity only. It does not execute trades."
-    )
-
-    intent_key = st.session_state.get("live_ibkr_intent_reset_id", 0)
-
-    connect_col, disconnect_col, stream_col = responsive_columns(3)
-
-    with connect_col:
-        confirm_connect = st.checkbox(
-            "Confirm IBKR connect",
-            value=False,
-            key=f"confirm_ibkr_connect_{intent_key}",
-        )
-
-        connect_btn = st.button(
-            "Connect Gateway",
-            width="stretch",
-            disabled=connected or not confirm_connect,
-        )
-
-        st.caption(
-            "Connect only after TWS/IBKR Gateway is open and logged in."
-        )
-
-    with disconnect_col:
-        confirm_disconnect = st.checkbox(
-            "Confirm IBKR disconnect",
-            value=False,
-            key=f"confirm_ibkr_disconnect_{intent_key}",
-        )
-
-        disconnect_btn = st.button(
-            "Disconnect Gateway",
-            width="stretch",
-            disabled=not connected or not confirm_disconnect,
-        )
-
-        st.caption(
-            "Disconnecting JFBP does not close TWS/IBKR Gateway or affect existing broker positions."
-        )
-
-    with stream_col:
-        confirm_stream_stop = st.checkbox(
-            "Confirm stream stop",
-            value=False,
-            key=f"confirm_stream_stop_{intent_key}",
-        )
-
-        stop_stream_btn = st.button(
-            "Stop Stream",
-            width="stretch",
-            disabled=not streaming or not confirm_stream_stop,
-        )
-
-    if connect_btn:
-        if gateway is None:
-            ok = False
-            reason = "Gateway object missing"
-
-        elif not hasattr(gateway, "connect"):
-            ok = False
-            reason = "Gateway has no connect() method"
-
-        else:
-            try:
-                result = gateway.connect(
-                    host="127.0.0.1",
-                    port=7497,
-                    client_id=1,
-                )
-
-                ok = bool(result)
-
-                if ok:
-                    reason = "OK"
-                else:
-                    reason = (
-                        getattr(gateway, "last_error", "")
-                        or getattr(gateway, "error", "")
-                        or "gateway.connect() returned False"
-                    )
-
-            except Exception as exc:
-                ok = False
-                reason = str(exc)
-
-        if ok:
-            reset_operator_intent()
-
-            st.session_state["live_ibkr_cached_status"] = {
-                "connected": True,
-                "status": "CONNECTED",
-                "detail": "connected after manual gateway connect",
-            }
-            st.session_state["live_ibkr_status_cached_at"] = 0.0
-            st.session_state["live_ibkr_last_refresh"] = now()
-
-            if st.session_state.get("ibkr_notify_connect", True):
-                send_ibkr_telegram(
-                    "📡 JFBP IBKR Connected",
-                    "Gateway connected successfully. Verify broker snapshot before trading.",
-                )
-
-            st.success("Gateway connected.")
-            st.rerun()
-        else:
-            st.error(f"Gateway connect failed: {reason}")
-
-    if disconnect_btn:
-        ok, reason = call_if_exists(gateway, "disconnect")
-
-        if ok:
-            reset_operator_intent()
-
-            st.session_state["live_ibkr_cached_status"] = {
-                "connected": False,
-                "status": "DISCONNECTED",
-                "detail": "disconnected after manual gateway disconnect",
-            }
-            st.session_state["live_ibkr_status_cached_at"] = 0.0
-            st.session_state["live_ibkr_last_refresh"] = now()
-
-            if st.session_state.get("ibkr_notify_disconnect", True):
-                send_ibkr_telegram(
-                    "📡 JFBP IBKR Disconnected",
-                    "Gateway disconnect requested. JFBP broker connection is offline.",
-                )
-
-            st.success("Gateway disconnect requested.")
-            st.rerun()
-        else:
-            st.error(f"Gateway disconnect failed: {reason}")
-
-    if stop_stream_btn:
-        ok, reason = call_if_exists(stream_engine, "stop")
-
-        if ok:
-            reset_operator_intent()
-
-            st.success("Stream stop requested.")
-            st.rerun()
-        else:
-            st.error(f"Stream stop failed: {reason}")
 
     st.divider()
 

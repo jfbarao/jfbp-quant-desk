@@ -4188,10 +4188,10 @@ def run_page():
 
         st.caption(f"💡 {text}")
 
-    def scanner_help_expander(title: str, body: str) -> None:
+    def scanner_help_expander(title: str, body: str, expanded: bool = False) -> None:
         """Compact explanatory expander used across the Scanner page."""
 
-        with st.expander(f"ℹ️ {title}", expanded=False):
+        with st.expander(f"ℹ️ {title}", expanded=expanded):
             st.markdown(body)
 
 
@@ -4687,6 +4687,54 @@ def run_page():
     elif len(raw_signals_preview) >= 8:
         scanner_grade = "MEDIUM"
 
+    selected_universe_mode = universe_mode
+    run_scan_btn = False
+    build_plan_btn = False
+    refresh_btn = False
+    clear_btn = False
+
+    scanner_help_seen_key = "scanner_help_seen"
+    scanner_help_expanded = not bool(st.session_state.get(scanner_help_seen_key, False))
+
+    with st.container(border=True):
+        scanner_help_expander(
+            "How to Use This Page",
+            """
+            **1. Pick a Scanner Mode.** The single **Universe** selector powers scanner mode and presets.
+
+            **2. For Gold / Oil / Forex / Crypto, open the matching Pulse page first.**
+
+            **3. Run Scanner.** Review opportunities first, then build the risk-aware plan.
+
+            **4. Execute only after review.**
+            """,
+            expanded=scanner_help_expanded,
+        )
+    st.session_state[scanner_help_seen_key] = True
+
+    with st.container(border=True):
+        st.subheader("Execute Scan")
+        exec_cols = responsive_columns([1.2, 1.2, 1.0, 1.0])
+        with exec_cols[0]:
+            run_scan_btn = st.button("Run Scanner", width="stretch", key="scanner_run_v36_1")
+        with exec_cols[1]:
+            build_plan_btn = st.button("Build Plan", width="stretch", key="scanner_plan_v36_1")
+        with exec_cols[2]:
+            refresh_btn = st.button("Refresh", width="stretch", key="scanner_refresh_v36_1")
+        with exec_cols[3]:
+            clear_btn = st.button("Clear View", width="stretch", key="scanner_clear_v36_1")
+        st.caption(
+            f"Scan summary: {scanner_mode_label(universe_mode)} • {len(active_universe)} symbols • Status {scanner_status_display}"
+        )
+        progress_map = {
+            "Signals Generated": 0.55,
+            "Plan Ready": 0.75,
+            "Executed": 1.0,
+            "No Trades": 0.35,
+            "Risk-Off": 0.30,
+        }
+        st.progress(progress_map.get(scanner_status_display, 0.2))
+
     best_symbol = "N/A"
     if not preview_df.empty and "symbol" in preview_df.columns:
         best_symbol = str(preview_df.iloc[0].get("display_symbol") or preview_df.iloc[0].get("symbol") or "N/A")
@@ -4776,12 +4824,6 @@ def run_page():
                     unsafe_allow_html=True,
                 )
 
-    selected_universe_mode = universe_mode
-    run_scan_btn = False
-    build_plan_btn = False
-    refresh_btn = False
-    clear_btn = False
-
     with st.container(border=True):
         st.subheader("Scan Controls")
         controls_cols = responsive_columns(3)
@@ -4864,43 +4906,7 @@ def run_page():
                     st.session_state["scanner_last_status"] = "REFRESHED"
                     st.rerun()
 
-    with st.container(border=True):
-        st.subheader("Execute Scan")
-        exec_cols = responsive_columns([1.2, 1.2, 1.0, 1.0])
-        with exec_cols[0]:
-            run_scan_btn = st.button("Run Scanner", width="stretch", key="scanner_run_v36_1")
-        with exec_cols[1]:
-            build_plan_btn = st.button("Build Plan", width="stretch", key="scanner_plan_v36_1")
-        with exec_cols[2]:
-            refresh_btn = st.button("Refresh", width="stretch", key="scanner_refresh_v36_1")
-        with exec_cols[3]:
-            clear_btn = st.button("Clear View", width="stretch", key="scanner_clear_v36_1")
-        st.caption(
-            f"Scan summary: {scanner_mode_label(universe_mode)} • {len(active_universe)} symbols • Status {scanner_status_display}"
-        )
-        progress_map = {
-            "Signals Generated": 0.55,
-            "Plan Ready": 0.75,
-            "Executed": 1.0,
-            "No Trades": 0.35,
-            "Risk-Off": 0.30,
-        }
-        st.progress(progress_map.get(scanner_status_display, 0.2))
-
     with st.expander("▼ Advanced Filters", expanded=False):
-        scanner_help_expander(
-            "How to use this page",
-            """
-            **1. Pick a Scanner Mode.** The single **Universe** selector powers scanner mode and presets.
-
-            **2. For Gold / Oil / Forex / Crypto, open the matching Pulse page first.**
-
-            **3. Run Scanner.** Review opportunities first, then build the risk-aware plan.
-
-            **4. Execute only after review.**
-            """,
-        )
-
         with st.expander("Account Sizing", expanded=False):
 
             current_equity = scanner_account_equity()
