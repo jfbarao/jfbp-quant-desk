@@ -1875,7 +1875,7 @@ def render_institutional_review_panel(
             for section_name in see_sections:
                 st.markdown(f"- {section_name}")
     else:
-        st.success("All validation checks passed. Trade is ready for Monitoring or OMS Execution.")
+        st.success("All validation checks passed. Trade is ready for the Execute/Pass decision gate.")
 
     if overlap_warning and top_overlap_symbol:
         st.warning(
@@ -2282,17 +2282,32 @@ def build_monitoring_payload(symbol: str, sizing: Dict[str, Any], decision: Dict
     return payload
 
 
-def send_trade_plan_to_journal(symbol: str, sizing: Dict[str, Any], decision: Dict[str, Any], reasons: List[str]) -> Dict[str, Any]:
+def send_trade_plan_to_journal(
+    symbol: str,
+    sizing: Dict[str, Any],
+    decision: Dict[str, Any],
+    reasons: List[str],
+    trade_status: str = "PLANNED",
+    workflow_decision: str = "TRADE_PLAN",
+    pass_reason: str = "",
+    pass_notes: str = "",
+) -> Dict[str, Any]:
     management = _resolve_trade_management_fields(sizing)
     account_context = resolve_account_context()
+    normalized_status = str(trade_status or "PLANNED").upper().strip()
+    normalized_decision = str(workflow_decision or "TRADE_PLAN").upper().strip()
     note = {
         "timestamp": now_iso(),
         "source": "Trade_Command_Center_v3_0",
         "symbol": symbol,
-        "tag": "TRADE_PLAN",
+        "tag": "TRADE_PASS" if normalized_status == "PASSED" else "TRADE_PLAN",
+        "status": normalized_status,
+        "workflow_decision": normalized_decision,
         "setup_grade": "A" if safe_float(decision.get("score"), 0) >= 80 else "B" if safe_float(decision.get("score"), 0) >= 65 else "C",
-        "execution_grade": "Planned",
+        "execution_grade": "Executed" if normalized_status == "EXECUTED" else "Passed" if normalized_status == "PASSED" else "Planned",
         "notes": " | ".join(reasons),
+        "pass_reason": str(pass_reason or "").strip(),
+        "pass_notes": str(pass_notes or "").strip(),
         "trade_plan": {
             **(sizing if isinstance(sizing, dict) else {}),
             **management,
@@ -2334,6 +2349,318 @@ def send_trade_plan_to_journal(symbol: str, sizing: Dict[str, Any], decision: Di
     st.session_state["tcc_journal_notes"] = [note] + existing[:49]
     st.session_state["journal_prefill_note"] = note
     return note
+
+
+def _resolve_execution_subscription_tier() -> str:
+    tier_candidates: List[str] = []
+
+    for key in ["saas_plan", "subscription_plan", "plan", "account_plan", "workspace_plan"]:
+        value = st.session_state.get(key)
+        if value is not None:
+            tier_candidates.append(str(value))
+
+    for key in ["saas_user", "current_user", "user"]:
+        obj = st.session_state.get(key)
+        if isinstance(obj, dict):
+            tier_candidates.extend([str(obj.get("plan") or ""), str(obj.get("subscription_plan") or "")])
+        elif obj is not None:
+            tier_candidates.extend([str(getattr(obj, "plan", "") or ""), str(getattr(obj, "subscription_plan", "") or "")])
+
+    for raw in tier_candidates:
+        normalized = str(raw or "").strip().upper()
+        if normalized in {"ELITE", "PRO", "STARTER"}:
+            return normalized
+
+    return "STARTER"
+
+
+def _execution_route_label_for_tier(tier: str) -> str:
+    normalized = str(tier or "STARTER").strip().upper()
+    if normalized == "ELITE":
+        return "Send to Live IBKR"
+    if normalized == "PRO":
+        return "Send to Paper Account"
+    return "Export Trade Plan"
+
+
+def _build_execution_validation_checks(
+    account_context: Dict[str, Any],
+    sizing: Dict[str, Any],
+    management: Dict[str, Any],
+    portfolio_controls: Dict[str, Any],
+    sector_controls: Dict[str, Any],
+    institutional_review: Dict[str, Any],
+    tp_allocation_ok: bool,
+) -> Dict[str, bool]:
+    buying_power = safe_float(account_context.get("buying_power"), 0.0)
+    position_value = safe_float(sizing.get("position_value"), 0.0)
+    qty = safe_int(sizing.get("qty"), 0)
+
+    buying_power_ok = buying_power <= 0 or position_value <= buying_power
+    position_size_ok = qty > 0
+    risk_limits_ok = not bool(portfolio_controls.get("portfolio_risk_exceeded", False))
+    portfolio_limits_ok = (
+        not bool(portfolio_controls.get("portfolio_risk_exceeded", False))
+        and not bool(portfolio_controls.get("max_open_trades_exceeded", False))
+        and not bool(sector_controls.get("sector_warning", False))
+    )
+    earnings_rules_ok = bool(management.get("exit_before_earnings", True))
+    time_stop_ok = bool(management.get("time_stop_enabled", False)) and safe_int(management.get("time_stop_days"), 0) > 0
+    trade_management_plan_ok = bool(
+        tp_allocation_ok
+        and safe_float(sizing.get("entry"), 0.0) > 0
+        and safe_float(sizing.get("stop"), 0.0) > 0
+        and safe_float(sizing.get("target_1"), 0.0) > 0
+        and qty > 0
+    )
+
+    review_status = str(institutional_review.get("status") or "").upper().strip()
+    institutional_review_ok = review_status in {"GREEN", "YELLOW"}
+
+    return {
+        "institutional_review": institutional_review_ok,
+        "buying_power": buying_power_ok,
+        "position_size": position_size_ok,
+        "risk_limits": risk_limits_ok,
+        "portfolio_limits": portfolio_limits_ok,
+        "earnings_rules": earnings_rules_ok,
+        "time_stop": time_stop_ok,
+        "trade_management_plan": trade_management_plan_ok,
+    }
+
+
+def _build_execution_gateway_packet(
+    symbol: str,
+    sizing: Dict[str, Any],
+    decision: Dict[str, Any],
+    row: Dict[str, Any],
+    management: Dict[str, Any],
+    institutional_review: Dict[str, Any],
+    validation_checks: Dict[str, bool],
+    tier: str,
+    route_label: str,
+    monitoring_payload: Dict[str, Any] | None,
+    journal_note: Dict[str, Any] | None,
+    oms_ticket: Dict[str, Any] | None,
+    portfolio_update: Dict[str, Any] | None,
+    status: str,
+) -> Dict[str, Any]:
+    packet = {
+        "timestamp": now_iso(),
+        "source": "Trade_Command_Center_v3_0",
+        "packet_type": "EXECUTION_PACKET",
+        "status": str(status or "PENDING").upper().strip(),
+        "symbol": str(symbol or "").upper().strip(),
+        "tier": str(tier or "STARTER").upper().strip(),
+        "route": route_label,
+        "decision_label": str(decision.get("label") or ""),
+        "decision_score": safe_float(decision.get("score"), 0.0),
+        "scanner_score": safe_float(row.get("opportunity_score_pct"), 0.0),
+        "institutional_review": institutional_review,
+        "validation_checks": validation_checks,
+        "trade_plan": {
+            **(sizing if isinstance(sizing, dict) else {}),
+            **(management if isinstance(management, dict) else {}),
+        },
+        "monitoring_plan": monitoring_payload,
+        "journal_entry": journal_note,
+        "oms_order": oms_ticket,
+        "portfolio_update": portfolio_update,
+    }
+    st.session_state["tcc_execution_packet"] = packet
+    st.session_state["tcc_last_execution_packet"] = packet
+    return packet
+
+
+def _decision_gate_issue_text(issue: str) -> str:
+    mapping = {
+        "Portfolio Risk": "Maximum portfolio risk exceeded.",
+        "Maximum Open Trades": "Maximum portfolio position count exceeded.",
+        "Portfolio Overlap": "Portfolio overlap exceeds threshold.",
+        "Sector Exposure": "Sector exposure exceeds preferred limit.",
+        "Reward / Risk": "Reward / Risk is below the institutional minimum.",
+        "Earnings Protection": "Earnings protection requirement is not satisfied.",
+        "Time Stop": "Time stop requirement is not satisfied.",
+        "Buying Power": "Buying power validation failed.",
+        "Position Size": "Position size validation failed.",
+        "Risk Limits": "Risk limit validation failed.",
+        "Portfolio Limits": "Portfolio limit validation failed.",
+        "Earnings Rules": "Earnings rules validation failed.",
+        "Trade Management Plan": "Trade Management Plan validation failed.",
+    }
+    text = str(issue or "").strip()
+    return mapping.get(text, text if text.endswith(".") else f"{text}.") if text else ""
+
+
+def _build_decision_gate_recommendation(
+    institutional_review: Dict[str, Any],
+    risk_factors: List[str],
+    failed_execution_checks: List[str],
+) -> Dict[str, Any]:
+    review_status = str(institutional_review.get("status") or "").upper().strip()
+    action_items = institutional_review.get("action_items", []) if isinstance(institutional_review, dict) else []
+    normalized_action_items = [str(item).strip() for item in action_items if str(item).strip()]
+
+    primary_issues: List[str] = []
+    for item in normalized_action_items:
+        issue_text = _decision_gate_issue_text(item)
+        if issue_text and issue_text not in primary_issues:
+            primary_issues.append(issue_text)
+
+    for item in failed_execution_checks:
+        issue_text = _decision_gate_issue_text(item)
+        if issue_text and issue_text not in primary_issues:
+            primary_issues.append(issue_text)
+
+    for item in risk_factors:
+        text = str(item or "").strip()
+        if text and text not in primary_issues:
+            primary_issues.append(text if text.endswith(".") else f"{text}.")
+
+    primary_issues = primary_issues[:3]
+
+    if review_status == "GREEN":
+        return {
+            "tone": "good",
+            "headline": "🟢 RECOMMENDATION: EXECUTE TRADE",
+            "detail": "All institutional checks passed. JFBP Quant Desk recommends executing this trade.",
+            "primary_issues": primary_issues,
+            "is_red": False,
+        }
+    if review_status == "YELLOW":
+        return {
+            "tone": "warning",
+            "headline": "🟡 RECOMMENDATION: EXECUTE WITH CAUTION",
+            "detail": "This trade is acceptable, but one or more warnings remain. Review the items below before executing.",
+            "primary_issues": primary_issues,
+            "is_red": False,
+        }
+    return {
+        "tone": "risk",
+        "headline": "🔴 RECOMMENDATION: REJECT TRADE",
+        "detail": "This trade failed one or more critical institutional checks. JFBP Quant Desk recommends passing on this trade.",
+        "primary_issues": primary_issues,
+        "is_red": True,
+    }
+
+
+def _finalize_decision_gate_execution(
+    symbol: str,
+    sizing: Dict[str, Any],
+    decision: Dict[str, Any],
+    row: Dict[str, Any],
+    management: Dict[str, Any],
+    institutional_review: Dict[str, Any],
+    execution_checks: Dict[str, bool],
+    developer_mode: bool,
+    monitoring_button_key: str,
+) -> None:
+    tier = _resolve_execution_subscription_tier()
+    route_label = _execution_route_label_for_tier(tier)
+
+    monitoring_payload: Dict[str, Any] | None = None
+    oms_ticket: Dict[str, Any] | None = None
+    portfolio_update: Dict[str, Any] | None = None
+
+    if tier in {"PRO", "ELITE"}:
+        monitoring_payload = build_monitoring_payload(symbol, sizing, decision)
+        st.session_state["tcc_monitoring_payload"] = monitoring_payload
+        st.session_state["pending_trade_review"] = [monitoring_payload]
+
+        oms_ticket = prepare_oms_ticket(symbol, sizing, decision, row)
+        oms_ticket["route"] = route_label
+        oms_ticket["status"] = "READY_FOR_PAPER_ROUTING" if tier == "PRO" else "READY_FOR_LIVE_ROUTING"
+
+        portfolio_update = {
+            "timestamp": now_iso(),
+            "source": "Trade_Command_Center_v3_0",
+            "symbol": str(symbol or "").upper().strip(),
+            "action": str(sizing.get("action") or "BUY"),
+            "qty": safe_int(sizing.get("qty"), 0),
+            "status": "PENDING_PORTFOLIO_ENGINE_SYNC",
+        }
+        st.session_state["tcc_portfolio_update"] = portfolio_update
+
+        journal_note = send_trade_plan_to_journal(
+            symbol,
+            sizing,
+            decision,
+            decision.get("reasons", []),
+            trade_status="EXECUTED",
+            workflow_decision="EXECUTE",
+        )
+        execution_packet = _build_execution_gateway_packet(
+            symbol=symbol,
+            sizing=sizing,
+            decision=decision,
+            row=row,
+            management=management,
+            institutional_review=institutional_review,
+            validation_checks=execution_checks,
+            tier=tier,
+            route_label=route_label,
+            monitoring_payload=monitoring_payload,
+            journal_note=journal_note,
+            oms_ticket=oms_ticket,
+            portfolio_update=portfolio_update,
+            status="EXECUTED",
+        )
+        st.session_state["tcc_trade_workflow_status"] = "EXECUTED"
+        st.session_state["tcc_trade_workflow_closed"] = True
+
+        st.success(
+            "Order submitted workflow created. Monitoring enabled, Journal updated, Portfolio update staged, and OMS record stored."
+        )
+        st.caption(f"Routing: {route_label}")
+        st.markdown("- ✓ Order Submitted")
+        st.markdown(f"- Order ID: {oms_ticket.get('order_id', 'Pending') if isinstance(oms_ticket, dict) else 'Pending'}")
+        st.markdown("- ✓ Monitoring Enabled")
+        st.markdown("- ✓ Journal Updated")
+        if st.button("Open Monitoring Center", width="stretch", key=monitoring_button_key):
+            navigate_to("Position Command Center")
+        if developer_mode:
+            with st.expander("Debug Packet", expanded=False):
+                st.json(execution_packet)
+        return
+
+    export_plan = {
+        "timestamp": now_iso(),
+        "source": "Trade_Command_Center_v3_0",
+        "symbol": str(symbol or "").upper().strip(),
+        "route": route_label,
+        "trade_plan": {**sizing, **management},
+    }
+    st.session_state["tcc_export_trade_plan"] = export_plan
+    journal_note = send_trade_plan_to_journal(
+        symbol,
+        sizing,
+        decision,
+        decision.get("reasons", []),
+        trade_status="PLANNED",
+        workflow_decision="EXECUTE_STARTER_EXPORT",
+    )
+    execution_packet = _build_execution_gateway_packet(
+        symbol=symbol,
+        sizing=sizing,
+        decision=decision,
+        row=row,
+        management=management,
+        institutional_review=institutional_review,
+        validation_checks=execution_checks,
+        tier=tier,
+        route_label=route_label,
+        monitoring_payload=None,
+        journal_note=journal_note,
+        oms_ticket=None,
+        portfolio_update=None,
+        status="EXPORT_ONLY",
+    )
+    st.session_state["tcc_trade_workflow_status"] = "EXPORT_ONLY"
+    st.session_state["tcc_trade_workflow_closed"] = True
+    st.info("Starter plan route: Trade Plan exported. No OMS routing, monitoring plan, or portfolio position was created.")
+    if developer_mode:
+        with st.expander("Debug Packet", expanded=False):
+            st.json(execution_packet)
 
 
 # =========================================================
@@ -2581,81 +2908,6 @@ def run_page() -> None:
     no_critical_portfolio_violations = not bool(portfolio_controls.get("portfolio_risk_exceeded", False) or portfolio_controls.get("max_open_trades_exceeded", False))
     can_proceed = bool(tp_allocation_ok and no_critical_portfolio_violations)
     management = _resolve_trade_management_fields(sizing)
-
-    if decision_style == "reject":
-        action_left, action_right = st.columns(2)
-        with action_left:
-            if st.button("Continue Monitoring", width="stretch", key="tcc_continue_monitoring_v70", disabled=not can_proceed):
-                monitoring_payload = build_monitoring_payload(symbol, sizing, decision)
-                st.session_state["tcc_monitoring_payload"] = monitoring_payload
-                st.session_state["pending_trade_review"] = [monitoring_payload]
-                st.success(
-                    f"Monitoring active for {symbol}: Entry {fmt_money(safe_float(sizing.get('entry'), 0.0))}, "
-                    f"Stop {fmt_money(safe_float(sizing.get('stop'), 0.0))}, "
-                    f"Trailing {management['trailing_method']}, "
-                    f"Time Stop {'On' if management['time_stop_enabled'] else 'Off'}."
-                )
-                if developer_mode:
-                    with st.expander("Debug Packet", expanded=False):
-                        st.json(monitoring_payload)
-        with action_right:
-            if st.button("Save Trade to Journal", width="stretch", key="tcc_save_journal_v70", disabled=not can_proceed):
-                note = send_trade_plan_to_journal(symbol, sizing, decision, decision.get("reasons", []))
-                st.success(
-                    f"Trade plan saved to Journal for {symbol}: "
-                    f"Action {sizing.get('action', 'BUY')}, Qty {safe_int(sizing.get('qty'), 0)}, "
-                    f"Entry {fmt_money(safe_float(sizing.get('entry'), 0.0))}, Stop {fmt_money(safe_float(sizing.get('stop'), 0.0))}."
-                )
-                if developer_mode:
-                    with st.expander("Debug Packet", expanded=False):
-                        st.json(note)
-    else:
-        if decision_style == "execute":
-            oms_bg = "#2563eb"
-            oms_text = "#ffffff"
-            oms_border = "#1d4ed8"
-            oms_hover = "#1e40af"
-        else:
-            oms_bg = "#f59e0b"
-            oms_text = "#111827"
-            oms_border = "#d97706"
-            oms_hover = "#b45309"
-
-        st.markdown(
-            f"""
-            <style>
-            .st-key-tcc_open_oms_primary_v70 button {{
-                background:{oms_bg} !important;
-                color:{oms_text} !important;
-                border:1px solid {oms_border} !important;
-            }}
-            .st-key-tcc_open_oms_primary_v70 button:hover {{
-                background:{oms_hover} !important;
-                color:{oms_text} !important;
-                border-color:{oms_border} !important;
-            }}
-            </style>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        action_left, action_right = st.columns(2)
-        with action_left:
-            if st.button("Open OMS With Prepared Ticket", width="stretch", disabled=sizing["qty"] <= 0 or not can_proceed, key="tcc_open_oms_primary_v70", type="primary"):
-                prepare_oms_ticket(symbol, sizing, decision, row)
-                navigate_to("OMS Execution")
-        with action_right:
-            if st.button("Save Trade to Journal", width="stretch", key="tcc_save_journal_v70", disabled=not can_proceed):
-                note = send_trade_plan_to_journal(symbol, sizing, decision, decision.get("reasons", []))
-                st.success(
-                    f"Trade plan saved to Journal for {symbol}: "
-                    f"Action {sizing.get('action', 'BUY')}, Qty {safe_int(sizing.get('qty'), 0)}, "
-                    f"Entry {fmt_money(safe_float(sizing.get('entry'), 0.0))}, Stop {fmt_money(safe_float(sizing.get('stop'), 0.0))}."
-                )
-                if developer_mode:
-                    with st.expander("Debug Packet", expanded=False):
-                        st.json(note)
-
     institutional_review = render_institutional_review_panel(
         context=portfolio_context,
         sizing=sizing,
@@ -2670,6 +2922,192 @@ def run_page() -> None:
         **correlation_controls,
         "dashboard_snapshot": dashboard_snapshot,
     }
+
+    execution_checks = _build_execution_validation_checks(
+        account_context=account_context,
+        sizing=sizing,
+        management=management,
+        portfolio_controls=portfolio_controls,
+        sector_controls=sector_controls,
+        institutional_review=institutional_review,
+        tp_allocation_ok=tp_allocation_ok,
+    )
+    failed_execution_checks = [
+        label
+        for key, label in [
+            ("buying_power", "Buying Power"),
+            ("position_size", "Position Size"),
+            ("risk_limits", "Risk Limits"),
+            ("portfolio_limits", "Portfolio Limits"),
+            ("earnings_rules", "Earnings Rules"),
+            ("time_stop", "Time Stop"),
+            ("trade_management_plan", "Trade Management Plan"),
+        ]
+        if not bool(execution_checks.get(key, False))
+    ]
+    review_status = str(institutional_review.get("status") or "").upper().strip()
+    gate_recommendation = _build_decision_gate_recommendation(institutional_review, risk_factors, failed_execution_checks)
+    gate_bg, gate_border, gate_color = tone_palette(gate_recommendation.get("tone", "neutral"))
+    execute_button_text = "Execute Anyway" if gate_recommendation.get("is_red", False) else "Execute Trade"
+    execute_intent_key = f"tcc_execute_intent_{symbol}"
+    execute_override_pending = bool(st.session_state.get(execute_intent_key, False))
+
+    st.markdown("---")
+    st.markdown("### Decision Gate")
+    st.caption("Finalize this Trade Management Plan by choosing EXECUTE TRADE or PASS ON THIS TRADE.")
+    issues_markup = "".join(
+        f"<li>{html.escape(str(item))}</li>"
+        for item in gate_recommendation.get("primary_issues", [])
+    )
+    issues_block = (
+        "<div style='font-size:0.8rem; font-weight:800; color:#475569; margin-top:0.55rem;'>Primary Issues</div>"
+        f"<ul style='margin:0.25rem 0 0 1.1rem; padding:0; color:#334155; line-height:1.45;'>{issues_markup}</ul>"
+    ) if issues_markup else ""
+    st.markdown(
+        f"""
+        <div class="tcc-banner" style="background:{gate_bg};border-color:{gate_border}; margin-bottom:0.75rem;">
+            <div class="tcc-banner-label">FINAL RECOMMENDATION</div>
+            <div class="tcc-banner-value" style="color:{gate_color};">{html.escape(str(gate_recommendation.get('headline', '')))}</div>
+            <div class="tcc-banner-detail">{html.escape(str(gate_recommendation.get('detail', '')))}</div>
+            {issues_block}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        """
+        <style>
+        .st-key-tcc_execute_trade_v71 button {
+            background:#0f766e !important;
+            color:#ffffff !important;
+            border:1px solid #115e59 !important;
+            font-weight:800 !important;
+        }
+        .st-key-tcc_execute_trade_v71 button:hover {
+            background:#0d5f58 !important;
+            color:#ffffff !important;
+            border-color:#0f766e !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    execute_col, pass_col = st.columns(2)
+    with execute_col:
+        execute_clicked = st.button(
+            execute_button_text.upper(),
+            width="stretch",
+            key="tcc_execute_trade_v71",
+            type="primary",
+            disabled=sizing["qty"] <= 0,
+        )
+    with pass_col:
+        with st.popover("PASS ON THIS TRADE", use_container_width=True):
+            pass_reason = st.radio(
+                "Reason",
+                [
+                    "Price moved",
+                    "Missed entry",
+                    "Better opportunity",
+                    "Market changed",
+                    "Risk too high",
+                    "Personal decision",
+                    "Other",
+                ],
+                key=f"tcc_pass_reason_{symbol}",
+            )
+            pass_notes = st.text_area("Optional Notes", key=f"tcc_pass_notes_{symbol}", height=90)
+            pass_clicked = st.button("Confirm Pass", key=f"tcc_confirm_pass_{symbol}", type="secondary", width="stretch")
+
+            if pass_clicked:
+                pass_decision = {
+                    **(decision if isinstance(decision, dict) else {}),
+                    "label": "PASSED",
+                    "reasons": [pass_reason],
+                }
+                pass_note = send_trade_plan_to_journal(
+                    symbol,
+                    sizing,
+                    pass_decision,
+                    [pass_reason],
+                    trade_status="PASSED",
+                    workflow_decision="PASS",
+                    pass_reason=pass_reason,
+                    pass_notes=pass_notes,
+                )
+                pass_packet = {
+                    "timestamp": now_iso(),
+                    "source": "Trade_Command_Center_v3_0",
+                    "packet_type": "PASS_PACKET",
+                    "status": "PASSED",
+                    "symbol": str(symbol or "").upper().strip(),
+                    "reason": pass_reason,
+                    "notes": str(pass_notes or "").strip(),
+                    "journal_entry": pass_note,
+                    "monitoring_plan": None,
+                    "oms_order": None,
+                    "portfolio_update": None,
+                }
+                st.session_state["tcc_pass_packet"] = pass_packet
+                st.session_state["tcc_trade_workflow_status"] = "PASSED"
+                st.session_state["tcc_trade_workflow_closed"] = True
+                st.success("Trade marked as PASSED. Journal updated. Monitoring, OMS, and Portfolio updates were skipped.")
+                if developer_mode:
+                    with st.expander("Debug Packet", expanded=False):
+                        st.json(pass_packet)
+
+    if execute_clicked:
+        if gate_recommendation.get("is_red", False) and not execute_override_pending:
+            st.session_state[execute_intent_key] = True
+            execute_override_pending = True
+            st.warning("JFBP Quant Desk recommends rejecting this trade. Are you sure you want to continue?")
+        elif gate_recommendation.get("is_red", False):
+            st.session_state[execute_intent_key] = False
+        elif failed_execution_checks:
+            st.error("Execution blocked. Resolve required issues first.")
+            st.markdown("Required fixes:")
+            for check_label in failed_execution_checks:
+                st.markdown(f"- {check_label}")
+        elif not gate_recommendation.get("is_red", False):
+            _finalize_decision_gate_execution(
+                symbol=symbol,
+                sizing=sizing,
+                decision=decision,
+                row=row,
+                management=management,
+                institutional_review=institutional_review,
+                execution_checks=execution_checks,
+                developer_mode=developer_mode,
+                monitoring_button_key="tcc_open_monitoring_center_v71",
+            )
+
+    if gate_recommendation.get("is_red", False) and execute_override_pending:
+        confirm_col, cancel_col = st.columns(2)
+        with confirm_col:
+            confirm_override = st.button("EXECUTE ANYWAY", width="stretch", key=f"tcc_execute_anyway_confirm_{symbol}", type="primary")
+        with cancel_col:
+            cancel_override = st.button("CANCEL", width="stretch", key=f"tcc_execute_anyway_cancel_{symbol}")
+
+        if confirm_override:
+            st.session_state[execute_intent_key] = False
+            _finalize_decision_gate_execution(
+                symbol=symbol,
+                sizing=sizing,
+                decision=decision,
+                row=row,
+                management=management,
+                institutional_review=institutional_review,
+                execution_checks=execution_checks,
+                developer_mode=developer_mode,
+                monitoring_button_key="tcc_open_monitoring_center_override_v71",
+            )
+
+        if cancel_override:
+            st.session_state[execute_intent_key] = False
+            st.info("Execution override cancelled.")
+
     section_close()
 
     section_open("7) Trade Checklist", "Institutional confidence checklist before execution handoff.")
