@@ -878,6 +878,12 @@ def _selected_contract_matches_context(selected: dict[str, Any], symbol: str, ex
     )
 
 
+def _ensure_widget_default(key: str, default: Any) -> Any:
+    if key not in st.session_state:
+        st.session_state[key] = default
+    return st.session_state[key]
+
+
 def _resolve_packet_price(symbol: str) -> float | None:
     packet = st.session_state.get("trade_lifecycle_packet")
     if TradeLifecyclePacket is not None and not isinstance(packet, TradeLifecyclePacket):
@@ -2327,15 +2333,17 @@ def render_commander_approval(trade, packet=None):
                     current = bool(getattr(approval, key, False))
                     auto_check = bool(check_meta.get(key, {}).get("auto", False))
                     desired = bool(check_meta.get(key, {}).get("value", current))
+                    widget_key = f"otcc_approval_check_{key}"
+                    _ensure_widget_default(widget_key, desired if auto_check else current)
                     if auto_check:
                         if current != desired:
                             setattr(approval, key, desired)
                             changed = True
-                        st.checkbox(label, value=desired, key=f"otcc_approval_check_{key}", disabled=True)
+                        st.checkbox(label, key=widget_key, disabled=True)
                         if not desired:
                             st.caption(f"❌ {check_meta.get(key, {}).get('reason', '')}")
                     else:
-                        new_value = st.checkbox(label, value=current, key=f"otcc_approval_check_{key}")
+                        new_value = st.checkbox(label, key=widget_key)
                         if new_value != current:
                             setattr(approval, key, new_value)
                             changed = True

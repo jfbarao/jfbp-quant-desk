@@ -17,6 +17,280 @@ from typing import Any, Dict, List, Tuple
 
 import pandas as pd
 import streamlit as st
+from core.trading_preferences import get_trading_preferences
+
+try:
+    from engines.earnings_risk import analyze_symbol_earnings_risk
+except Exception:
+    analyze_symbol_earnings_risk = None
+
+
+PORTFOLIO_LIMIT_DEFAULTS = {
+    "max_portfolio_risk_pct": 5.0,
+    "max_open_trades": 10,
+    "max_sector_exposure_pct": 35.0,
+    "correlation_warning_threshold": 0.85,
+    "progress_target_pct_of_tp1": 25.0,
+    "progress_within_days": 5,
+}
+
+
+def _as_list(value: Any) -> List[Any]:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple):
+        return list(value)
+    return []
+
+
+def _account_summary_value(rows: Any, tag: str) -> float:
+    tag = str(tag or "").strip()
+    for row in _as_list(rows):
+        if not isinstance(row, dict):
+            continue
+        row_tag = str(row.get("tag") or row.get("name") or "").strip()
+        if row_tag != tag:
+            continue
+        return safe_float(row.get("value"), 0.0)
+    return 0.0
+
+
+def _format_clock(ts: Any) -> str:
+    text = str(ts or "").strip()
+    if not text:
+        return "Pending"
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).strftime("%H:%M:%S")
+    except Exception:
+        return text[-8:] if len(text) >= 8 else text
+
+
+def resolve_account_context() -> Dict[str, Any]:
+    preferences = get_trading_preferences()
+    effective = preferences.get("effective", {}) if isinstance(preferences, dict) else {}
+
+    connected = bool(st.session_state.get("acc_ibkr_connected", False))
+    mode = str(st.session_state.get("mode", "SIM") or "SIM").upper().strip()
+    snapshot_rows = _as_list(st.session_state.get("broker_snapshot_account_summary", []))
+    snapshot_positions = _as_list(st.session_state.get("broker_snapshot_positions", []))
+    snapshot_timestamp = str(st.session_state.get("broker_snapshot_timestamp", "") or "")
+
+    net_liquidation = _account_summary_value(snapshot_rows, "NetLiquidation")
+    if net_liquidation <= 0:
+        net_liquidation = _account_summary_value(snapshot_rows, "NetLiquidationValue")
+
+    buying_power = _account_summary_value(snapshot_rows, "BuyingPower")
+    if buying_power <= 0:
+        buying_power = _account_summary_value(snapshot_rows, "AvailableFunds")
+
+    cash_balance = _account_summary_value(snapshot_rows, "TotalCashValue")
+    if cash_balance <= 0:
+        cash_balance = _account_summary_value(snapshot_rows, "CashBalance")
+
+    portfolio_data_source = "Manual/Demo"
+    account_source = "⚪ Manual Mode"
+    ibkr_connected = False
+
+    if connected:
+        ibkr_connected = True
+        if mode == "LIVE":
+            account_source = "🟢 Live IBKR Connected"
+            portfolio_data_source = "IBKR Live"
+        else:
+            account_source = "🟡 IBKR Paper Connected"
+            portfolio_data_source = "IBKR Paper"
+
+    account_size_source = "Source: Manual"
+    account_size_editable = True
+    account_size = safe_float(preferences.get("account_size"), 100000.0)
+    if ibkr_connected and net_liquidation > 0:
+        account_size = net_liquidation
+        account_size_source = "Source: IBKR"
+        account_size_editable = False
+
+    if not ibkr_connected:
+        account_size_source = "Source: Manual"
+
+    if ibkr_connected and net_liquidation <= 0:
+        account_size_source = "Source: Manual fallback"
+
+    current_positions_count = len([row for row in snapshot_positions if isinstance(row, dict) and str(row.get("symbol") or "").strip()])
+    current_portfolio_risk_pct = safe_float(st.session_state.get("portfolio_current_risk_pct"), -1.0)
+
+    return {
+        "account_source": account_source,
+        "portfolio_data_source": portfolio_data_source,
+        "ibkr_connected": ibkr_connected,
+        "mode": mode,
+        "snapshot_timestamp": snapshot_timestamp,
+        "account_size": account_size,
+        "account_size_source": account_size_source,
+        "account_size_editable": account_size_editable,
+        "net_liquidation": net_liquidation,
+        "buying_power": buying_power,
+        "cash_balance": cash_balance,
+        "open_positions_count": current_positions_count,
+        "current_portfolio_risk_pct": current_portfolio_risk_pct,
+        "risk_pct_default": safe_float(effective.get("risk_per_trade_pct"), 1.0),
+        "risk_pct_source": str(preferences.get("risk_profile") or "Balanced"),
+        "risk_pct_source_label": f"{str(preferences.get('risk_profile') or 'Balanced')} Profile",
+        "portfolio_overlap_threshold": safe_float(effective.get("portfolio_overlap_warning_threshold"), PORTFOLIO_LIMIT_DEFAULTS["correlation_warning_threshold"]),
+        "snapshot_rows": snapshot_rows,
+        "snapshot_positions": snapshot_positions,
+    }
+
+
+def _portfolio_positions_from_rows(rows: List[Dict[str, Any]]) -> Dict[str, float]:
+    exposure: Dict[str, float] = {}
+    for row in _as_list(rows):
+        if not isinstance(row, dict):
+            continue
+        sym = row_symbol(row)
+        if not sym:
+            continue
+        value = safe_float(
+            row.get("market_value")
+            or row.get("marketValue")
+            or row.get("position_value")
+            or row.get("exposure")
+            or 0.0,
+            0.0,
+        )
+        if value <= 0:
+            qty = safe_float(
+                row.get("signed_qty")
+                or row.get("qty")
+                or row.get("quantity")
+                or row.get("position")
+                or 0.0,
+                0.0,
+            )
+            price = safe_float(
+                row.get("last_price")
+                or row.get("market_price")
+                or row.get("last")
+                or row.get("price")
+                or row.get("avg_cost")
+                or row.get("avgCost")
+                or 0.0,
+                0.0,
+            )
+            value = abs(qty * price)
+        if value > 0:
+            exposure[sym] = value
+    return exposure
+
+
+def _source_badge_text(account_context: Dict[str, Any]) -> str:
+    source = str(account_context.get("account_source") or "⚪ Manual Mode")
+    net_liq = safe_float(account_context.get("net_liquidation"), 0.0)
+    buying_power = safe_float(account_context.get("buying_power"), 0.0)
+    cash_balance = safe_float(account_context.get("cash_balance"), 0.0)
+    last_updated = _format_clock(account_context.get("snapshot_timestamp"))
+    if "Live IBKR" in source or "Paper" in source:
+        return (
+            f"{source}\n"
+            f"Net Liquidation: {fmt_money(net_liq)}\n"
+            f"Buying Power: {fmt_money(buying_power)}\n"
+            f"Cash: {fmt_money(cash_balance)}\n"
+            f"Last Updated: {last_updated}"
+        )
+    return f"{source}\nAccount Size: {fmt_money(safe_float(account_context.get('account_size'), 100000.0))}"
+
+
+def render_account_source_banner(account_context: Dict[str, Any]) -> None:
+    bg, border, color = tone_palette("good" if account_context.get("ibkr_connected") else "info")
+    badge_lines = _source_badge_text(account_context).splitlines()
+    headline = badge_lines[0] if badge_lines else "⚪ Manual Mode"
+    details = " | ".join(part for part in badge_lines[1:] if part)
+    st.markdown(
+        f'<div class="tcc-banner" style="background:{bg};border-color:{border};">'
+        f'<div class="tcc-banner-label">Account Source</div>'
+        f'<div class="tcc-banner-value" style="color:{color};">{html.escape(headline)}</div>'
+        f'<div class="tcc-banner-detail">{html.escape(details or "No broker snapshot available. Manual sizing remains enabled.")}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _portfolio_rows_for_context(account_context: Dict[str, Any], fallback_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not account_context.get("ibkr_connected"):
+        return fallback_rows
+    normalized: List[Dict[str, Any]] = []
+    for row in _as_list(account_context.get("snapshot_positions", [])):
+        if not isinstance(row, dict):
+            continue
+        symbol = row_symbol(row)
+        if not symbol:
+            continue
+        qty = safe_float(row.get("qty") or row.get("position") or row.get("signed_qty") or 0.0, 0.0)
+        avg_cost = safe_float(row.get("avg_cost") or row.get("avgCost") or 0.0, 0.0)
+        normalized.append({
+            "symbol": symbol,
+            "sector": str(row.get("sector") or row.get("Sector") or "Unknown").strip() or "Unknown",
+            "position": qty,
+            "qty": qty,
+            "signed_qty": qty,
+            "avg_cost": avg_cost,
+            "avgCost": avg_cost,
+            "position_value": abs(qty * avg_cost),
+            "market_value": abs(qty * avg_cost),
+            "source": "ibkr_snapshot_positions",
+        })
+    return normalized or fallback_rows
+
+
+def _ensure_widget_default(key: str, default: Any) -> Any:
+    if key not in st.session_state:
+        st.session_state[key] = default
+    return st.session_state[key]
+
+
+def _is_admin_user() -> bool:
+    if bool(st.session_state.get("saas_admin_override", False)):
+        return True
+
+    try:
+        from pages.SaaS_Core import get_current_user, is_admin_user as saas_is_admin_user
+
+        current_user = get_current_user()
+        if saas_is_admin_user(current_user):
+            return True
+    except Exception:
+        pass
+
+    fallback_user = st.session_state.get("saas_user") or st.session_state.get("user") or st.session_state.get("current_user")
+    if fallback_user is None:
+        return False
+
+    if isinstance(fallback_user, dict):
+        role = str(fallback_user.get("role") or "").strip().upper()
+    else:
+        role = str(getattr(fallback_user, "role", "") or "").strip().upper()
+    return role == "ADMIN"
+
+
+def _developer_mode_enabled() -> bool:
+    if not _is_admin_user():
+        return False
+    _ensure_widget_default("tcc_developer_mode", False)
+    return bool(
+        st.toggle(
+            "Developer Mode (Admin)",
+            key="tcc_developer_mode",
+            help="Show internal debug packets for Monitoring and Journal actions.",
+        )
+    )
+
+
+def _trade_risk_pct_source_label(current_risk_pct: float, default_risk_pct: float) -> str:
+    if abs(safe_float(current_risk_pct, 0.0) - safe_float(default_risk_pct, 0.0)) > 0.0001:
+        return "Source: Custom for this trade"
+    return "Source: Trading Preferences"
+
+
+def _current_trade_risk_pct_source_label() -> str:
+    return str(st.session_state.get("tcc_risk_pct_source_label", "Source: Trading Preferences"))
 
 
 # =========================================================
@@ -175,10 +449,17 @@ div[data-testid="stDataFrame"] * { white-space: normal !important; overflow-wrap
 
 def card_html(title: str, value: Any, detail: str = "", tone: str = "neutral") -> str:
     bg, border, color = tone_palette(tone)
+    help_text = ""
+    if isinstance(value, dict):
+        help_text = str(value.get("help", "") or "")
+        value = value.get("text", "")
+    value_lines = [html.escape(str(part)) for part in str(value).splitlines() if str(part).strip()]
+    value_html = "<br>".join(value_lines) if value_lines else html.escape(str(value))
+    title_attr = f' title="{html.escape(help_text)}"' if help_text else ""
     return (
-        f'<div class="tcc-card" style="background:{bg};border-color:{border};">'
+        f'<div class="tcc-card" style="background:{bg};border-color:{border};"{title_attr}>'
         f'<div class="tcc-label">{html.escape(str(title))}</div>'
-        f'<div class="tcc-value" style="color:{color};">{html.escape(str(value))}</div>'
+        f'<div class="tcc-value" style="color:{color};">{value_html}</div>'
         f'<div class="tcc-detail">{html.escape(str(detail))}</div>'
         f'</div>'
     )
@@ -190,6 +471,20 @@ def render_card_grid(cards: List[Dict[str, Any]]) -> None:
         pieces.append(card_html(card.get("title", ""), card.get("value", ""), card.get("detail", ""), card.get("tone", "neutral")))
     pieces.append("</div>")
     st.markdown("".join(pieces), unsafe_allow_html=True)
+
+
+def risk_reward_card_value(ratio: float) -> Dict[str, str]:
+    ratio_value = max(0.0, safe_float(ratio, 0.0))
+    beginner_line = f"{ratio_value:.1f} : 1"
+    professional_line = f"{ratio_value:.0f}R — Reward is {ratio_value:.0f}× the risk" if ratio_value > 0 else "Pending"
+    help_text = (
+        "R means risk unit. 1R = your planned loss if the stop is hit. "
+        "2R = potential reward is twice your planned risk."
+    )
+    return {
+        "text": f"{beginner_line}\n{professional_line}",
+        "help": help_text,
+    }
 
 
 def render_mini_grid(items: List[Tuple[str, Any]]) -> None:
@@ -314,9 +609,9 @@ def select_trade_symbol() -> Dict[str, Any]:
         st.session_state["trade_command_symbol"] = chosen
         return lookup.get(chosen, {})
 
+    _ensure_widget_default("trade_command_manual_symbol_v20", st.session_state.get("trade_command_symbol", "AAPL"))
     manual = st.text_input(
         "Trade command symbol",
-        value=st.session_state.get("trade_command_symbol", "AAPL"),
         key="trade_command_manual_symbol_v20",
     ).upper().strip()
     st.session_state["trade_command_symbol"] = manual
@@ -536,53 +831,547 @@ def derive_trade_levels(row: Dict[str, Any], plan: Dict[str, Any], signal: str) 
         stop = raw_stop if raw_stop > 0 else entry * 1.06
         target_1 = raw_target if raw_target > 0 else entry * 0.92
         target_2 = entry - (abs(stop - entry) * 2.0)
+        target_3 = entry - (abs(stop - entry) * 3.0)
     else:
         stop = raw_stop if raw_stop > 0 else entry * 0.94
         target_1 = raw_target if raw_target > 0 else entry * 1.10
         target_2 = entry + (abs(entry - stop) * 2.0)
+        target_3 = entry + (abs(entry - stop) * 3.0)
 
-    return {"entry": entry, "stop": stop, "target_1": target_1, "target_2": target_2, "last": price}
+    return {
+        "entry": entry,
+        "stop": stop,
+        "target_1": target_1,
+        "target_2": target_2,
+        "target_3": target_3,
+        "last": price,
+    }
+
+
+def render_section_guidance(lines: List[str], tip: str = "") -> None:
+    body = "<br>".join(html.escape(str(line)) for line in (lines or []) if str(line).strip())
+    if body:
+        st.markdown(
+            (
+                "<div style='border:1px solid #dbe3ea; background:#f8fafc; "
+                "border-radius:10px; padding:0.55rem 0.7rem; margin:0.2rem 0 0.55rem 0; "
+                "font-size:0.86rem; color:#475569; line-height:1.4;'>"
+                f"{body}</div>"
+            ),
+            unsafe_allow_html=True,
+        )
+    if tip:
+        st.caption(f"Tip: {tip}")
+
+
+def _trailing_method_copy(method: str) -> dict[str, str]:
+    method_key = str(method or "").strip().upper()
+    copies = {
+        "PERCENTAGE": {
+            "label": "Percentage",
+            "summary": "Keeps the stop a fixed percentage below the highest price reached.",
+            "best_for": "Best for: Simple momentum trading | Beginners",
+            "pros": "Pros | Easy to understand | Automatically locks in profits",
+            "cons": "Cons | Does not adapt to market volatility.",
+            "active": "✓ Percentage Trailing Stop Active",
+            "active_body": "Your stop will trail by a fixed percentage below the highest price reached.",
+        },
+        "ATR": {
+            "label": "ATR (Recommended)",
+            "summary": "Uses Average True Range (ATR) to adjust the stop based on the stock's normal daily volatility.",
+            "best_for": "Best for: Swing trading | Volatile stocks | Professional trading",
+            "pros": "Pros | Adapts to market volatility | Reduces unnecessary stop-outs | Widely used by professional traders",
+            "cons": "Cons | Requires ATR-based interpretation of price movement.",
+            "active": "✓ ATR Trailing Stop Active",
+            "active_body": "Your stop will automatically adjust based on the stock's normal daily volatility.",
+        },
+        "SWING LOW": {
+            "label": "Swing Low",
+            "summary": "Moves the stop below each new significant swing low.",
+            "best_for": "Best for: Trend following | Price action trading",
+            "pros": "Pros | Follows market structure | Gives trends room to develop",
+            "cons": "Cons | Can give back more open profit during pullbacks.",
+            "active": "✓ Swing Low Trailing Stop Active",
+            "active_body": "Your stop will track below each new significant swing low.",
+        },
+        "EMA 21": {
+            "label": "EMA 21",
+            "summary": "Trails the stop using the 21-period Exponential Moving Average.",
+            "best_for": "Best for: Medium-term trend trades | Growth stocks",
+            "pros": "Pros | Smooths market noise | Keeps you in strong trends longer",
+            "cons": "Cons | Can lag during fast reversals.",
+            "active": "✓ EMA 21 Trailing Stop Active",
+            "active_body": "Your stop will follow the 21-period Exponential Moving Average.",
+        },
+        "EMA 50": {
+            "label": "EMA 50",
+            "summary": "Trails the stop using the 50-period Exponential Moving Average.",
+            "best_for": "Best for: Long-term investing | Position trading",
+            "pros": "Pros | Avoids reacting to short-term price fluctuations | Lets major trends develop",
+            "cons": "Cons | Gives the trade more room, which can increase drawdown.",
+            "active": "✓ EMA 50 Trailing Stop Active",
+            "active_body": "Your stop will follow the 50-period Exponential Moving Average.",
+        },
+    }
+    return copies.get(method_key, copies["ATR"])
 
 
 def build_sizing_plan(symbol: str, signal: str, levels: Dict[str, float], market: Dict[str, Any], plan: Dict[str, Any]) -> Dict[str, Any]:
+    preferences = get_trading_preferences()
+    preference_effective = preferences.get("effective", {}) if isinstance(preferences, dict) else {}
+    account_context = resolve_account_context()
     multiplier = safe_float(market.get("execution_multiplier"), 1.0)
-    default_account = safe_float(st.session_state.get("tcc_account_size", 100000.0), 100000.0)
-    default_risk = safe_float(st.session_state.get("tcc_risk_pct", 1.0), 1.0)
+    default_account_size = safe_float(account_context.get("account_size"), safe_float(preferences.get("account_size"), 100000.0))
+    default_risk_pct = safe_float(preference_effective.get("risk_per_trade_pct"), 1.0)
+    manual_mode = not bool(account_context.get("ibkr_connected", False))
+    account_size_key = f"tcc_manual_account_size_{symbol}"
+    risk_pct_key = f"tcc_trade_risk_pct_{symbol}"
+    if account_size_key not in st.session_state:
+        st.session_state[account_size_key] = default_account_size
+    if risk_pct_key not in st.session_state:
+        st.session_state[risk_pct_key] = default_risk_pct
+    st.session_state[account_size_key] = max(0.0, safe_float(st.session_state.get(account_size_key), default_account_size))
+    st.session_state[risk_pct_key] = min(5.0, max(0.0, safe_float(st.session_state.get(risk_pct_key), default_risk_pct)))
+
+    st.markdown("#### Entry & Risk")
+    render_section_guidance(
+        [
+            "Define your account size, entry price, stop loss, and maximum risk.",
+            "This section determines your position size and keeps risk within your plan.",
+        ],
+        tip="Many professional traders risk only 0.5%-1% of account equity per trade.",
+    )
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        account_size = st.number_input("Account Size", min_value=1000.0, max_value=10000000.0, value=default_account, step=1000.0, key="tcc_account_size")
+        if manual_mode:
+            account_size = st.number_input(
+                "Account Size",
+                min_value=0.0,
+                step=1000.0,
+                format="%.2f",
+                key=account_size_key,
+                disabled=False,
+            )
+        else:
+            account_size = safe_float(account_context.get("net_liquidation"), default_account_size)
+            st.metric("Account Size", f"${account_size:,.2f}", help="Loaded from IBKR Net Liquidation")
+        st.caption(f"{account_context.get('account_size_source')} | {account_context.get('account_source')}")
+        if account_context.get("ibkr_connected") and safe_float(account_context.get("net_liquidation"), 0.0) <= 0:
+            st.warning("IBKR is connected, but no usable Net Liquidation snapshot is available yet. Manual sizing remains enabled until the broker snapshot is populated.")
     with c2:
-        risk_pct = st.number_input("Risk %", min_value=0.05, max_value=10.0, value=default_risk, step=0.05, key="tcc_risk_pct")
+        risk_pct = st.number_input(
+            "Risk %",
+            min_value=0.0,
+            max_value=5.0,
+            step=0.25,
+            format="%.2f",
+            key=risk_pct_key,
+            disabled=False,
+        )
+        st.caption(_trade_risk_pct_source_label(risk_pct, default_risk_pct))
     with c3:
-        entry = st.number_input("Entry", min_value=0.01, value=float(levels["entry"]), step=0.01, key=f"tcc_entry_{symbol}")
+        _ensure_widget_default(f"tcc_entry_{symbol}", float(levels["entry"]))
+        st.session_state[f"tcc_entry_{symbol}"] = max(0.01, safe_float(st.session_state.get(f"tcc_entry_{symbol}"), float(levels["entry"])))
+        entry = st.number_input("Entry", min_value=0.01, step=0.01, key=f"tcc_entry_{symbol}")
     with c4:
-        stop = st.number_input("Stop", min_value=0.01, value=float(levels["stop"]), step=0.01, key=f"tcc_stop_{symbol}")
+        _ensure_widget_default(f"tcc_stop_{symbol}", float(levels["stop"]))
+        st.session_state[f"tcc_stop_{symbol}"] = max(0.01, safe_float(st.session_state.get(f"tcc_stop_{symbol}"), float(levels["stop"])))
+        stop = st.number_input("Stop", min_value=0.01, step=0.01, key=f"tcc_stop_{symbol}")
+
+    per_share_risk_pre = abs(entry - stop)
+    risk_budget_pre = account_size * (risk_pct / 100.0) * multiplier
+    max_position_pct_default = safe_float(preference_effective.get("max_position_size_pct"), 8.0)
+    max_position_value_pre = account_size * (safe_float(st.session_state.get("tcc_max_position_pct"), max_position_pct_default) / 100.0)
+    risk_qty_pre = int(risk_budget_pre / per_share_risk_pre) if per_share_risk_pre > 0 else 0
+    max_qty_pre = int(max_position_value_pre / entry) if entry > 0 else 0
+    qty_pre = max(0, min(risk_qty_pre, max_qty_pre))
+
+    if per_share_risk_pre <= 0:
+        st.error("Entry and Stop cannot be equal. Define a valid stop distance.")
+    else:
+        st.caption(
+            f"Position Size Preview: {qty_pre:,} | Dollar Risk Budget: {fmt_money(risk_budget_pre)} | "
+            f"Per-Share Risk: {fmt_money(per_share_risk_pre)}"
+        )
 
     target_1_default = float(levels["target_1"])
     target_2_default = float(levels["target_2"])
-    p1, p2, p3, p4 = st.columns(4)
+    target_3_default = float(levels.get("target_3", target_2_default))
+    st.markdown("#### Profit Targets")
+    render_section_guidance(
+        [
+            "Choose where to take profits and how much to sell at each target.",
+            "Scaling out can reduce emotional decisions while leaving room for trend continuation.",
+        ]
+    )
+    p1, p2, p3, p4, p5 = st.columns(5)
     with p1:
-        target_1 = st.number_input("Target 1", min_value=0.01, value=target_1_default, step=0.01, key=f"tcc_target1_{symbol}")
+        _ensure_widget_default(f"tcc_target1_{symbol}", target_1_default)
+        st.session_state[f"tcc_target1_{symbol}"] = max(0.01, safe_float(st.session_state.get(f"tcc_target1_{symbol}"), target_1_default))
+        target_1 = st.number_input("Target 1", min_value=0.01, step=0.01, key=f"tcc_target1_{symbol}")
     with p2:
-        target_2 = st.number_input("Target 2", min_value=0.01, value=target_2_default, step=0.01, key=f"tcc_target2_{symbol}")
+        _ensure_widget_default(f"tcc_target2_{symbol}", target_2_default)
+        st.session_state[f"tcc_target2_{symbol}"] = max(0.01, safe_float(st.session_state.get(f"tcc_target2_{symbol}"), target_2_default))
+        target_2 = st.number_input("Target 2", min_value=0.01, step=0.01, key=f"tcc_target2_{symbol}")
     with p3:
-        max_position_pct = st.number_input("Max Position %", min_value=0.1, max_value=100.0, value=10.0, step=0.5, key="tcc_max_position_pct")
+        _ensure_widget_default(f"tcc_target3_{symbol}", target_3_default)
+        st.session_state[f"tcc_target3_{symbol}"] = max(0.01, safe_float(st.session_state.get(f"tcc_target3_{symbol}"), target_3_default))
+        target_3 = st.number_input("Target 3", min_value=0.01, step=0.01, key=f"tcc_target3_{symbol}")
     with p4:
-        planned_qty = safe_float(plan.get("qty"), 0.0)
-        use_plan_qty = st.toggle("Use Scanner Qty", value=planned_qty > 0, key=f"tcc_use_plan_qty_{symbol}")
+        max_position_pct = safe_float(st.session_state.get("tcc_max_position_pct"), max_position_pct_default)
+        st.metric("Max Position %", f"{max_position_pct:.1f}%")
+        st.caption("Loaded from Trading Preferences")
+    with p5:
+        planned_qty = max(0, safe_int(plan.get("qty"), 0))
+        scanner_qty_seed_key = f"tcc_scanner_qty_seed_{symbol}"
+        sizing_seed_key = f"tcc_sizing_seed_{symbol}"
+        position_size_source_key = f"tcc_position_size_source_{symbol}"
+
+        if scanner_qty_seed_key not in st.session_state:
+            st.session_state[scanner_qty_seed_key] = planned_qty
+        scanner_qty = max(0, safe_int(st.session_state.get(scanner_qty_seed_key), planned_qty))
+
+        current_signature = {
+            "account_size": round(safe_float(account_size, 0.0), 6),
+            "risk_pct": round(safe_float(risk_pct, 0.0), 6),
+            "entry": round(safe_float(entry, 0.0), 6),
+            "stop": round(safe_float(stop, 0.0), 6),
+            "max_position_pct": round(safe_float(max_position_pct, max_position_pct_default), 6),
+        }
+        if sizing_seed_key not in st.session_state:
+            st.session_state[sizing_seed_key] = current_signature
+
+        seed_signature = st.session_state.get(sizing_seed_key, current_signature)
+        if not isinstance(seed_signature, dict):
+            seed_signature = current_signature
+            st.session_state[sizing_seed_key] = current_signature
+
+        watched_fields = ["account_size", "risk_pct", "entry", "stop", "max_position_pct"]
+        inputs_changed = any(
+            abs(safe_float(current_signature.get(field), 0.0) - safe_float(seed_signature.get(field), 0.0)) > 1e-6
+            for field in watched_fields
+        )
+
+        if position_size_source_key not in st.session_state:
+            if scanner_qty > 0:
+                st.session_state[position_size_source_key] = "Using Scanner Recommendation"
+            else:
+                st.session_state[position_size_source_key] = "Recalculated from Trade Management Plan"
+
+        position_size_source = str(st.session_state.get(position_size_source_key) or "Recalculated from Trade Management Plan")
+        if inputs_changed or scanner_qty <= 0:
+            position_size_source = "Recalculated from Trade Management Plan"
+            st.session_state[position_size_source_key] = position_size_source
+        elif position_size_source not in {"Using Scanner Recommendation", "Recalculated from Trade Management Plan"}:
+            position_size_source = "Using Scanner Recommendation"
+            st.session_state[position_size_source_key] = position_size_source
+
+        st.metric("Position Size Source", position_size_source)
+        st.caption(
+            "The Scanner recommendation is used as the starting point. "
+            "If you change risk, entry, stop, or account settings, JFBP Quant Desk recalculates the position size automatically."
+        )
+
+    rr2_preview = (abs(target_2 - entry) / per_share_risk_pre) if per_share_risk_pre > 0 else 0.0
+    target_sequence_ok = True
+    if str(signal).upper() == "SELL":
+        target_sequence_ok = target_2 < target_1 and target_3 < target_2
+    else:
+        target_sequence_ok = target_2 > target_1 and target_3 > target_2
+
+    if not target_sequence_ok:
+        if str(signal).upper() == "SELL":
+            st.warning("Target sequence invalid for SELL setup: Target 1 > Target 2 > Target 3 is required.")
+        else:
+            st.warning("Target sequence invalid: Target 1 < Target 2 < Target 3 is required.")
+
+    if rr2_preview < 2.0:
+        st.warning(f"Reward/Risk below preferred minimum (2.0R). Current R/R to Target 2: {rr2_preview:.2f}R")
+    else:
+        st.success(f"Reward/Risk check passed: {rr2_preview:.2f}R to Target 2")
+
+    st.session_state["tcc_risk_pct_source_label"] = _trade_risk_pct_source_label(risk_pct, default_risk_pct)
+
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        _ensure_widget_default(f"tcc_tp1_allocation_{symbol}", safe_float(st.session_state.get("tcc_tp1_allocation_default"), 50.0))
+        st.session_state[f"tcc_tp1_allocation_{symbol}"] = min(100.0, max(0.0, safe_float(st.session_state.get(f"tcc_tp1_allocation_{symbol}"), 50.0)))
+        tp1_allocation = st.number_input("TP1 Allocation (%)", min_value=0.0, max_value=100.0, step=1.0, key=f"tcc_tp1_allocation_{symbol}")
+    with m2:
+        _ensure_widget_default(f"tcc_tp2_allocation_{symbol}", safe_float(st.session_state.get("tcc_tp2_allocation_default"), 40.0))
+        st.session_state[f"tcc_tp2_allocation_{symbol}"] = min(100.0, max(0.0, safe_float(st.session_state.get(f"tcc_tp2_allocation_{symbol}"), 40.0)))
+        tp2_allocation = st.number_input("TP2 Allocation (%)", min_value=0.0, max_value=100.0, step=1.0, key=f"tcc_tp2_allocation_{symbol}")
+    with m3:
+        _ensure_widget_default(f"tcc_tp3_allocation_{symbol}", safe_float(st.session_state.get("tcc_tp3_allocation_default"), 10.0))
+        st.session_state[f"tcc_tp3_allocation_{symbol}"] = min(100.0, max(0.0, safe_float(st.session_state.get(f"tcc_tp3_allocation_{symbol}"), 10.0)))
+        tp3_allocation = st.number_input("TP3 Allocation (%)", min_value=0.0, max_value=100.0, step=1.0, key=f"tcc_tp3_allocation_{symbol}")
+
+    allocation_total = safe_float(tp1_allocation, 0.0) + safe_float(tp2_allocation, 0.0) + safe_float(tp3_allocation, 0.0)
+    allocations_valid = abs(allocation_total - 100.0) < 0.0001
+    if allocations_valid:
+        st.success("TP allocation check passed: TP1 + TP2 + TP3 = 100%")
+    else:
+        st.error(f"TP allocation mismatch: TP1 + TP2 + TP3 = {allocation_total:.1f}% (must equal 100%).")
+
+    max_portfolio_risk_limit = safe_float(st.session_state.get("tcc_max_portfolio_risk_pct"), PORTFOLIO_LIMIT_DEFAULTS["max_portfolio_risk_pct"])
+    current_portfolio_risk = safe_float(st.session_state.get("portfolio_current_risk_pct"), 0.0)
+    projected_portfolio_risk = current_portfolio_risk + risk_pct
+    if projected_portfolio_risk > max_portfolio_risk_limit:
+        st.warning(
+            "Risk exceeds your configured portfolio limit. Suggested fixes: Reduce Risk %, move Stop closer only if technically valid, or skip this trade."
+        )
+
+    with st.container(border=True):
+        st.markdown("#### Stop Management")
+        render_section_guidance(
+            [
+                "Choose how your stop loss will be managed after the trade moves in your favor.",
+                "Step 1: Optionally move your stop to breakeven once the trade has made sufficient progress.",
+                "Step 2: Choose ONE trailing stop method to protect profits while allowing the trend to continue.",
+            ],
+            tip="ATR is the recommended default because it adapts to volatility.",
+        )
+        sm1, sm2 = st.columns(2)
+        move_to_be_key = f"tcc_move_to_be_{symbol}"
+        trailing_enabled_key = f"tcc_trailing_enabled_{symbol}"
+        trailing_method_key = f"tcc_trailing_method_{symbol}"
+        trailing_percent_key = f"tcc_trailing_percent_{symbol}"
+        atr_multiple_key = f"tcc_atr_multiple_{symbol}"
+
+        _ensure_widget_default(move_to_be_key, bool(st.session_state.get("tcc_move_to_be_default", True)))
+        _ensure_widget_default(trailing_enabled_key, bool(st.session_state.get("tcc_trailing_enabled_default", False)))
+
+        with sm1:
+            move_to_break_even = st.checkbox(
+                "Move Stop to Breakeven",
+                key=move_to_be_key,
+            )
+        with sm2:
+            trailing_enabled_prev_key = f"tcc_trailing_enabled_prev_{symbol}"
+            was_trailing_enabled = bool(st.session_state.get(trailing_enabled_prev_key, False))
+            trailing_enabled = st.checkbox(
+                "Trailing Stop",
+                key=trailing_enabled_key,
+            )
+
+        trailing_method_default = str(st.session_state.get("tcc_trailing_method_default", "ATR") or "ATR")
+        atr_multiple_default = safe_float(st.session_state.get("tcc_atr_multiple_default"), 2.0)
+        _ensure_widget_default(trailing_method_key, trailing_method_default)
+        _ensure_widget_default(trailing_percent_key, 5.0)
+        _ensure_widget_default(atr_multiple_key, atr_multiple_default)
+        st.session_state[trailing_percent_key] = min(100.0, max(0.1, safe_float(st.session_state.get(trailing_percent_key), 5.0)))
+        st.session_state[atr_multiple_key] = min(20.0, max(0.1, safe_float(st.session_state.get(atr_multiple_key), atr_multiple_default)))
+        trailing_method = str(st.session_state.get(trailing_method_key, trailing_method_default))
+        trailing_percent = safe_float(st.session_state.get(trailing_percent_key), 5.0)
+        atr_multiple = safe_float(st.session_state.get(atr_multiple_key), atr_multiple_default)
+
+        if trailing_enabled and not was_trailing_enabled:
+            trailing_method = "ATR"
+            atr_multiple = atr_multiple_default
+            st.session_state[trailing_method_key] = trailing_method
+            st.session_state[atr_multiple_key] = atr_multiple
+        elif trailing_enabled and trailing_method not in {"Percentage", "ATR", "Swing Low", "EMA 21", "EMA 50"}:
+            trailing_method = trailing_method_default
+            st.session_state[trailing_method_key] = trailing_method
+
+        if trailing_enabled:
+            trailing_options = ["ATR", "Percentage", "Swing Low", "EMA 21", "EMA 50"]
+            if str(st.session_state.get(trailing_method_key, trailing_method_default)) not in set(trailing_options):
+                st.session_state[trailing_method_key] = trailing_method_default
+            trailing_method = st.radio(
+                "Trailing Method",
+                options=trailing_options,
+                format_func=lambda option: "ATR (Recommended)" if option == "ATR" else option,
+                key=trailing_method_key,
+                horizontal=True,
+            )
+            if trailing_method == "Percentage":
+                trailing_percent = st.number_input(
+                    "Trailing %",
+                    min_value=0.1,
+                    max_value=100.0,
+                    step=0.1,
+                    key=trailing_percent_key,
+                )
+            elif trailing_method == "ATR":
+                atr_multiple = st.number_input(
+                    "ATR Multiplier",
+                    min_value=0.1,
+                    max_value=20.0,
+                    step=0.1,
+                    key=atr_multiple_key,
+                )
+
+            method_copy = _trailing_method_copy(trailing_method)
+            st.markdown(
+                f"""
+                <div style='border:1px solid #dbe3ea; background:#f8fafc; border-radius:10px; padding:0.7rem 0.8rem; margin-top:0.4rem;'>
+                    <div style='font-weight:800; margin-bottom:0.25rem;'>{method_copy['label']}</div>
+                    <div style='color:#334155; line-height:1.45; margin-bottom:0.35rem;'>{method_copy['summary']}</div>
+                    <div style='color:#475569; line-height:1.45; margin-bottom:0.25rem;'><strong>{method_copy['best_for']}</strong></div>
+                    <div style='color:#475569; line-height:1.45; margin-bottom:0.15rem;'>{method_copy['pros']}</div>
+                    <div style='color:#475569; line-height:1.45;'>{method_copy['cons']}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        if trailing_enabled:
+            st.success(f"{method_copy['active']}")
+            st.caption(method_copy["active_body"])
+        else:
+            st.caption("Trailing stop is currently disabled.")
+
+        st.session_state[trailing_enabled_prev_key] = trailing_enabled
+
+    stop_adjustment_method_map = {
+        "ATR": "ATR",
+        "Percentage": "Percentage",
+        "Swing Low": "Swing Low",
+        "EMA 21": "EMA21",
+        "EMA 50": "EMA50",
+    }
+    stop_adjustment_method = stop_adjustment_method_map.get(str(trailing_method), "ATR")
+
+    with st.container(border=True):
+        st.markdown("#### Time Stop")
+        render_section_guidance(
+            [
+                "Choose how long you allow the trade to develop.",
+                "If progress is not meaningful within this window, the position should be flagged for review.",
+            ]
+        )
+        time_stop_enabled_key = f"tcc_time_stop_enabled_{symbol}"
+        time_stop_days_key = f"tcc_time_stop_days_{symbol}"
+        _ensure_widget_default(time_stop_enabled_key, bool(st.session_state.get("tcc_time_stop_enabled_default", True)))
+        _ensure_widget_default(time_stop_days_key, max(1, safe_int(st.session_state.get("tcc_time_stop_days_default"), 10)))
+        st.session_state[time_stop_days_key] = min(252, max(1, safe_int(st.session_state.get(time_stop_days_key), 10)))
+        time_stop_enabled = st.checkbox(
+            "Enable Time Stop",
+            key=time_stop_enabled_key,
+        )
+        time_stop_days = safe_int(st.session_state.get(time_stop_days_key), safe_int(st.session_state.get("tcc_time_stop_days_default"), 10))
+        if time_stop_enabled:
+            time_stop_days = st.number_input(
+                "Exit After (Trading Days)",
+                min_value=1,
+                max_value=252,
+                step=1,
+                key=time_stop_days_key,
+            )
+            st.success(f"Time Stop Enabled. Trade will be reviewed after {int(time_stop_days)} trading days if progress is insufficient.")
+        else:
+            st.caption("Time Stop is disabled.")
+
+    with st.container(border=True):
+        st.markdown("#### Earnings & Weekend Protection")
+        render_section_guidance(
+            [
+                "Scheduled events can create overnight gaps that bypass stop losses.",
+                "Enable these options if you want reduced exposure before earnings or weekends.",
+            ]
+        )
+        next_earnings_text = "Pending"
+        earnings_date_iso = ""
+        if analyze_symbol_earnings_risk is not None and str(symbol).strip():
+            try:
+                event = analyze_symbol_earnings_risk(str(symbol).strip().upper())
+                earnings_date = getattr(event, "earnings_date", None)
+                if earnings_date is not None:
+                    next_earnings_text = earnings_date.strftime("%b %d")
+                    earnings_date_iso = earnings_date.isoformat()
+            except Exception:
+                next_earnings_text = "Pending"
+        st.markdown(f"**Next Earnings:** {next_earnings_text}")
+
+        exit_before_earnings_key = f"tcc_exit_before_earnings_{symbol}"
+        avoid_weekend_key = f"tcc_avoid_weekend_{symbol}"
+        _ensure_widget_default(exit_before_earnings_key, bool(st.session_state.get("tcc_exit_before_earnings_default", True)))
+        _ensure_widget_default(avoid_weekend_key, bool(st.session_state.get("tcc_avoid_weekend_default", False)))
+
+        ep1, ep2 = st.columns(2)
+        with ep1:
+            exit_before_earnings = st.checkbox(
+                "Exit Before Earnings",
+                key=exit_before_earnings_key,
+            )
+        with ep2:
+            avoid_weekend_hold = st.checkbox(
+                "Avoid Holding Over Weekend",
+                key=avoid_weekend_key,
+            )
+
+        if exit_before_earnings:
+            st.success("Earnings Protection Enabled")
+        else:
+            days_to_earnings = None
+            if earnings_date_iso:
+                try:
+                    days_to_earnings = max((date.fromisoformat(earnings_date_iso) - date.today()).days, 0)
+                except Exception:
+                    days_to_earnings = None
+            if days_to_earnings is not None and days_to_earnings <= 5:
+                st.warning(f"Earnings are in {days_to_earnings} days. Consider enabling Exit Before Earnings.")
+            else:
+                st.warning("Exit Before Earnings is disabled.")
+
+    with st.container(border=True):
+        st.markdown("#### Progress Requirement")
+        render_section_guidance(
+            [
+                "Define the minimum progress expected within a set timeframe.",
+                "Example: 25% of Target 1 within 5 trading days, or the trade is flagged as losing momentum.",
+            ]
+        )
+        pr1, pr2 = st.columns(2)
+        progress_pct_key = f"tcc_progress_pct_{symbol}"
+        progress_days_key = f"tcc_progress_days_{symbol}"
+        _ensure_widget_default(progress_pct_key, safe_float(st.session_state.get("tcc_progress_pct_default"), PORTFOLIO_LIMIT_DEFAULTS["progress_target_pct_of_tp1"]))
+        _ensure_widget_default(progress_days_key, safe_int(st.session_state.get("tcc_progress_days_default"), PORTFOLIO_LIMIT_DEFAULTS["progress_within_days"]))
+        st.session_state[progress_pct_key] = min(100.0, max(1.0, safe_float(st.session_state.get(progress_pct_key), PORTFOLIO_LIMIT_DEFAULTS["progress_target_pct_of_tp1"])))
+        st.session_state[progress_days_key] = min(60, max(1, safe_int(st.session_state.get(progress_days_key), PORTFOLIO_LIMIT_DEFAULTS["progress_within_days"])))
+        with pr1:
+            progress_requirement_pct = st.number_input(
+                "Required % of Target 1",
+                min_value=1.0,
+                max_value=100.0,
+                step=1.0,
+                key=progress_pct_key,
+            )
+        with pr2:
+            progress_requirement_days = st.number_input(
+                "Within Trading Days",
+                min_value=1,
+                max_value=60,
+                step=1,
+                key=progress_days_key,
+            )
+        st.caption("If the trade does not reach the required progress threshold within this window, monitoring should flag: Trade Losing Momentum.")
+        if progress_requirement_pct >= 60 and progress_requirement_days <= 5:
+            st.warning("Progress threshold may be difficult to achieve. Consider extending the review period or lowering required progress.")
+        elif progress_requirement_pct >= 40 and progress_requirement_days <= 3:
+            st.warning("Progress requirement looks aggressive for the selected timeframe.")
 
     per_share_risk = abs(entry - stop)
     dollar_risk = account_size * (risk_pct / 100.0) * multiplier
     risk_qty = int(dollar_risk / per_share_risk) if per_share_risk > 0 else 0
     max_value = account_size * (max_position_pct / 100.0)
     max_qty = int(max_value / entry) if entry > 0 else 0
-    qty = int(planned_qty) if use_plan_qty and planned_qty > 0 else max(0, min(risk_qty, max_qty))
+    calculated_qty = max(0, min(risk_qty, max_qty))
+    if position_size_source == "Using Scanner Recommendation" and scanner_qty > 0:
+        qty = scanner_qty
+    else:
+        qty = calculated_qty
+        position_size_source = "Recalculated from Trade Management Plan"
+        st.session_state[position_size_source_key] = position_size_source
+    final_qty = safe_int(qty, 0)
     position_value = qty * entry
     actual_risk = qty * per_share_risk
     actual_risk_pct = (actual_risk / account_size * 100.0) if account_size > 0 else 0
     rr_1 = (abs(target_1 - entry) / per_share_risk) if per_share_risk > 0 else 0
     rr_2 = (abs(target_2 - entry) / per_share_risk) if per_share_risk > 0 else 0
+    rr_3 = (abs(target_3 - entry) / per_share_risk) if per_share_risk > 0 else 0
 
     return {
         "symbol": symbol,
@@ -591,17 +1380,570 @@ def build_sizing_plan(symbol: str, signal: str, levels: Dict[str, float], market
         "stop": stop,
         "target_1": target_1,
         "target_2": target_2,
+        "target_3": target_3,
         "qty": qty,
         "position_value": position_value,
         "dollar_risk": actual_risk,
         "risk_pct": actual_risk_pct,
         "risk_budget": dollar_risk,
         "per_share_risk": per_share_risk,
+        "position_size_source": position_size_source,
+        "scanner_qty": safe_int(scanner_qty, 0),
+        "calculated_qty": safe_int(calculated_qty, 0),
+        "final_qty": safe_int(final_qty, 0),
         "rr_1": rr_1,
         "rr_2": rr_2,
+        "rr_3": rr_3,
         "account_size": account_size,
         "size_multiplier": multiplier,
+        "tp1_allocation": safe_float(tp1_allocation, 50.0),
+        "tp2_allocation": safe_float(tp2_allocation, 50.0),
+        "tp3_allocation": safe_float(tp3_allocation, 0.0),
+        "tp_allocations_valid": allocations_valid,
+        "move_to_break_even": bool(move_to_break_even),
+        "trailing_enabled": bool(trailing_enabled),
+        "trailing_method": trailing_method,
+        "trailing_percent": safe_float(trailing_percent, 5.0),
+        "atr_multiple": safe_float(atr_multiple, 2.0),
+        "stop_adjustment_method": str(stop_adjustment_method),
+        "time_stop_enabled": bool(time_stop_enabled),
+        "time_stop_days": int(time_stop_days) if bool(time_stop_enabled) else 10,
+        "exit_before_earnings": bool(exit_before_earnings),
+        "next_earnings": next_earnings_text,
+        "next_earnings_date": earnings_date_iso,
+        "avoid_weekend_hold": bool(avoid_weekend_hold),
+        "progress_requirement_pct": safe_float(progress_requirement_pct, PORTFOLIO_LIMIT_DEFAULTS["progress_target_pct_of_tp1"]),
+        "progress_requirement_days": safe_int(progress_requirement_days, PORTFOLIO_LIMIT_DEFAULTS["progress_within_days"]),
     }
+
+
+def _portfolio_positions_from_risk(risk: Dict[str, Any]) -> Dict[str, float]:
+    risk = risk if isinstance(risk, dict) else {}
+    positions = risk.get("positions", {})
+    if isinstance(positions, dict):
+        return {str(k).upper().strip(): safe_float(v, 0.0) for k, v in positions.items() if str(k).strip()}
+    return {}
+
+
+def _symbol_sector_map(rows: List[Dict[str, Any]], hold: List[Dict[str, Any]]) -> Dict[str, str]:
+    mapping: Dict[str, str] = {}
+    for row in (rows or []) + (hold or []):
+        if not isinstance(row, dict):
+            continue
+        sym = row_symbol(row)
+        sec = str(row.get("sector") or row.get("Sector") or "Unknown").strip() or "Unknown"
+        if sym and sym not in mapping:
+            mapping[sym] = sec
+    return mapping
+
+
+def _symbol_exposure_map(risk: Dict[str, Any], hold: List[Dict[str, Any]]) -> Dict[str, float]:
+    risk = risk if isinstance(risk, dict) else {}
+    qty_map = _portfolio_positions_from_risk(risk)
+    price_map = risk.get("last_prices", {}) if isinstance(risk.get("last_prices", {}), dict) else {}
+    exposure: Dict[str, float] = {}
+
+    for sym, qty in qty_map.items():
+        px = safe_float(price_map.get(sym), 0.0)
+        if px > 0 and abs(qty) > 0:
+            exposure[sym] = abs(qty * px)
+
+    for row in hold or []:
+        if not isinstance(row, dict):
+            continue
+        sym = row_symbol(row)
+        if not sym:
+            continue
+        if exposure.get(sym, 0.0) > 0:
+            continue
+        value_candidates = [
+            row.get("position_value"),
+            row.get("market_value"),
+            row.get("notional"),
+            row.get("exposure"),
+        ]
+        for candidate in value_candidates:
+            val = abs(safe_float(candidate, 0.0))
+            if val > 0:
+                exposure[sym] = val
+                break
+    return exposure
+
+
+def _estimated_current_portfolio_risk_pct(exposure_map: Dict[str, float], account_size: float) -> float:
+    if account_size <= 0:
+        return 0.0
+    explicit = safe_float(st.session_state.get("portfolio_current_risk_pct"), -1.0)
+    if explicit >= 0:
+        return explicit
+    per_position_risk_assumption = safe_float(st.session_state.get("portfolio_assumed_risk_per_position_pct"), 0.5)
+    open_count = sum(1 for v in exposure_map.values() if v > 0)
+    return max(0.0, open_count * per_position_risk_assumption)
+
+
+def _sector_exposure_percentages(exposure_map: Dict[str, float], sector_map: Dict[str, str]) -> Dict[str, float]:
+    totals: Dict[str, float] = {}
+    total_exposure = sum(v for v in exposure_map.values() if v > 0)
+    if total_exposure <= 0:
+        return {}
+    for sym, value in exposure_map.items():
+        sec = sector_map.get(sym, "Unknown") or "Unknown"
+        totals[sec] = totals.get(sec, 0.0) + max(0.0, value)
+    return {k: (v / total_exposure) * 100.0 for k, v in totals.items()}
+
+
+def _heuristic_correlation_score(proposed_symbol: str, existing_symbol: str, proposed_sector: str, existing_sector: str) -> float:
+    p = str(proposed_symbol or "").upper().strip()
+    e = str(existing_symbol or "").upper().strip()
+    ps = str(proposed_sector or "").strip().lower()
+    es = str(existing_sector or "").strip().lower()
+    if not p or not e:
+        return 0.0
+    if p == e:
+        return 1.0
+    if ps and es and ps == es:
+        return 0.90
+    thematic = {
+        "QQQ": "technology",
+        "XLK": "technology",
+        "SMH": "technology",
+        "SOXX": "technology",
+        "XLF": "financial",
+        "XLV": "healthcare",
+    }
+    if thematic.get(e, "") and thematic.get(e, "") == ps:
+        return 0.88
+    if p[:2] and p[:2] == e[:2]:
+        return 0.72
+    return 0.35
+
+
+def build_portfolio_management_context(
+    symbol: str,
+    row: Dict[str, Any],
+    sizing: Dict[str, Any],
+    risk: Dict[str, Any],
+    holds: List[Dict[str, Any]],
+    scanner: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    account_size = safe_float(sizing.get("account_size"), 0.0)
+    trade_risk_pct = safe_float(sizing.get("risk_pct"), 0.0)
+    new_trade_exposure = safe_float(sizing.get("position_value"), 0.0)
+
+    exposure_map = _symbol_exposure_map(risk, holds)
+    sector_map = _symbol_sector_map(scanner, holds)
+
+    current_portfolio_risk_pct = _estimated_current_portfolio_risk_pct(exposure_map, account_size)
+    total_portfolio_risk_after = current_portfolio_risk_pct + trade_risk_pct
+
+    current_open_trades = max(safe_int(risk.get("open_positions"), 0), len([v for v in exposure_map.values() if v > 0]))
+    open_trades_after = current_open_trades + (1 if str(symbol or "").upper().strip() not in exposure_map else 0)
+
+    current_sector_pct = _sector_exposure_percentages(exposure_map, sector_map)
+    total_capital_allocated = sum(v for v in exposure_map.values() if v > 0)
+    total_after_trade = total_capital_allocated + max(new_trade_exposure, 0.0)
+    proposed_sector = str(row.get("sector") or "Unknown") or "Unknown"
+    proposed_sector_current_value = current_sector_pct.get(proposed_sector, 0.0)
+    if total_after_trade > 0:
+        proposed_sector_current_dollars = (proposed_sector_current_value / 100.0) * max(total_capital_allocated, 0.0)
+        proposed_sector_after_pct = ((proposed_sector_current_dollars + max(new_trade_exposure, 0.0)) / total_after_trade) * 100.0
+    else:
+        proposed_sector_after_pct = 0.0
+
+    correlations = []
+    for existing_symbol in sorted(exposure_map.keys()):
+        score = _heuristic_correlation_score(
+            str(symbol or "").upper().strip(),
+            existing_symbol,
+            proposed_sector,
+            sector_map.get(existing_symbol, "Unknown"),
+        )
+        correlations.append({"symbol": existing_symbol, "score": score})
+    correlations = sorted(correlations, key=lambda item: safe_float(item.get("score"), 0.0), reverse=True)
+
+    largest_position_symbol = "Pending"
+    largest_position_value = 0.0
+    if exposure_map:
+        largest_position_symbol, largest_position_value = max(exposure_map.items(), key=lambda item: item[1])
+
+    largest_sector = "Pending"
+    largest_sector_pct = 0.0
+    if current_sector_pct:
+        largest_sector, largest_sector_pct = max(current_sector_pct.items(), key=lambda item: item[1])
+
+    cash_remaining = max(account_size - total_after_trade, 0.0) if account_size > 0 else 0.0
+
+    return {
+        "proposed_symbol": str(symbol or "").upper().strip(),
+        "account_size": account_size,
+        "trade_risk_pct": trade_risk_pct,
+        "new_trade_exposure": new_trade_exposure,
+        "current_portfolio_risk_pct": current_portfolio_risk_pct,
+        "total_portfolio_risk_after": total_portfolio_risk_after,
+        "current_open_trades": current_open_trades,
+        "open_trades_after": open_trades_after,
+        "sector_exposure_pct": current_sector_pct,
+        "proposed_sector": proposed_sector,
+        "proposed_sector_current_pct": proposed_sector_current_value,
+        "proposed_sector_after_pct": proposed_sector_after_pct,
+        "correlations": correlations,
+        "total_capital_allocated": total_capital_allocated,
+        "cash_remaining": cash_remaining,
+        "largest_position_symbol": largest_position_symbol,
+        "largest_position_value": largest_position_value,
+        "largest_sector": largest_sector,
+        "largest_sector_pct": largest_sector_pct,
+    }
+
+
+def render_portfolio_risk_controls(context: Dict[str, Any], symbol: str) -> Dict[str, Any]:
+    max_portfolio_risk_pct = safe_float(st.session_state.get("tcc_max_portfolio_risk_pct"), PORTFOLIO_LIMIT_DEFAULTS["max_portfolio_risk_pct"])
+    max_open_trades = safe_int(st.session_state.get("tcc_max_open_trades"), PORTFOLIO_LIMIT_DEFAULTS["max_open_trades"])
+
+    with st.container(border=True):
+        st.markdown("#### Portfolio Risk Controls")
+        render_section_guidance(
+            [
+                "Before opening a position, verify it fits within total portfolio risk.",
+                "These controls monitor total risk, open trades, concentration, and diversification.",
+            ]
+        )
+        r1, r2 = st.columns(2)
+        with r1:
+            st.metric("Maximum Portfolio Risk %", f"{max_portfolio_risk_pct:.2f}%")
+            st.caption("Loaded from Trading Preferences")
+            st.caption(
+                f"Current Portfolio Risk: {context['current_portfolio_risk_pct']:.2f}% | "
+                f"New Trade: {context['trade_risk_pct']:.2f}% | "
+                f"Total: {context['total_portfolio_risk_after']:.2f}%"
+            )
+        with r2:
+            st.metric("Maximum Open Trades", f"{max_open_trades}")
+            st.caption("Loaded from Trading Preferences")
+            st.caption(
+                f"Current Open Trades: {context['current_open_trades']} | "
+                f"After Trade: {context['open_trades_after']}"
+            )
+
+        portfolio_risk_exceeded = context["total_portfolio_risk_after"] > max_portfolio_risk_pct
+        max_open_trades_exceeded = context["open_trades_after"] > max_open_trades
+
+        if portfolio_risk_exceeded:
+            st.warning("⚠ Portfolio Risk Exceeded")
+            st.markdown(
+                "- Current Portfolio Risk: "
+                f"**{context['current_portfolio_risk_pct']:.2f}%**  \n"
+                "- New Trade: "
+                f"**{context['trade_risk_pct']:.2f}%**  \n"
+                "- Total: "
+                f"**{context['total_portfolio_risk_after']:.2f}%**  \n"
+                "- Maximum Allowed: "
+                f"**{max_portfolio_risk_pct:.2f}%**"
+            )
+            st.caption("Recommended Actions: Reduce Risk %, close another trade, or increase portfolio limit if consistent with your plan.")
+        else:
+            st.success("✓ Within Limit")
+
+        if max_open_trades_exceeded:
+            st.warning("⚠ Maximum Position Count Reached")
+            st.markdown(
+                "- Current Open Trades: "
+                f"**{context['current_open_trades']}**  \n"
+                "- After This Trade: "
+                f"**{context['open_trades_after']}**  \n"
+                "- Maximum Allowed: "
+                f"**{max_open_trades}**"
+            )
+            st.caption("Recommended Actions: Close an existing trade or increase Maximum Open Trades.")
+
+        st.caption("⚙ Change Trading Preferences")
+
+    return {
+        "max_portfolio_risk_pct": max_portfolio_risk_pct,
+        "max_open_trades": max_open_trades,
+        "portfolio_risk_exceeded": portfolio_risk_exceeded,
+        "max_open_trades_exceeded": max_open_trades_exceeded,
+    }
+
+
+def render_sector_exposure_card(context: Dict[str, Any]) -> Dict[str, Any]:
+    with st.container(border=True):
+        st.markdown("#### Sector Exposure")
+        _ensure_widget_default(
+            "tcc_max_sector_exposure_pct",
+            safe_float(st.session_state.get("tcc_max_sector_exposure_pct_default"), PORTFOLIO_LIMIT_DEFAULTS["max_sector_exposure_pct"]),
+        )
+        st.session_state["tcc_max_sector_exposure_pct"] = min(
+            100.0,
+            max(1.0, safe_float(st.session_state.get("tcc_max_sector_exposure_pct"), PORTFOLIO_LIMIT_DEFAULTS["max_sector_exposure_pct"])),
+        )
+        max_sector_exposure_pct = st.number_input(
+            "Maximum Sector Exposure %",
+            min_value=1.0,
+            max_value=100.0,
+            step=1.0,
+            key="tcc_max_sector_exposure_pct",
+        )
+
+        sector_rows = sorted(
+            context.get("sector_exposure_pct", {}).items(),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+        if sector_rows:
+            render_mini_grid([(sector, f"{pct:.1f}%") for sector, pct in sector_rows[:8]])
+        else:
+            st.caption("Sector exposure data is pending.")
+
+        st.markdown(f"**{context.get('proposed_sector', 'Unknown')}**")
+        st.caption(
+            f"Current: {safe_float(context.get('proposed_sector_current_pct'), 0.0):.1f}% | "
+            f"After Trade: {safe_float(context.get('proposed_sector_after_pct'), 0.0):.1f}%"
+        )
+        sector_warning = safe_float(context.get("proposed_sector_after_pct"), 0.0) > max_sector_exposure_pct
+        if sector_warning:
+            st.warning("⚠ Sector Concentration Warning")
+            st.caption(
+                f"{context.get('proposed_sector', 'Sector')} exposure would increase to "
+                f"{safe_float(context.get('proposed_sector_after_pct'), 0.0):.1f}%. Consider improving diversification."
+            )
+
+    return {
+        "max_sector_exposure_pct": max_sector_exposure_pct,
+        "sector_warning": sector_warning,
+        "proposed_sector": str(context.get("proposed_sector") or "Unknown"),
+    }
+
+
+def render_correlation_analysis_card(context: Dict[str, Any]) -> Dict[str, Any]:
+    def overlap_status(score: float, high_threshold: float) -> Tuple[str, str, str, bool]:
+        moderate_threshold = max(high_threshold - 0.20, 0.45)
+        if score >= high_threshold:
+            return "🔶 High Overlap", "warning", "high", True
+        if score >= moderate_threshold:
+            return "🟡 Moderate Overlap", "neutral", "moderate", True
+        return "🟢 Low Overlap", "neutral", "low", False
+
+    with st.container(border=True):
+        st.markdown("#### Portfolio Overlap")
+        st.caption("Checks whether this trade overlaps too much with positions you already own.")
+        threshold = safe_float(
+            st.session_state.get("tcc_correlation_warning_threshold"),
+            PORTFOLIO_LIMIT_DEFAULTS["correlation_warning_threshold"],
+        )
+        correlations = context.get("correlations", []) or []
+        if correlations:
+            cards = []
+            overlap_items = []
+            for item in correlations[:8]:
+                symbol = str(item.get("symbol", "")).upper().strip() or "OPEN POSITION"
+                score = safe_float(item.get("score"), 0.0)
+                status_label, tone, severity, meaningful = overlap_status(score, threshold)
+                cards.append(
+                    {
+                        "title": symbol,
+                        "value": f"{score:.2f}",
+                        "detail": status_label,
+                        "tone": tone,
+                    }
+                )
+                overlap_items.append(
+                    {
+                        "symbol": symbol,
+                        "score": score,
+                        "status_label": status_label,
+                        "severity": severity,
+                        "meaningful": meaningful,
+                    }
+                )
+            render_card_grid(cards)
+        else:
+            overlap_items = []
+            st.caption("No open positions were found for correlation comparison.")
+
+        high_overlap_positions = [item for item in overlap_items if item.get("severity") == "high"]
+        top_overlap = high_overlap_positions[0] if high_overlap_positions else None
+        if top_overlap:
+            proposed_symbol = str(context.get("proposed_symbol") or "This trade").upper().strip() or "THIS TRADE"
+            top_symbol = str(top_overlap.get("symbol") or "OPEN POSITION")
+            st.warning("⚠ High Portfolio Overlap Detected")
+            st.markdown("**What this means**")
+            st.write(f"{proposed_symbol} and {top_symbol} tend to move similarly.")
+            st.write("Owning both may increase your exposure to the same market movement.")
+            st.markdown("**Recommended Actions**")
+            st.markdown("- Proceed if the increased exposure is intentional.")
+            st.markdown("- Reduce the position size.")
+            st.markdown("- Replace an existing overlapping position.")
+            st.markdown("- Ignore the warning if it aligns with your investment strategy.")
+            st.caption("This is a warning for diversification review, not a trade blocker.")
+        elif any(item.get("severity") == "moderate" for item in overlap_items):
+            st.info("Some existing holdings move similarly to this trade. Review diversification, but no major overlap warning is active.")
+
+        st.caption("This overlap review is designed to expand later into sector, industry, ETF, and geographic diversification guidance.")
+
+    return {
+        "correlation_warning_threshold": threshold,
+        "correlated_positions": high_overlap_positions,
+        "overlap_items": overlap_items,
+        "overlap_warning": bool(top_overlap),
+        "top_overlap_symbol": str((top_overlap or {}).get("symbol") or ""),
+        "top_overlap_score": safe_float((top_overlap or {}).get("score"), 0.0),
+    }
+
+
+def render_institutional_review_panel(
+    context: Dict[str, Any],
+    sizing: Dict[str, Any],
+    portfolio_controls: Dict[str, Any],
+    sector_controls: Dict[str, Any],
+    correlation_controls: Dict[str, Any],
+) -> Dict[str, Any]:
+    context = context if isinstance(context, dict) else {}
+    correlated = correlation_controls.get("correlated_positions", []) or []
+    overlap_warning = bool(correlation_controls.get("overlap_warning", False))
+    top_overlap_symbol = str(correlation_controls.get("top_overlap_symbol") or "").upper().strip()
+    proposed_symbol = str(context.get("proposed_symbol") or sizing.get("symbol") or "This trade").upper().strip() or "THIS TRADE"
+    action_items = []
+    see_sections = []
+
+    if bool(portfolio_controls.get("portfolio_risk_exceeded", False)):
+        action_items.append("Portfolio Risk")
+        if "Portfolio Risk Controls" not in see_sections:
+            see_sections.append("Portfolio Risk Controls")
+    if bool(portfolio_controls.get("max_open_trades_exceeded", False)):
+        action_items.append("Maximum Open Trades")
+        if "Portfolio Risk Controls" not in see_sections:
+            see_sections.append("Portfolio Risk Controls")
+    if overlap_warning:
+        action_items.append("Portfolio Overlap")
+        if "Advanced Portfolio Controls" not in see_sections:
+            see_sections.append("Advanced Portfolio Controls")
+    if bool(sector_controls.get("sector_warning", False)):
+        action_items.append("Sector Exposure")
+        if "Advanced Portfolio Controls" not in see_sections:
+            see_sections.append("Advanced Portfolio Controls")
+
+    rr_pass = safe_float(sizing.get("rr_2"), 0.0) >= 2.0
+    earnings_pass = bool(sizing.get("exit_before_earnings", True))
+    time_stop_pass = bool(sizing.get("time_stop_enabled", False))
+    sector_pass = not bool(sector_controls.get("sector_warning", False))
+
+    if not rr_pass:
+        action_items.append("Reward / Risk")
+        if "Entry & Risk" not in see_sections:
+            see_sections.append("Entry & Risk")
+    if not earnings_pass:
+        action_items.append("Earnings Protection")
+        if "Earnings & Weekend Protection" not in see_sections:
+            see_sections.append("Earnings & Weekend Protection")
+    if not time_stop_pass:
+        action_items.append("Time Stop")
+        if "Time Stop" not in see_sections:
+            see_sections.append("Time Stop")
+
+    critical_failures = int(bool(portfolio_controls.get("portfolio_risk_exceeded", False))) + int(bool(portfolio_controls.get("max_open_trades_exceeded", False)))
+    warnings = max(len(action_items) - critical_failures, 0)
+
+    if critical_failures > 0:
+        status_text = "RED"
+        status_color = "#b91c1c"
+        status_bg = "#fef2f2"
+        status_border = "#fecaca"
+    elif len(action_items) > 0:
+        status_text = "YELLOW"
+        status_color = "#b45309"
+        status_bg = "#fffbeb"
+        status_border = "#fde68a"
+    else:
+        status_text = "GREEN"
+        status_color = "#15803d"
+        status_bg = "#f0fdf4"
+        status_border = "#bbf7d0"
+
+    st.markdown(
+        "<div style='border:1px solid " + status_border + "; background:" + status_bg + "; border-radius:12px; padding:0.72rem 0.88rem; margin:0.35rem 0 0.5rem 0;'>"
+        "<div style='font-size:0.78rem; font-weight:800; color:#475569; letter-spacing:0.04em; text-transform:uppercase;'>Institutional Review</div>"
+        "<div style='font-size:1.3rem; font-weight:900; color:" + status_color + "; line-height:1.08; margin-top:0.2rem;'>" + status_text + "</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    if action_items:
+        st.warning(f"{len(action_items)} Action Items Remaining")
+        if see_sections:
+            st.markdown("See:")
+            for section_name in see_sections:
+                st.markdown(f"- {section_name}")
+    else:
+        st.success("All validation checks passed. Trade is ready for Monitoring or OMS Execution.")
+
+    if overlap_warning and top_overlap_symbol:
+        st.warning(
+            f"🟡 Portfolio Overlap\n\n{proposed_symbol} overlaps significantly with your existing position in {top_overlap_symbol}.\n\nReview if this additional exposure is intentional."
+        )
+
+    st.markdown("Passed")
+    if rr_pass:
+        st.markdown("- ✓ Reward/Risk")
+    if earnings_pass:
+        st.markdown("- ✓ Earnings Protection")
+    if time_stop_pass:
+        st.markdown("- ✓ Time Stop")
+    if sector_pass:
+        st.markdown("- ✓ Sector Exposure")
+
+    return {
+        "status": status_text,
+        "critical_failures": critical_failures,
+        "warnings": warnings,
+        "action_items": action_items,
+        "see_sections": see_sections,
+        "passed": {
+            "reward_risk": rr_pass,
+            "earnings_protection": earnings_pass,
+            "time_stop": time_stop_pass,
+            "sector_exposure": sector_pass,
+        },
+    }
+
+
+def publish_portfolio_dashboard_snapshot(
+    context: Dict[str, Any],
+    portfolio_controls: Dict[str, Any],
+    sector_controls: Dict[str, Any],
+    correlation_controls: Dict[str, Any],
+) -> Dict[str, Any]:
+    top_correlation = safe_float((context.get("correlations", [{}])[0] or {}).get("score"), 0.0) if context.get("correlations") else 0.0
+    snapshot = {
+        "timestamp": now_iso(),
+        "source": "Trade_Command_Center_v3_0",
+        "current_portfolio_risk_pct": safe_float(context.get("current_portfolio_risk_pct"), 0.0),
+        "sector_exposure": context.get("sector_exposure_pct", {}),
+        "correlation_score": top_correlation,
+        "open_trades": safe_int(context.get("current_open_trades"), 0),
+        "capital_allocated": safe_float(context.get("total_capital_allocated"), 0.0),
+        "cash_remaining": safe_float(context.get("cash_remaining"), 0.0),
+        "largest_position": {
+            "symbol": context.get("largest_position_symbol", "Pending"),
+            "value": safe_float(context.get("largest_position_value"), 0.0),
+        },
+        "largest_sector": {
+            "name": context.get("largest_sector", "Pending"),
+            "pct": safe_float(context.get("largest_sector_pct"), 0.0),
+        },
+        "risk_remaining": max(
+            safe_float(portfolio_controls.get("max_portfolio_risk_pct"), PORTFOLIO_LIMIT_DEFAULTS["max_portfolio_risk_pct"]) - safe_float(context.get("total_portfolio_risk_after"), 0.0),
+            0.0,
+        ),
+        "limits": {
+            "max_portfolio_risk_pct": safe_float(portfolio_controls.get("max_portfolio_risk_pct"), PORTFOLIO_LIMIT_DEFAULTS["max_portfolio_risk_pct"]),
+            "max_open_trades": safe_int(portfolio_controls.get("max_open_trades"), PORTFOLIO_LIMIT_DEFAULTS["max_open_trades"]),
+            "max_sector_exposure_pct": safe_float(sector_controls.get("max_sector_exposure_pct"), PORTFOLIO_LIMIT_DEFAULTS["max_sector_exposure_pct"]),
+            "correlation_warning_threshold": safe_float(correlation_controls.get("correlation_warning_threshold"), PORTFOLIO_LIMIT_DEFAULTS["correlation_warning_threshold"]),
+        },
+    }
+    st.session_state["tcc_portfolio_dashboard_snapshot"] = snapshot
+    return snapshot
 
 
 def build_checklist(decision: Dict[str, Any], plan: Dict[str, Any], sizing: Dict[str, Any], execution: Dict[str, Any], market: Dict[str, Any]) -> List[Tuple[str, bool]]:
@@ -750,6 +2092,25 @@ def render_risk_factors(factors: List[str]) -> None:
     st.markdown("".join(pieces), unsafe_allow_html=True)
 
 
+def render_trade_management_guidance() -> None:
+    with st.expander("▶ How to Use Trade Management Plan", expanded=False):
+        st.markdown("**Welcome!**")
+        st.markdown("This page helps you convert a validated trading idea into a complete Trade Management Plan.")
+        st.markdown("Work through each section from top to bottom:")
+        st.markdown("1. Entry & Risk")
+        st.markdown("2. Profit Targets")
+        st.markdown("3. Stop Management")
+        st.markdown("4. Time Stop")
+        st.markdown("5. Earnings & Weekend Protection")
+        st.markdown("6. Progress Requirement")
+        st.markdown("7. Portfolio Risk Controls")
+        st.markdown("8. Institutional Review")
+        st.caption(
+            "Each section includes its own explanation directly below the heading, "
+            "so you can learn while building your trade plan."
+        )
+
+
 def render_ticket_preview(ticket: Dict[str, Any]) -> None:
     rows = [
         ("Symbol", ticket.get("symbol", "")),
@@ -770,6 +2131,8 @@ def render_ticket_preview(ticket: Dict[str, Any]) -> None:
 
 
 def prepare_oms_ticket(symbol: str, sizing: Dict[str, Any], decision: Dict[str, Any], row: Dict[str, Any]) -> Dict[str, Any]:
+    management = _resolve_trade_management_fields(sizing)
+    account_context = resolve_account_context()
     ticket = {
         "timestamp": now_iso(),
         "source": "Trade_Command_Center_v3_0",
@@ -777,17 +2140,32 @@ def prepare_oms_ticket(symbol: str, sizing: Dict[str, Any], decision: Dict[str, 
         "symbol": symbol,
         "action": sizing.get("action", "BUY"),
         "qty": safe_int(sizing.get("qty"), 0),
+        "position_size_source": str(sizing.get("position_size_source") or management.get("position_size_source") or "Recalculated from Trade Management Plan"),
+        "scanner_qty": safe_int(sizing.get("scanner_qty"), 0),
+        "calculated_qty": safe_int(sizing.get("calculated_qty"), 0),
+        "final_qty": safe_int(sizing.get("final_qty", sizing.get("qty")), 0),
         "entry": safe_float(sizing.get("entry"), 0.0),
         "stop": safe_float(sizing.get("stop"), 0.0),
         "target_1": safe_float(sizing.get("target_1"), 0.0),
         "target_2": safe_float(sizing.get("target_2"), 0.0),
+        "target_3": safe_float(sizing.get("target_3"), 0.0),
         "position_value": safe_float(sizing.get("position_value"), 0.0),
         "dollar_risk": safe_float(sizing.get("dollar_risk"), 0.0),
         "risk_reward_1": safe_float(sizing.get("rr_1"), 0.0),
         "risk_reward_2": safe_float(sizing.get("rr_2"), 0.0),
+        "risk_reward_3": safe_float(sizing.get("rr_3"), 0.0),
+        "management": management,
         "decision_label": decision.get("label", ""),
         "decision_score": decision.get("score", 0),
         "scanner_score": safe_float(row.get("opportunity_score_pct"), 0.0),
+        "account_source": account_context.get("account_source", "⚪ Manual Mode"),
+        "account_size": safe_float(account_context.get("account_size"), 0.0),
+        "net_liquidation": safe_float(account_context.get("net_liquidation"), 0.0),
+        "buying_power": safe_float(account_context.get("buying_power"), 0.0),
+        "cash_balance": safe_float(account_context.get("cash_balance"), 0.0),
+        "risk_pct_source": _current_trade_risk_pct_source_label(),
+        "portfolio_data_source": account_context.get("portfolio_data_source", "Manual/Demo"),
+        "ibkr_connected": bool(account_context.get("ibkr_connected", False)),
         "note": "Advisory ticket prepared by Trade Command Center. Confirm in OMS before execution.",
     }
     st.session_state["tcc_prepared_oms_ticket"] = ticket
@@ -797,7 +2175,116 @@ def prepare_oms_ticket(symbol: str, sizing: Dict[str, Any], decision: Dict[str, 
     return ticket
 
 
+def _resolve_trade_management_fields(sizing: Dict[str, Any]) -> Dict[str, Any]:
+    sizing = sizing if isinstance(sizing, dict) else {}
+    tp1 = safe_float(sizing.get("tp1_allocation"), 50.0)
+    tp2 = safe_float(sizing.get("tp2_allocation"), 50.0)
+    tp3 = safe_float(sizing.get("tp3_allocation"), 0.0)
+    total = tp1 + tp2 + tp3
+    trailing_method_raw = str(sizing.get("trailing_method") or "ATR")
+    stop_adjustment_method_map = {
+        "ATR": "ATR",
+        "Percentage": "Percentage",
+        "Swing Low": "Swing Low",
+        "EMA 21": "EMA21",
+        "EMA 50": "EMA50",
+    }
+    trailing_method = trailing_method_raw if trailing_method_raw in set(stop_adjustment_method_map.keys()) else "ATR"
+    position_size_source = str(sizing.get("position_size_source") or "Recalculated from Trade Management Plan")
+    if position_size_source not in {"Using Scanner Recommendation", "Recalculated from Trade Management Plan"}:
+        position_size_source = "Recalculated from Trade Management Plan"
+    return {
+        "move_to_break_even": bool(sizing.get("move_to_break_even", True)),
+        "trailing_enabled": bool(sizing.get("trailing_enabled", False)),
+        "trailing_method": trailing_method,
+        "trailing_percent": safe_float(sizing.get("trailing_percent"), 5.0),
+        "atr_multiple": safe_float(sizing.get("atr_multiple"), 2.0),
+        "stop_adjustment_method": stop_adjustment_method_map.get(trailing_method, "ATR"),
+        "time_stop_enabled": bool(sizing.get("time_stop_enabled", False)),
+        "time_stop_days": safe_int(sizing.get("time_stop_days"), 10),
+        "exit_before_earnings": bool(sizing.get("exit_before_earnings", True)),
+        "next_earnings": str(sizing.get("next_earnings") or "Pending"),
+        "next_earnings_date": str(sizing.get("next_earnings_date") or ""),
+        "avoid_weekend_hold": bool(sizing.get("avoid_weekend_hold", False)),
+        "progress_requirement_pct": safe_float(sizing.get("progress_requirement_pct"), PORTFOLIO_LIMIT_DEFAULTS["progress_target_pct_of_tp1"]),
+        "progress_requirement_days": safe_int(sizing.get("progress_requirement_days"), PORTFOLIO_LIMIT_DEFAULTS["progress_within_days"]),
+        "tp1_allocation": tp1,
+        "tp2_allocation": tp2,
+        "tp3_allocation": tp3,
+        "tp_allocations_valid": abs(total - 100.0) < 0.0001,
+        "position_size_source": position_size_source,
+        "scanner_qty": safe_int(sizing.get("scanner_qty"), 0),
+        "calculated_qty": safe_int(sizing.get("calculated_qty"), 0),
+        "final_qty": safe_int(sizing.get("final_qty", sizing.get("qty")), 0),
+    }
+
+
+def build_monitoring_payload(symbol: str, sizing: Dict[str, Any], decision: Dict[str, Any]) -> Dict[str, Any]:
+    management = _resolve_trade_management_fields(sizing)
+    account_context = resolve_account_context()
+    portfolio_snapshot = st.session_state.get("tcc_portfolio_dashboard_snapshot", {})
+    if not isinstance(portfolio_snapshot, dict):
+        portfolio_snapshot = {}
+    payload = {
+        "timestamp": now_iso(),
+        "source": "Trade_Command_Center_v3_0",
+        "symbol": str(symbol or "").upper().strip(),
+        "status": "MONITORING",
+        "decision_label": decision.get("label", ""),
+        "entry": safe_float(sizing.get("entry"), 0.0),
+        "stop": safe_float(sizing.get("stop"), 0.0),
+        "tp1": safe_float(sizing.get("target_1"), 0.0),
+        "tp2": safe_float(sizing.get("target_2"), 0.0),
+        "tp3": safe_float(sizing.get("target_3"), 0.0),
+        "tp1_allocation": management["tp1_allocation"],
+        "tp2_allocation": management["tp2_allocation"],
+        "tp3_allocation": management["tp3_allocation"],
+        "tp_allocations": {
+            "tp1_allocation": management["tp1_allocation"],
+            "tp2_allocation": management["tp2_allocation"],
+            "tp3_allocation": management["tp3_allocation"],
+        },
+        "move_to_be": management["move_to_break_even"],
+        "move_to_break_even": management["move_to_break_even"],
+        "trailing_enabled": management["trailing_enabled"],
+        "trailing_method": management["trailing_method"],
+        "trailing_percent": management["trailing_percent"],
+        "atr_multiple": management["atr_multiple"],
+        "stop_adjustment_method": management["stop_adjustment_method"],
+        "time_stop_enabled": management["time_stop_enabled"],
+        "time_stop_days": management["time_stop_days"],
+        "exit_before_earnings": management["exit_before_earnings"],
+        "next_earnings": management["next_earnings"],
+        "next_earnings_date": management["next_earnings_date"],
+        "avoid_weekend_hold": management["avoid_weekend_hold"],
+        "progress_requirement_pct": management["progress_requirement_pct"],
+        "progress_requirement_days": management["progress_requirement_days"],
+        "risk_pct": safe_float(sizing.get("risk_pct"), 0.0),
+        "position_size": safe_int(sizing.get("qty"), 0),
+        "position_size_source": management["position_size_source"],
+        "scanner_qty": management["scanner_qty"],
+        "calculated_qty": management["calculated_qty"],
+        "final_qty": management["final_qty"],
+        "account_source": account_context.get("account_source", "⚪ Manual Mode"),
+        "account_size": safe_float(account_context.get("account_size"), 0.0),
+        "net_liquidation": safe_float(account_context.get("net_liquidation"), 0.0),
+        "buying_power": safe_float(account_context.get("buying_power"), 0.0),
+        "cash_balance": safe_float(account_context.get("cash_balance"), 0.0),
+        "risk_pct_source": _current_trade_risk_pct_source_label(),
+        "portfolio_data_source": account_context.get("portfolio_data_source", "Manual/Demo"),
+        "ibkr_connected": bool(account_context.get("ibkr_connected", False)),
+        "portfolio_snapshot": portfolio_snapshot,
+        "trade_plan": {
+            **(sizing if isinstance(sizing, dict) else {}),
+            **management,
+        },
+    }
+    return payload
+
+
 def send_trade_plan_to_journal(symbol: str, sizing: Dict[str, Any], decision: Dict[str, Any], reasons: List[str]) -> Dict[str, Any]:
+    management = _resolve_trade_management_fields(sizing)
+    account_context = resolve_account_context()
     note = {
         "timestamp": now_iso(),
         "source": "Trade_Command_Center_v3_0",
@@ -806,8 +2293,40 @@ def send_trade_plan_to_journal(symbol: str, sizing: Dict[str, Any], decision: Di
         "setup_grade": "A" if safe_float(decision.get("score"), 0) >= 80 else "B" if safe_float(decision.get("score"), 0) >= 65 else "C",
         "execution_grade": "Planned",
         "notes": " | ".join(reasons),
-        "trade_plan": sizing,
+        "trade_plan": {
+            **(sizing if isinstance(sizing, dict) else {}),
+            **management,
+        },
         "decision": decision,
+        "move_to_break_even": management["move_to_break_even"],
+        "trailing_enabled": management["trailing_enabled"],
+        "trailing_method": management["trailing_method"],
+        "trailing_percent": management["trailing_percent"],
+        "atr_multiple": management["atr_multiple"],
+        "time_stop_enabled": management["time_stop_enabled"],
+        "time_stop_days": management["time_stop_days"],
+        "stop_adjustment_method": management["stop_adjustment_method"],
+        "exit_before_earnings": management["exit_before_earnings"],
+        "next_earnings": management["next_earnings"],
+        "next_earnings_date": management["next_earnings_date"],
+        "avoid_weekend_hold": management["avoid_weekend_hold"],
+        "progress_requirement_pct": management["progress_requirement_pct"],
+        "progress_requirement_days": management["progress_requirement_days"],
+        "tp1_allocation": management["tp1_allocation"],
+        "tp2_allocation": management["tp2_allocation"],
+        "tp3_allocation": management["tp3_allocation"],
+        "position_size_source": management["position_size_source"],
+        "scanner_qty": management["scanner_qty"],
+        "calculated_qty": management["calculated_qty"],
+        "final_qty": management["final_qty"],
+        "account_source": account_context.get("account_source", "⚪ Manual Mode"),
+        "account_size": safe_float(account_context.get("account_size"), 0.0),
+        "net_liquidation": safe_float(account_context.get("net_liquidation"), 0.0),
+        "buying_power": safe_float(account_context.get("buying_power"), 0.0),
+        "cash_balance": safe_float(account_context.get("cash_balance"), 0.0),
+        "risk_pct_source": _current_trade_risk_pct_source_label(),
+        "portfolio_data_source": account_context.get("portfolio_data_source", "Manual/Demo"),
+        "ibkr_connected": bool(account_context.get("ibkr_connected", False)),
     }
     existing = st.session_state.get("tcc_journal_notes", [])
     if not isinstance(existing, list):
@@ -822,10 +2341,14 @@ def send_trade_plan_to_journal(symbol: str, sizing: Dict[str, Any], decision: Di
 # =========================================================
 
 def run_page() -> None:
+    get_trading_preferences()
     inject_css()
+    account_context = resolve_account_context()
 
     st.title("🎯 Trade Command Center")
     st.caption("Trade Command Center v7.0 — Institutional Trade Decision Framework. Validate setup quality, risk, readiness, and execution plan before OMS handoff. Advisory only.")
+    render_account_source_banner(account_context)
+    developer_mode = _developer_mode_enabled()
 
     st.markdown(
         """
@@ -956,7 +2479,7 @@ def run_page() -> None:
         {"title": "Technical Alignment", "value": professional_text(signal, "Pending"), "detail": f"Rating {professional_text(rating, 'Pending')}", "tone": "good" if signal == "BUY" else "warning" if signal == "WATCH" else "risk"},
         {"title": "Institutional Confirmation", "value": inst_grade, "detail": inst_detail, "tone": inst_tone},
         {"title": "Relative Strength", "value": rs_text, "detail": f"Leadership {professional_text(leadership, 'Not Available')}", "tone": "info"},
-        {"title": "Risk / Reward", "value": f"{preview_rr:.2f}R", "detail": "Preview to Target 2", "tone": "good" if preview_rr >= 2 else "warning"},
+        {"title": "Risk / Reward", "value": risk_reward_card_value(preview_rr), "detail": "Preview to Target 2", "tone": "good" if preview_rr >= 2 else "warning"},
         {"title": "Entry Quality", "value": opp_grade, "detail": opp_detail, "tone": opp_tone},
     ])
     section_close()
@@ -1001,20 +2524,49 @@ def run_page() -> None:
         {"title": "Position Size", "value": f"{int(projected_qty):,}" if projected_qty > 0 else "Pending", "detail": "Scanner/risk-plan projected quantity", "tone": "info"},
         {"title": "Maximum Risk", "value": fmt_money(projected_risk), "detail": "Projected stop-based dollar risk", "tone": "warning" if projected_risk > 0 else "neutral"},
         {"title": "Dollar Exposure", "value": fmt_money(projected_exposure), "detail": "Projected notional exposure", "tone": "info"},
-        {"title": "Risk / Reward", "value": f"{projected_rr:.2f}R", "detail": "Projected to Target 2", "tone": "good" if projected_rr >= 2 else "warning"},
+        {"title": "Risk / Reward", "value": risk_reward_card_value(projected_rr), "detail": "Projected to Target 2", "tone": "good" if projected_rr >= 2 else "warning"},
         {"title": "Stop Distance", "value": fmt_pct((abs(projected_entry - projected_stop) / projected_entry * 100.0) if projected_entry > 0 else 0.0), "detail": "Distance from projected entry", "tone": "warning"},
         {"title": "Portfolio Impact", "value": f"{projected_impact:.1f}%", "detail": "Share of current gross exposure", "tone": "warning" if projected_impact >= 20 else "good"},
     ])
     section_close()
 
-    section_open("6) Trade Plan", "Execution bridge from validated setup to OMS handoff.")
+    section_open("6) Trade Management Plan", "Execution bridge from validated setup to complete trade management.")
+    render_trade_management_guidance()
     sizing = build_sizing_plan(symbol or "MANUAL", signal, levels, market, plan)
+    portfolio_rows = _portfolio_rows_for_context(account_context, hold_rows())
+    portfolio_context = build_portfolio_management_context(
+        symbol=symbol,
+        row=row,
+        sizing=sizing,
+        risk=risk,
+        holds=portfolio_rows,
+        scanner=scanner_rows(),
+    )
+    portfolio_controls = render_portfolio_risk_controls(portfolio_context, symbol)
+    with st.expander("Advanced Portfolio Controls", expanded=False):
+        render_section_guidance(
+            [
+                "Advanced settings for portfolio overlap, sector exposure, capital allocation, and portfolio-wide risk.",
+                "Most users can keep these controls at their default values.",
+            ]
+        )
+        sector_controls = render_sector_exposure_card(portfolio_context)
+        correlation_controls = render_correlation_analysis_card(portfolio_context)
+    dashboard_snapshot = publish_portfolio_dashboard_snapshot(
+        portfolio_context,
+        portfolio_controls,
+        sector_controls,
+        correlation_controls,
+    )
+
     planner_df = pd.DataFrame([{
         "Symbol": symbol,
         "Action": sizing["action"],
         "Entry": fmt_money(sizing["entry"]),
         "Stop": fmt_money(sizing["stop"]),
-        "Target": fmt_money(sizing["target_2"]),
+        "TP1": fmt_money(sizing["target_1"]),
+        "TP2": fmt_money(sizing["target_2"]),
+        "TP3": fmt_money(sizing.get("target_3", 0.0)),
         "Position Size": sizing["qty"],
         "Estimated Risk": fmt_money(sizing["dollar_risk"]),
         "Estimated Reward": f"{sizing['rr_2']:.2f}R",
@@ -1025,16 +2577,38 @@ def run_page() -> None:
     risk_factors = build_risk_factors(row, market, plan, sizing, execution, checklist)
     rec = final_recommendation(decision, checklist, risk_factors)
 
+    tp_allocation_ok = bool(sizing.get("tp_allocations_valid", False))
+    no_critical_portfolio_violations = not bool(portfolio_controls.get("portfolio_risk_exceeded", False) or portfolio_controls.get("max_open_trades_exceeded", False))
+    can_proceed = bool(tp_allocation_ok and no_critical_portfolio_violations)
+    management = _resolve_trade_management_fields(sizing)
+
     if decision_style == "reject":
         action_left, action_right = st.columns(2)
         with action_left:
-            if st.button("Continue Monitoring", width="stretch", key="tcc_continue_monitoring_v70"):
-                st.info("Monitoring mode active. No OMS routing action was triggered.")
+            if st.button("Continue Monitoring", width="stretch", key="tcc_continue_monitoring_v70", disabled=not can_proceed):
+                monitoring_payload = build_monitoring_payload(symbol, sizing, decision)
+                st.session_state["tcc_monitoring_payload"] = monitoring_payload
+                st.session_state["pending_trade_review"] = [monitoring_payload]
+                st.success(
+                    f"Monitoring active for {symbol}: Entry {fmt_money(safe_float(sizing.get('entry'), 0.0))}, "
+                    f"Stop {fmt_money(safe_float(sizing.get('stop'), 0.0))}, "
+                    f"Trailing {management['trailing_method']}, "
+                    f"Time Stop {'On' if management['time_stop_enabled'] else 'Off'}."
+                )
+                if developer_mode:
+                    with st.expander("Debug Packet", expanded=False):
+                        st.json(monitoring_payload)
         with action_right:
-            if st.button("Save Trade to Journal", width="stretch", key="tcc_save_journal_v70"):
+            if st.button("Save Trade to Journal", width="stretch", key="tcc_save_journal_v70", disabled=not can_proceed):
                 note = send_trade_plan_to_journal(symbol, sizing, decision, decision.get("reasons", []))
-                st.success(f"Trade plan note prepared for Journal: {symbol}")
-                st.json(note)
+                st.success(
+                    f"Trade plan saved to Journal for {symbol}: "
+                    f"Action {sizing.get('action', 'BUY')}, Qty {safe_int(sizing.get('qty'), 0)}, "
+                    f"Entry {fmt_money(safe_float(sizing.get('entry'), 0.0))}, Stop {fmt_money(safe_float(sizing.get('stop'), 0.0))}."
+                )
+                if developer_mode:
+                    with st.expander("Debug Packet", expanded=False):
+                        st.json(note)
     else:
         if decision_style == "execute":
             oms_bg = "#2563eb"
@@ -1067,14 +2641,35 @@ def run_page() -> None:
 
         action_left, action_right = st.columns(2)
         with action_left:
-            if st.button("Open OMS With Prepared Ticket", width="stretch", disabled=sizing["qty"] <= 0, key="tcc_open_oms_primary_v70", type="primary"):
+            if st.button("Open OMS With Prepared Ticket", width="stretch", disabled=sizing["qty"] <= 0 or not can_proceed, key="tcc_open_oms_primary_v70", type="primary"):
                 prepare_oms_ticket(symbol, sizing, decision, row)
                 navigate_to("OMS Execution")
         with action_right:
-            if st.button("Save Trade to Journal", width="stretch", key="tcc_save_journal_v70"):
+            if st.button("Save Trade to Journal", width="stretch", key="tcc_save_journal_v70", disabled=not can_proceed):
                 note = send_trade_plan_to_journal(symbol, sizing, decision, decision.get("reasons", []))
-                st.success(f"Trade plan note prepared for Journal: {symbol}")
-                st.json(note)
+                st.success(
+                    f"Trade plan saved to Journal for {symbol}: "
+                    f"Action {sizing.get('action', 'BUY')}, Qty {safe_int(sizing.get('qty'), 0)}, "
+                    f"Entry {fmt_money(safe_float(sizing.get('entry'), 0.0))}, Stop {fmt_money(safe_float(sizing.get('stop'), 0.0))}."
+                )
+                if developer_mode:
+                    with st.expander("Debug Packet", expanded=False):
+                        st.json(note)
+
+    institutional_review = render_institutional_review_panel(
+        context=portfolio_context,
+        sizing=sizing,
+        portfolio_controls=portfolio_controls,
+        sector_controls=sector_controls,
+        correlation_controls=correlation_controls,
+    )
+    st.session_state["tcc_institutional_review"] = institutional_review
+    st.session_state["tcc_portfolio_limits"] = {
+        **portfolio_controls,
+        **sector_controls,
+        **correlation_controls,
+        "dashboard_snapshot": dashboard_snapshot,
+    }
     section_close()
 
     section_open("7) Trade Checklist", "Institutional confidence checklist before execution handoff.")
@@ -1159,17 +2754,26 @@ def run_page() -> None:
 
         with stats_right:
             st.markdown("##### Diagnostics")
-            st.write({
-                "Selected Row": row,
-                "Risk Plan Row": plan,
-                "Hold Row": hold,
-                "Market Snapshot": market,
-                "Risk Snapshot": risk,
-                "Execution Snapshot": execution,
-                "Prepared OMS Ticket": st.session_state.get("tcc_prepared_oms_ticket", {}),
-                "Version": "Trade Command Center v7.0",
-                "Updated": now_iso(),
-            })
+            render_mini_grid([
+                ("Version", "Trade Command Center v7.0"),
+                ("Updated", now_iso()),
+                ("Selected Symbol", symbol or "N/A"),
+                ("Monitoring Packet", "Prepared" if isinstance(st.session_state.get("tcc_monitoring_payload"), dict) else "Not Prepared"),
+                ("OMS Ticket", "Prepared" if isinstance(st.session_state.get("tcc_prepared_oms_ticket"), dict) else "Not Prepared"),
+            ])
+            if developer_mode:
+                with st.expander("Debug Packet", expanded=False):
+                    st.json({
+                        "Selected Row": row,
+                        "Risk Plan Row": plan,
+                        "Hold Row": hold,
+                        "Market Snapshot": market,
+                        "Risk Snapshot": risk,
+                        "Execution Snapshot": execution,
+                        "Prepared OMS Ticket": st.session_state.get("tcc_prepared_oms_ticket", {}),
+                        "Version": "Trade Command Center v7.0",
+                        "Updated": now_iso(),
+                    })
 
     st.markdown("---")
     with st.expander("▼ Quick Navigation", expanded=False):
@@ -1196,19 +2800,21 @@ def run_page() -> None:
             if st.button("Refresh", width="stretch", key="tcc_refresh_v21"):
                 st.rerun()
 
-    with st.expander("Developer Diagnostics", expanded=False):
-        rows = scanner_rows()
-        st.write({
-            "Selected Row": row,
-            "Risk Plan Row": plan,
-            "Hold Row": hold,
-            "Market Snapshot": market,
-            "Risk Snapshot": risk,
-            "Execution Snapshot": execution,
-            "Prepared OMS Ticket": st.session_state.get("tcc_prepared_oms_ticket", {}),
-            "Version": "Trade Command Center v7.0",
-            "Updated": now_iso(),
-        })
+    if developer_mode:
+        with st.expander("Developer Diagnostics", expanded=False):
+            rows = scanner_rows()
+            st.json({
+                "Selected Row": row,
+                "Risk Plan Row": plan,
+                "Hold Row": hold,
+                "Market Snapshot": market,
+                "Risk Snapshot": risk,
+                "Execution Snapshot": execution,
+                "Prepared OMS Ticket": st.session_state.get("tcc_prepared_oms_ticket", {}),
+                "Scanner Rows Count": len(rows),
+                "Version": "Trade Command Center v7.0",
+                "Updated": now_iso(),
+            })
 
 
 def page() -> None:

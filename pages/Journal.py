@@ -11,6 +11,7 @@ from __future__ import annotations
 import html
 from pathlib import Path
 from datetime import datetime
+from typing import Any
 
 import pandas as pd
 import streamlit as st
@@ -204,6 +205,14 @@ def _journal_supabase_persistence_available(user_id: str) -> tuple[bool, str, ob
             client,
         )
     return True, "Available", client
+
+
+def _ensure_widget_default(key: str, default: Any) -> Any:
+    if key not in st.session_state:
+        st.session_state[key] = default
+    return st.session_state[key]
+
+
 def _insert_journal_lesson(
     client,
     user_id: str,
@@ -1832,22 +1841,29 @@ def render_lessons_learned_center(selected_trade: dict | None, pnl_col: str = "r
         with st.expander("Existing note", expanded=False):
             st.write(existing_notes)
 
-    symbol_input = st.text_input("Symbol", value=selected_symbol or st.session_state.get("journal_selected_symbol", ""), key="journal_review_symbol")
+    _ensure_widget_default("journal_review_symbol", selected_symbol or st.session_state.get("journal_selected_symbol", ""))
+    symbol_input = st.text_input("Symbol", key="journal_review_symbol")
     lesson_cols_top = responsive_columns(3)
     lesson_cols_bottom = responsive_columns(3)
     with lesson_cols_top[0]:
-        went_well = st.text_area("What went well?", value=parsed_notes.get("What went well?", ""), height=96, key="journal_review_went_well")
+        _ensure_widget_default("journal_review_went_well", parsed_notes.get("What went well?", ""))
+        went_well = st.text_area("What went well?", height=96, key="journal_review_went_well")
     with lesson_cols_top[1]:
-        went_wrong = st.text_area("What went wrong?", value=parsed_notes.get("What went wrong?", ""), height=96, key="journal_review_went_wrong")
+        _ensure_widget_default("journal_review_went_wrong", parsed_notes.get("What went wrong?", ""))
+        went_wrong = st.text_area("What went wrong?", height=96, key="journal_review_went_wrong")
     with lesson_cols_top[2]:
-        would_repeat = st.text_area("Would I take this trade again?", value=parsed_notes.get("Would I take this trade again?", ""), height=96, key="journal_review_repeat")
+        _ensure_widget_default("journal_review_repeat", parsed_notes.get("Would I take this trade again?", ""))
+        would_repeat = st.text_area("Would I take this trade again?", height=96, key="journal_review_repeat")
 
     with lesson_cols_bottom[0]:
-        rule_followed = st.text_area("Rule followed?", value=parsed_notes.get("Rule followed?", ""), height=96, key="journal_review_rule_followed")
+        _ensure_widget_default("journal_review_rule_followed", parsed_notes.get("Rule followed?", ""))
+        rule_followed = st.text_area("Rule followed?", height=96, key="journal_review_rule_followed")
     with lesson_cols_bottom[1]:
-        rule_broken = st.text_area("Rule broken?", value=parsed_notes.get("Rule broken?", ""), height=96, key="journal_review_rule_broken")
+        _ensure_widget_default("journal_review_rule_broken", parsed_notes.get("Rule broken?", ""))
+        rule_broken = st.text_area("Rule broken?", height=96, key="journal_review_rule_broken")
     with lesson_cols_bottom[2]:
-        improvement = st.text_area("Improvement for next time", value=parsed_notes.get("Improvement for next time", ""), height=96, key="journal_review_improvement")
+        _ensure_widget_default("journal_review_improvement", parsed_notes.get("Improvement for next time", ""))
+        improvement = st.text_area("Improvement for next time", height=96, key="journal_review_improvement")
 
     tag_options = [
         "Process Review",
