@@ -14,6 +14,7 @@ from __future__ import annotations
 import html
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
@@ -65,11 +66,28 @@ def _format_clock(ts: Any) -> str:
         return text[-8:] if len(text) >= 8 else text
 
 
+def _live_ibkr_connection_active(gateway: Any = None) -> bool:
+    status = st.session_state.get("live_ibkr_cached_status")
+    if isinstance(status, dict) and "connected" in status:
+        return bool(status.get("connected"))
+
+    gateway_obj = gateway if gateway is not None else st.session_state.get("gateway")
+    if gateway_obj is not None:
+        for attr in ("broker_connected", "ui_connected", "connected"):
+            if hasattr(gateway_obj, attr):
+                try:
+                    return bool(getattr(gateway_obj, attr))
+                except Exception:
+                    return False
+
+    return False
+
+
 def resolve_account_context() -> Dict[str, Any]:
     preferences = get_trading_preferences()
     effective = preferences.get("effective", {}) if isinstance(preferences, dict) else {}
 
-    connected = bool(st.session_state.get("acc_ibkr_connected", False))
+    connected = _live_ibkr_connection_active()
     mode = str(st.session_state.get("mode", "SIM") or "SIM").upper().strip()
     snapshot_rows = _as_list(st.session_state.get("broker_snapshot_account_summary", []))
     snapshot_positions = _as_list(st.session_state.get("broker_snapshot_positions", []))
@@ -406,6 +424,9 @@ div[data-testid="stDataFrame"] * { white-space: normal !important; overflow-wrap
 .tcc-mini { background:#f8fafc; border:1px solid #dbe3ef; border-radius:14px; padding:0.72rem 0.82rem; }
 .tcc-mini-label { color:#64748b; font-size:0.68rem; font-weight:900; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:0.25rem; }
 .tcc-mini-value { color:#111827; font-size:0.98rem; font-weight:900; overflow-wrap:anywhere; }
+.tcc-position-source-card { display:flex; flex-direction:column; justify-content:center; align-items:stretch; min-height:100%; background:#ffffff; border:1px solid #dbe3ef; border-radius:14px; padding:0.72rem 0.82rem; box-sizing:border-box; }
+.tcc-position-source-label { color:#64748b; font-size:0.68rem; font-weight:900; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:0.25rem; }
+.tcc-position-source-value { color:#111827; font-size:clamp(1.2rem, 1.8vw, 2rem); line-height:1.15; font-weight:700; white-space:normal; overflow-wrap:break-word; word-break:normal; hyphens:none; max-width:24ch; }
 .tcc-section-card { background:#ffffff; border:1px solid #e5eaf3; border-radius:18px; padding:1rem; margin:0 0 1rem 0; overflow:hidden; }
 .tcc-reason-panel { background:#ffffff; border:1px solid #dbe3ef; border-radius:14px; overflow:hidden; margin:0.35rem 0 1rem 0; }
 .tcc-reason-row { padding:0.72rem 0.90rem; border-bottom:1px solid #e5e7eb; font-size:0.92rem; line-height:1.38; color:#1f2937; overflow-wrap:anywhere; }
@@ -601,20 +622,53 @@ def select_trade_symbol() -> Dict[str, Any]:
             lookup[symbol] = row
             symbols.append(symbol)
 
-    preferred = st.session_state.get("trade_command_symbol") or row_symbol(best_scanner_row())
+    handoff_symbol = str(st.session_state.get("handoff_symbol") or "").upper().strip()
+    trade_command_symbol = str(st.session_state.get("trade_command_symbol") or "").upper().strip()
+    selected_symbol = str(st.session_state.get("selected_symbol") or "").upper().strip()
+    preferred = handoff_symbol or trade_command_symbol or selected_symbol or row_symbol(best_scanner_row())
+
+    if preferred and preferred not in lookup:
+        lookup[preferred] = {
+            "symbol": preferred,
+            "display_symbol": preferred,
+            "sector": str(st.session_state.get("handoff_asset_class") or "Manual").strip() or "Manual",
+            "trade_recommendation": "WATCH",
+            "opportunity_score_pct": 0,
+            "overall_rating": "N/A",
+            "source": str(st.session_state.get("handoff_source") or "Manual").strip() or "Manual",
+        }
+        symbols.insert(0, preferred)
 
     if symbols:
-        index = symbols.index(preferred) if preferred in symbols else 0
-        chosen = st.selectbox("Trade command symbol", options=symbols, index=index, key="tcc_symbol_select_v20")
+        if handoff_symbol and handoff_symbol in symbols:
+            st.session_state["tcc_symbol_select_v20"] = handoff_symbol
+            st.session_state["trade_command_symbol"] = handoff_symbol
+            st.session_state["selected_symbol"] = handoff_symbol
+            st.session_state["tcc_symbol"] = handoff_symbol
+            st.session_state.pop("handoff_symbol", None)
+            st.session_state.pop("handoff_source", None)
+
+        default_symbol = preferred if preferred in symbols else symbols[0]
+        if "tcc_symbol_select_v20" not in st.session_state:
+            st.session_state["tcc_symbol_select_v20"] = default_symbol
+        elif str(st.session_state.get("tcc_symbol_select_v20") or "").upper().strip() not in symbols:
+            st.session_state["tcc_symbol_select_v20"] = default_symbol
+
+        chosen = st.selectbox("Trade command symbol", options=symbols, key="tcc_symbol_select_v20")
         st.session_state["trade_command_symbol"] = chosen
+        st.session_state["selected_symbol"] = chosen
+        st.session_state["tcc_symbol"] = chosen
         return lookup.get(chosen, {})
 
-    _ensure_widget_default("trade_command_manual_symbol_v20", st.session_state.get("trade_command_symbol", "AAPL"))
+    manual_default = preferred or st.session_state.get("trade_command_symbol") or st.session_state.get("selected_symbol") or "AAPL"
+    _ensure_widget_default("trade_command_manual_symbol_v20", manual_default)
     manual = st.text_input(
         "Trade command symbol",
         key="trade_command_manual_symbol_v20",
     ).upper().strip()
     st.session_state["trade_command_symbol"] = manual
+    st.session_state["selected_symbol"] = manual
+    st.session_state["tcc_symbol"] = manual
     return {
         "symbol": manual,
         "display_symbol": manual,
@@ -1067,7 +1121,15 @@ def build_sizing_plan(symbol: str, signal: str, levels: Dict[str, float], market
             position_size_source = "Using Scanner Recommendation"
             st.session_state[position_size_source_key] = position_size_source
 
-        st.metric("Position Size Source", position_size_source)
+        st.markdown(
+            f"""
+            <div class="tcc-position-source-card">
+                <div class="tcc-position-source-label">Position Size Source</div>
+                <div class="tcc-position-source-value">{html.escape(position_size_source)}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         st.caption(
             "The Scanner recommendation is used as the starting point. "
             "If you change risk, entry, stop, or account settings, JFBP Quant Desk recalculates the position size automatically."
@@ -1875,7 +1937,7 @@ def render_institutional_review_panel(
             for section_name in see_sections:
                 st.markdown(f"- {section_name}")
     else:
-        st.success("All validation checks passed. Trade is ready for the Execute/Pass decision gate.")
+        st.success("All validation checks passed. Trade is ready for direct broker routing.")
 
     if overlap_warning and top_overlap_symbol:
         st.warning(
@@ -2472,7 +2534,7 @@ def _build_execution_gateway_packet(
     return packet
 
 
-def _decision_gate_issue_text(issue: str) -> str:
+def _execution_issue_text(issue: str) -> str:
     mapping = {
         "Portfolio Risk": "Maximum portfolio risk exceeded.",
         "Maximum Open Trades": "Maximum portfolio position count exceeded.",
@@ -2492,7 +2554,7 @@ def _decision_gate_issue_text(issue: str) -> str:
     return mapping.get(text, text if text.endswith(".") else f"{text}.") if text else ""
 
 
-def _build_decision_gate_recommendation(
+def _build_final_execution_recommendation(
     institutional_review: Dict[str, Any],
     risk_factors: List[str],
     failed_execution_checks: List[str],
@@ -2503,12 +2565,12 @@ def _build_decision_gate_recommendation(
 
     primary_issues: List[str] = []
     for item in normalized_action_items:
-        issue_text = _decision_gate_issue_text(item)
+        issue_text = _execution_issue_text(item)
         if issue_text and issue_text not in primary_issues:
             primary_issues.append(issue_text)
 
     for item in failed_execution_checks:
-        issue_text = _decision_gate_issue_text(item)
+        issue_text = _execution_issue_text(item)
         if issue_text and issue_text not in primary_issues:
             primary_issues.append(issue_text)
 
@@ -2522,124 +2584,292 @@ def _build_decision_gate_recommendation(
     if review_status == "GREEN":
         return {
             "tone": "good",
-            "headline": "🟢 RECOMMENDATION: EXECUTE TRADE",
-            "detail": "All institutional checks passed. JFBP Quant Desk recommends executing this trade.",
+            "headline": "🟢 EXECUTE TRADE",
+            "detail": "All institutional checks passed.",
             "primary_issues": primary_issues,
-            "is_red": False,
+            "can_send": not bool(failed_execution_checks),
         }
     if review_status == "YELLOW":
         return {
             "tone": "warning",
-            "headline": "🟡 RECOMMENDATION: EXECUTE WITH CAUTION",
-            "detail": "This trade is acceptable, but one or more warnings remain. Review the items below before executing.",
+            "headline": "🟡 EXECUTE WITH CAUTION",
+            "detail": "One or more warnings remain. Review the items below before sending.",
             "primary_issues": primary_issues,
-            "is_red": False,
+            "can_send": not bool(failed_execution_checks),
         }
     return {
         "tone": "risk",
-        "headline": "🔴 RECOMMENDATION: REJECT TRADE",
-        "detail": "This trade failed one or more critical institutional checks. JFBP Quant Desk recommends passing on this trade.",
+        "headline": "🔴 DO NOT EXECUTE",
+        "detail": "One or more critical institutional checks failed.",
         "primary_issues": primary_issues,
-        "is_red": True,
+        "can_send": False,
     }
 
 
-def _finalize_decision_gate_execution(
+def _resolve_gateway() -> Any:
+    return st.session_state.get("gateway")
+
+
+def _resolve_oms() -> Any:
+    return st.session_state.get("oms")
+
+
+def _is_gateway_connected(gateway: Any) -> bool:
+    return _live_ibkr_connection_active(gateway)
+
+
+def _market_is_open_note() -> Tuple[bool, str]:
+    now_utc = datetime.now(timezone.utc)
+    try:
+        now_et = now_utc.astimezone(ZoneInfo("America/New_York"))
+    except Exception:
+        now_et = now_utc
+
+    if now_et.weekday() >= 5:
+        return False, "Market is closed (weekend)."
+
+    minutes = now_et.hour * 60 + now_et.minute
+    market_open = 9 * 60 + 30
+    market_close = 16 * 60
+
+    if market_open <= minutes <= market_close:
+        return True, "Market is open."
+
+    return False, "Market is outside regular trading hours (09:30-16:00 ET)."
+
+
+def _validate_direct_ibkr_execution(
+    account_context: Dict[str, Any],
+    sizing: Dict[str, Any],
+    symbol: str,
+) -> List[str]:
+    issues: List[str] = []
+    gateway = _resolve_gateway()
+
+    clean_symbol = str(symbol or "").upper().strip()
+    if not clean_symbol:
+        issues.append("Symbol is missing.")
+
+    if not _is_gateway_connected(gateway):
+        issues.append("Broker connection is not active.")
+
+    mode = str(st.session_state.get("mode", "SIM") or "SIM").upper().strip()
+    if mode != "LIVE":
+        issues.append("Execution mode must be LIVE.")
+
+    if not bool(st.session_state.get("live_trading_armed", False)):
+        issues.append("LIVE trading is not armed.")
+
+    if safe_float(account_context.get("net_liquidation"), 0.0) <= 0:
+        issues.append("Account validation failed: Net Liquidation is unavailable.")
+
+    position_value = safe_float(sizing.get("position_value"), 0.0)
+    buying_power = safe_float(account_context.get("buying_power"), 0.0)
+    if buying_power > 0 and position_value > buying_power:
+        issues.append("Buying power validation failed for this position size.")
+
+    is_open, market_note = _market_is_open_note()
+    if not is_open:
+        issues.append(f"Market status validation failed: {market_note}")
+
+    if safe_int(sizing.get("qty"), 0) <= 0:
+        issues.append("Position size validation failed: quantity must be greater than zero.")
+
+    return issues
+
+
+def _build_institutional_order(symbol: str, sizing: Dict[str, Any]) -> Dict[str, Any]:
+    action = str(sizing.get("action") or "BUY").upper().strip()
+    if action not in {"BUY", "SELL"}:
+        action = "BUY"
+
+    return {
+        "symbol": str(symbol or "").upper().strip(),
+        "action": action,
+        "side": action,
+        "qty": max(1, safe_int(sizing.get("qty"), 0)),
+        "quantity": max(1, safe_int(sizing.get("qty"), 0)),
+        "order_type": "MKT",
+        "mode": "LIVE",
+        "source": "trade_command_center_direct_send",
+        "timestamp": now_iso(),
+    }
+
+
+def _submit_order_to_broker(order_payload: Dict[str, Any]) -> Tuple[bool, Dict[str, Any], str]:
+    oms = _resolve_oms()
+    gateway = _resolve_gateway()
+
+    if oms is not None and hasattr(oms, "set_mode"):
+        try:
+            oms.set_mode("LIVE")
+        except Exception:
+            pass
+
+    if oms is not None and hasattr(oms, "execute_signal"):
+        try:
+            result = oms.execute_signal(order_payload)
+            if isinstance(result, dict) and result:
+                return True, result, ""
+            rejection = getattr(oms, "last_rejection", None)
+            rejection_reason = str((rejection or {}).get("reason") or getattr(oms, "last_error", "") or "OMS broker route failed.")
+            return False, {}, rejection_reason
+        except Exception as exc:
+            return False, {}, str(exc)
+
+    if gateway is not None and hasattr(gateway, "submit_order"):
+        try:
+            result = gateway.submit_order(
+                symbol=order_payload.get("symbol"),
+                qty=safe_int(order_payload.get("qty"), 0),
+                side=order_payload.get("action"),
+                order_type=order_payload.get("order_type", "MKT"),
+            )
+            if isinstance(result, dict) and result:
+                return True, result, ""
+            return False, {}, "Gateway returned an empty order response."
+        except Exception as exc:
+            return False, {}, str(exc)
+
+    return False, {}, "No OMS or broker gateway is available for direct submission."
+
+
+def _sync_live_execution_state(order_state: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(order_state, dict) or not order_state:
+        return {}
+
+    gateway = _resolve_gateway()
+    if not _is_gateway_connected(gateway):
+        return order_state
+
+    state = dict(order_state)
+    broker_order_id = str(state.get("broker_order_id") or "").strip()
+    local_order_id = str(state.get("order_id") or "").strip()
+    symbol = str(state.get("symbol") or "").upper().strip()
+
+    open_orders: List[Dict[str, Any]] = []
+    if gateway is not None and hasattr(gateway, "refresh_open_orders"):
+        try:
+            open_orders = _as_list(gateway.refresh_open_orders())
+        except Exception:
+            open_orders = _as_list(getattr(gateway, "open_orders_cache", []))
+
+    matched_open: Dict[str, Any] = {}
+    for row in open_orders:
+        if not isinstance(row, dict):
+            continue
+        row_broker_id = str(row.get("broker_order_id") or row.get("broker_id") or row.get("order_id") or "").strip()
+        row_symbol = str(row.get("symbol") or "").upper().strip()
+        if broker_order_id and row_broker_id == broker_order_id:
+            matched_open = row
+            break
+        if not broker_order_id and symbol and row_symbol == symbol:
+            matched_open = row
+            break
+
+    if matched_open:
+        state["status"] = str(matched_open.get("status") or state.get("status") or "SUBMITTED").upper().strip()
+        state["filled_qty"] = safe_float(matched_open.get("filled_qty"), safe_float(state.get("filled_qty"), 0.0))
+        state["remaining_qty"] = safe_float(matched_open.get("remaining_qty"), safe_float(state.get("remaining_qty"), 0.0))
+        state["avg_fill_price"] = safe_float(matched_open.get("avg_fill_price"), safe_float(state.get("avg_fill_price"), 0.0))
+        state["broker_order_id"] = str(matched_open.get("broker_order_id") or broker_order_id or "").strip()
+    else:
+        fills: List[Dict[str, Any]] = []
+        if gateway is not None and hasattr(gateway, "get_execution_cache"):
+            try:
+                fills = _as_list(gateway.get_execution_cache())
+            except Exception:
+                fills = _as_list(getattr(gateway, "execution_detail_cache", []))
+
+        total_filled = 0.0
+        total_value = 0.0
+        for fill in fills:
+            if not isinstance(fill, dict):
+                continue
+            fill_symbol = str(fill.get("symbol") or "").upper().strip()
+            fill_broker_id = str(fill.get("broker_order_id") or fill.get("order_id") or "").strip()
+            if symbol and fill_symbol != symbol:
+                continue
+            if broker_order_id and fill_broker_id and fill_broker_id != broker_order_id:
+                continue
+            qty = safe_float(fill.get("filled_qty") or fill.get("execution_qty") or fill.get("qty"), 0.0)
+            price = safe_float(fill.get("execution_price") or fill.get("fill_price") or fill.get("price"), 0.0)
+            if qty <= 0:
+                continue
+            total_filled += qty
+            total_value += qty * max(price, 0.0)
+
+        target_qty = max(0.0, safe_float(state.get("qty"), 0.0))
+        if total_filled > 0:
+            avg_fill = (total_value / total_filled) if total_filled > 0 else 0.0
+            remaining = max(0.0, target_qty - total_filled)
+            state["filled_qty"] = total_filled
+            state["remaining_qty"] = remaining
+            state["avg_fill_price"] = avg_fill
+            state["status"] = "FILLED" if remaining <= 0.0 else "PARTIALLY_FILLED"
+
+    state["updated_at"] = now_iso()
+    return state
+
+
+def _start_direct_ibkr_execution(
     symbol: str,
     sizing: Dict[str, Any],
     decision: Dict[str, Any],
     row: Dict[str, Any],
     management: Dict[str, Any],
     institutional_review: Dict[str, Any],
-    execution_checks: Dict[str, bool],
-    developer_mode: bool,
-    monitoring_button_key: str,
-) -> None:
-    tier = _resolve_execution_subscription_tier()
-    route_label = _execution_route_label_for_tier(tier)
+    execution_checks: Dict[str, Any],
+) -> Tuple[bool, str]:
+    order_payload = _build_institutional_order(symbol, sizing)
+    ok, broker_result, error_text = _submit_order_to_broker(order_payload)
 
-    monitoring_payload: Dict[str, Any] | None = None
-    oms_ticket: Dict[str, Any] | None = None
-    portfolio_update: Dict[str, Any] | None = None
+    if not ok:
+        return False, error_text
 
-    if tier in {"PRO", "ELITE"}:
-        monitoring_payload = build_monitoring_payload(symbol, sizing, decision)
-        st.session_state["tcc_monitoring_payload"] = monitoring_payload
-        st.session_state["pending_trade_review"] = [monitoring_payload]
+    monitoring_payload = build_monitoring_payload(symbol, sizing, decision)
+    st.session_state["tcc_monitoring_payload"] = monitoring_payload
+    st.session_state["pending_trade_review"] = [monitoring_payload]
 
-        oms_ticket = prepare_oms_ticket(symbol, sizing, decision, row)
-        oms_ticket["route"] = route_label
-        oms_ticket["status"] = "READY_FOR_PAPER_ROUTING" if tier == "PRO" else "READY_FOR_LIVE_ROUTING"
+    oms_ticket = prepare_oms_ticket(symbol, sizing, decision, row)
+    oms_ticket["route"] = "Direct IBKR"
+    oms_ticket["status"] = "SENT_TO_BROKER"
+    if isinstance(broker_result, dict):
+        oms_ticket["broker_result"] = broker_result
 
-        portfolio_update = {
-            "timestamp": now_iso(),
-            "source": "Trade_Command_Center_v3_0",
-            "symbol": str(symbol or "").upper().strip(),
-            "action": str(sizing.get("action") or "BUY"),
-            "qty": safe_int(sizing.get("qty"), 0),
-            "status": "PENDING_PORTFOLIO_ENGINE_SYNC",
-        }
-        st.session_state["tcc_portfolio_update"] = portfolio_update
+    broker_order_id = str(
+        (broker_result or {}).get("broker_order_id")
+        or (broker_result or {}).get("orderId")
+        or (broker_result or {}).get("order_id")
+        or ""
+    ).strip()
+    order_id = str((broker_result or {}).get("order_id") or broker_order_id or "").strip()
 
-        journal_note = send_trade_plan_to_journal(
-            symbol,
-            sizing,
-            decision,
-            decision.get("reasons", []),
-            trade_status="EXECUTED",
-            workflow_decision="EXECUTE",
-        )
-        execution_packet = _build_execution_gateway_packet(
-            symbol=symbol,
-            sizing=sizing,
-            decision=decision,
-            row=row,
-            management=management,
-            institutional_review=institutional_review,
-            validation_checks=execution_checks,
-            tier=tier,
-            route_label=route_label,
-            monitoring_payload=monitoring_payload,
-            journal_note=journal_note,
-            oms_ticket=oms_ticket,
-            portfolio_update=portfolio_update,
-            status="EXECUTED",
-        )
-        st.session_state["tcc_trade_workflow_status"] = "EXECUTED"
-        st.session_state["tcc_trade_workflow_closed"] = True
-
-        st.success(
-            "Order submitted workflow created. Monitoring enabled, Journal updated, Portfolio update staged, and OMS record stored."
-        )
-        st.caption(f"Routing: {route_label}")
-        st.markdown("- ✓ Order Submitted")
-        st.markdown(f"- Order ID: {oms_ticket.get('order_id', 'Pending') if isinstance(oms_ticket, dict) else 'Pending'}")
-        st.markdown("- ✓ Monitoring Enabled")
-        st.markdown("- ✓ Journal Updated")
-        if st.button("Open Monitoring Center", width="stretch", key=monitoring_button_key):
-            navigate_to("Position Command Center")
-        if developer_mode:
-            with st.expander("Debug Packet", expanded=False):
-                st.json(execution_packet)
-        return
-
-    export_plan = {
-        "timestamp": now_iso(),
-        "source": "Trade_Command_Center_v3_0",
+    live_state = {
         "symbol": str(symbol or "").upper().strip(),
-        "route": route_label,
-        "trade_plan": {**sizing, **management},
+        "action": str(order_payload.get("action") or "BUY").upper().strip(),
+        "qty": safe_int(order_payload.get("qty"), 0),
+        "status": str((broker_result or {}).get("status") or (broker_result or {}).get("order_status") or "TRANSMITTING_ORDER").upper().strip(),
+        "order_id": order_id,
+        "broker_order_id": broker_order_id,
+        "filled_qty": safe_float((broker_result or {}).get("filled_qty"), 0.0),
+        "remaining_qty": safe_float((broker_result or {}).get("remaining_qty"), safe_float(order_payload.get("qty"), 0.0)),
+        "avg_fill_price": safe_float((broker_result or {}).get("avg_fill_price"), 0.0),
+        "submitted_at": now_iso(),
+        "updated_at": now_iso(),
     }
-    st.session_state["tcc_export_trade_plan"] = export_plan
+    st.session_state[f"tcc_live_execution_{symbol}"] = live_state
+
     journal_note = send_trade_plan_to_journal(
         symbol,
         sizing,
         decision,
         decision.get("reasons", []),
-        trade_status="PLANNED",
-        workflow_decision="EXECUTE_STARTER_EXPORT",
+        trade_status="ORDER_SUBMITTED",
+        workflow_decision="SEND_TO_IBKR",
     )
-    execution_packet = _build_execution_gateway_packet(
+
+    _build_execution_gateway_packet(
         symbol=symbol,
         sizing=sizing,
         decision=decision,
@@ -2647,20 +2877,18 @@ def _finalize_decision_gate_execution(
         management=management,
         institutional_review=institutional_review,
         validation_checks=execution_checks,
-        tier=tier,
-        route_label=route_label,
-        monitoring_payload=None,
+        tier="ELITE",
+        route_label="Direct IBKR",
+        monitoring_payload=monitoring_payload,
         journal_note=journal_note,
-        oms_ticket=None,
+        oms_ticket=oms_ticket,
         portfolio_update=None,
-        status="EXPORT_ONLY",
+        status="ORDER_SUBMITTED",
     )
-    st.session_state["tcc_trade_workflow_status"] = "EXPORT_ONLY"
+
+    st.session_state["tcc_trade_workflow_status"] = "ORDER_SUBMITTED"
     st.session_state["tcc_trade_workflow_closed"] = True
-    st.info("Starter plan route: Trade Plan exported. No OMS routing, monitoring plan, or portfolio position was created.")
-    if developer_mode:
-        with st.expander("Debug Packet", expanded=False):
-            st.json(execution_packet)
+    return True, ""
 
 
 # =========================================================
@@ -2673,7 +2901,7 @@ def run_page() -> None:
     account_context = resolve_account_context()
 
     st.title("🎯 Trade Command Center")
-    st.caption("Trade Command Center v7.0 — Institutional Trade Decision Framework. Validate setup quality, risk, readiness, and execution plan before OMS handoff. Advisory only.")
+    st.caption("Trade Command Center v7.0 — Institutional Trade Decision Framework. Validate setup quality, risk, readiness, and send directly to IBKR when execution checks pass.")
     render_account_source_banner(account_context)
     developer_mode = _developer_mode_enabled()
 
@@ -2681,7 +2909,7 @@ def run_page() -> None:
         """
         <div class="tcc-flow">
             <strong>Workflow:</strong><br>
-            Market Pulse → Scanner → Research Stock → Trade Command Center → OMS Execution → Position Command Center → Journal
+            Market Pulse → Scanner → Research Stock → Trade Command Center → Send Order → Broker → Position Command Center → Journal
         </div>
         """,
         unsafe_allow_html=True,
@@ -2694,8 +2922,8 @@ def run_page() -> None:
             2. Review the selected symbol in **Opportunity Assessment**.
             3. Validate entry, stop, targets, position size, and risk/reward.
             4. Confirm the **Execution Readiness** checklist and readiness gauge.
-            5. Review the final recommendation and risk factors before OMS handoff.
-            6. Prepare the OMS ticket and Journal note. No live order is sent from this page.
+            5. Review the final recommendation and risk factors before broker routing.
+            6. Send order directly from this page when broker connectivity and execution checks pass.
             """
         )
 
@@ -2764,7 +2992,7 @@ def run_page() -> None:
     if decision_style == "execute":
         action_text = "Proceed With Trade"
         action_color = "#166534"
-        recommendation_text = "Execute Trade"
+        recommendation_text = "Send Order"
         recommendation_tone = "good"
     elif decision_style == "wait":
         action_text = "Wait For Better Entry"
@@ -2945,170 +3173,15 @@ def run_page() -> None:
         ]
         if not bool(execution_checks.get(key, False))
     ]
-    review_status = str(institutional_review.get("status") or "").upper().strip()
-    gate_recommendation = _build_decision_gate_recommendation(institutional_review, risk_factors, failed_execution_checks)
-    gate_bg, gate_border, gate_color = tone_palette(gate_recommendation.get("tone", "neutral"))
-    execute_button_text = "Execute Anyway" if gate_recommendation.get("is_red", False) else "Execute Trade"
-    execute_intent_key = f"tcc_execute_intent_{symbol}"
-    execute_override_pending = bool(st.session_state.get(execute_intent_key, False))
-
-    st.markdown("---")
-    st.markdown("### Decision Gate")
-    st.caption("Finalize this Trade Management Plan by choosing EXECUTE TRADE or PASS ON THIS TRADE.")
-    issues_markup = "".join(
-        f"<li>{html.escape(str(item))}</li>"
-        for item in gate_recommendation.get("primary_issues", [])
+    final_exec_recommendation = _build_final_execution_recommendation(
+        institutional_review,
+        risk_factors,
+        failed_execution_checks,
     )
-    issues_block = (
-        "<div style='font-size:0.8rem; font-weight:800; color:#475569; margin-top:0.55rem;'>Primary Issues</div>"
-        f"<ul style='margin:0.25rem 0 0 1.1rem; padding:0; color:#334155; line-height:1.45;'>{issues_markup}</ul>"
-    ) if issues_markup else ""
-    st.markdown(
-        f"""
-        <div class="tcc-banner" style="background:{gate_bg};border-color:{gate_border}; margin-bottom:0.75rem;">
-            <div class="tcc-banner-label">FINAL RECOMMENDATION</div>
-            <div class="tcc-banner-value" style="color:{gate_color};">{html.escape(str(gate_recommendation.get('headline', '')))}</div>
-            <div class="tcc-banner-detail">{html.escape(str(gate_recommendation.get('detail', '')))}</div>
-            {issues_block}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        """
-        <style>
-        .st-key-tcc_execute_trade_v71 button {
-            background:#0f766e !important;
-            color:#ffffff !important;
-            border:1px solid #115e59 !important;
-            font-weight:800 !important;
-        }
-        .st-key-tcc_execute_trade_v71 button:hover {
-            background:#0d5f58 !important;
-            color:#ffffff !important;
-            border-color:#0f766e !important;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    execute_col, pass_col = st.columns(2)
-    with execute_col:
-        execute_clicked = st.button(
-            execute_button_text.upper(),
-            width="stretch",
-            key="tcc_execute_trade_v71",
-            type="primary",
-            disabled=sizing["qty"] <= 0,
-        )
-    with pass_col:
-        with st.popover("PASS ON THIS TRADE", use_container_width=True):
-            pass_reason = st.radio(
-                "Reason",
-                [
-                    "Price moved",
-                    "Missed entry",
-                    "Better opportunity",
-                    "Market changed",
-                    "Risk too high",
-                    "Personal decision",
-                    "Other",
-                ],
-                key=f"tcc_pass_reason_{symbol}",
-            )
-            pass_notes = st.text_area("Optional Notes", key=f"tcc_pass_notes_{symbol}", height=90)
-            pass_clicked = st.button("Confirm Pass", key=f"tcc_confirm_pass_{symbol}", type="secondary", width="stretch")
-
-            if pass_clicked:
-                pass_decision = {
-                    **(decision if isinstance(decision, dict) else {}),
-                    "label": "PASSED",
-                    "reasons": [pass_reason],
-                }
-                pass_note = send_trade_plan_to_journal(
-                    symbol,
-                    sizing,
-                    pass_decision,
-                    [pass_reason],
-                    trade_status="PASSED",
-                    workflow_decision="PASS",
-                    pass_reason=pass_reason,
-                    pass_notes=pass_notes,
-                )
-                pass_packet = {
-                    "timestamp": now_iso(),
-                    "source": "Trade_Command_Center_v3_0",
-                    "packet_type": "PASS_PACKET",
-                    "status": "PASSED",
-                    "symbol": str(symbol or "").upper().strip(),
-                    "reason": pass_reason,
-                    "notes": str(pass_notes or "").strip(),
-                    "journal_entry": pass_note,
-                    "monitoring_plan": None,
-                    "oms_order": None,
-                    "portfolio_update": None,
-                }
-                st.session_state["tcc_pass_packet"] = pass_packet
-                st.session_state["tcc_trade_workflow_status"] = "PASSED"
-                st.session_state["tcc_trade_workflow_closed"] = True
-                st.success("Trade marked as PASSED. Journal updated. Monitoring, OMS, and Portfolio updates were skipped.")
-                if developer_mode:
-                    with st.expander("Debug Packet", expanded=False):
-                        st.json(pass_packet)
-
-    if execute_clicked:
-        if gate_recommendation.get("is_red", False) and not execute_override_pending:
-            st.session_state[execute_intent_key] = True
-            execute_override_pending = True
-            st.warning("JFBP Quant Desk recommends rejecting this trade. Are you sure you want to continue?")
-        elif gate_recommendation.get("is_red", False):
-            st.session_state[execute_intent_key] = False
-        elif failed_execution_checks:
-            st.error("Execution blocked. Resolve required issues first.")
-            st.markdown("Required fixes:")
-            for check_label in failed_execution_checks:
-                st.markdown(f"- {check_label}")
-        elif not gate_recommendation.get("is_red", False):
-            _finalize_decision_gate_execution(
-                symbol=symbol,
-                sizing=sizing,
-                decision=decision,
-                row=row,
-                management=management,
-                institutional_review=institutional_review,
-                execution_checks=execution_checks,
-                developer_mode=developer_mode,
-                monitoring_button_key="tcc_open_monitoring_center_v71",
-            )
-
-    if gate_recommendation.get("is_red", False) and execute_override_pending:
-        confirm_col, cancel_col = st.columns(2)
-        with confirm_col:
-            confirm_override = st.button("EXECUTE ANYWAY", width="stretch", key=f"tcc_execute_anyway_confirm_{symbol}", type="primary")
-        with cancel_col:
-            cancel_override = st.button("CANCEL", width="stretch", key=f"tcc_execute_anyway_cancel_{symbol}")
-
-        if confirm_override:
-            st.session_state[execute_intent_key] = False
-            _finalize_decision_gate_execution(
-                symbol=symbol,
-                sizing=sizing,
-                decision=decision,
-                row=row,
-                management=management,
-                institutional_review=institutional_review,
-                execution_checks=execution_checks,
-                developer_mode=developer_mode,
-                monitoring_button_key="tcc_open_monitoring_center_override_v71",
-            )
-
-        if cancel_override:
-            st.session_state[execute_intent_key] = False
-            st.info("Execution override cancelled.")
-
-    section_close()
+    live_execution_key = f"tcc_live_execution_{symbol}"
+    live_execution_state = _sync_live_execution_state(st.session_state.get(live_execution_key, {}))
+    if live_execution_state:
+        st.session_state[live_execution_key] = live_execution_state
 
     section_open("7) Trade Checklist", "Institutional confidence checklist before execution handoff.")
     render_checklist(checklist)
@@ -3213,6 +3286,201 @@ def run_page() -> None:
                         "Updated": now_iso(),
                     })
 
+    section_open("9) Final Recommendation & Execution", "Final approval, broker routing, and live order status.")
+    gateway = _resolve_gateway()
+    broker_connected = bool(account_context.get("ibkr_connected", False)) and _is_gateway_connected(gateway)
+    broker_name = "Interactive Brokers" if broker_connected else "None"
+
+    order_status = str((live_execution_state or {}).get("status") or "").upper().strip()
+    status_aliases = {
+        "TRANSMITTING_ORDER": "TRANSMITTING ORDER...",
+        "LIVE_SENT": "TRANSMITTING ORDER...",
+        "PENDING_SUBMIT": "TRANSMITTING ORDER...",
+        "PENDING": "TRANSMITTING ORDER...",
+        "SUBMITTED": "ORDER ACCEPTED",
+        "ROUTED": "ORDER ACCEPTED",
+        "ACKNOWLEDGED": "ORDER ACCEPTED",
+        "PRESUBMITTED": "WORKING",
+        "WORKING": "WORKING",
+        "PARTIALLY_FILLED": "PARTIALLY FILLED",
+        "FILLED": "FILLED",
+        "CANCELLED": "CANCELLED",
+        "REJECTED": "REJECTED",
+    }
+    display_status = status_aliases.get(order_status, order_status or "PENDING")
+    is_working = order_status in {"WORKING", "SUBMITTED", "ROUTED", "ACKNOWLEDGED", "PRESUBMITTED", "PENDING_SUBMIT", "PENDING", "PARTIALLY_FILLED", "LIVE_SENT", "TRANSMITTING_ORDER"}
+    is_filled = order_status == "FILLED"
+
+    left_col, right_col = st.columns([1.55, 1.0], gap="small")
+
+    with left_col:
+        final_bg, final_border, final_color = tone_palette(final_exec_recommendation.get("tone", "neutral"))
+        issues_markup = "".join(
+            f"<li>{html.escape(str(item))}</li>"
+            for item in final_exec_recommendation.get("primary_issues", [])
+        )
+        issues_block = (
+            "<div style='font-size:0.8rem; font-weight:800; color:#475569; margin-top:0.55rem;'>Primary Issues</div>"
+            f"<ul style='margin:0.25rem 0 0 1.1rem; padding:0; color:#334155; line-height:1.45;'>{issues_markup}</ul>"
+        ) if issues_markup else ""
+        st.markdown(
+            f"""
+            <div class="tcc-banner" style="background:{final_bg};border-color:{final_border}; margin-bottom:0.75rem;">
+                <div class="tcc-banner-label">FINAL RECOMMENDATION</div>
+                <div class="tcc-banner-value" style="color:{final_color};">{html.escape(str(final_exec_recommendation.get('headline', '')))}</div>
+                <div class="tcc-banner-detail">{html.escape(str(final_exec_recommendation.get('detail', '')))}</div>
+                <div class="tcc-banner-detail" style="margin-top:0.4rem;">
+                    Risk: {html.escape(fmt_money(safe_float(sizing.get('dollar_risk'), 0.0)))}<br>
+                    Position Size: {html.escape(str(safe_int(sizing.get('qty'), 0)))}<br>
+                    Entry: {html.escape(fmt_money(safe_float(sizing.get('entry'), 0.0)))}<br>
+                    Stop Loss: {html.escape(fmt_money(safe_float(sizing.get('stop'), 0.0)))}<br>
+                    Take Profit: {html.escape(fmt_money(safe_float(sizing.get('target_2'), 0.0)))}<br>
+                    Risk / Reward: {html.escape(f"{safe_float(sizing.get('rr_2'), 0.0):.2f}R")}
+                </div>
+                {issues_block}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        if failed_execution_checks and not ((is_working or is_filled) and live_execution_state):
+            st.warning("Execution prerequisites are incomplete:")
+            for check_label in failed_execution_checks:
+                st.markdown(f"- {check_label}")
+
+        if not ((is_working or is_filled) and live_execution_state):
+            primary_label = "SEND ORDER" if broker_connected else "CONNECT BROKER"
+            send_clicked = st.button(
+                primary_label,
+                width="stretch",
+                key=f"tcc_send_to_broker_{symbol}",
+                type="primary",
+                disabled=sizing["qty"] <= 0,
+            )
+
+            if send_clicked:
+                if not broker_connected:
+                    navigate_to("Live IBKR")
+                else:
+                    broker_issues = _validate_direct_ibkr_execution(account_context, sizing, symbol)
+                    if broker_issues:
+                        st.error("Order was not sent. Resolve the following checks first:")
+                        for issue in broker_issues:
+                            st.markdown(f"- {issue}")
+                    elif not bool(final_exec_recommendation.get("can_send", False)):
+                        st.error("Institutional checks do not permit broker submission yet.")
+                    else:
+                        ok, error_text = _start_direct_ibkr_execution(
+                            symbol=symbol,
+                            sizing=sizing,
+                            decision=decision,
+                            row=row,
+                            management=management,
+                            institutional_review=institutional_review,
+                            execution_checks=execution_checks,
+                        )
+                        if ok:
+                            st.success("TRANSMITTING ORDER...")
+                            st.rerun()
+                        else:
+                            st.error(f"Order submission failed: {error_text}")
+
+    with right_col:
+        with st.container(border=True):
+            st.markdown("### Broker")
+            if broker_connected:
+                st.markdown("🟢 Interactive Brokers Connected")
+            else:
+                st.markdown("⚪ No Broker Connected")
+                st.caption("Connect broker to route orders.")
+
+            st.markdown("### Order Status")
+
+            if (is_working or is_filled) and live_execution_state:
+                if is_filled:
+                    st.markdown("✓ POSITION OPEN")
+                else:
+                    st.markdown(display_status)
+                st.markdown(f"- Order ID: {live_execution_state.get('order_id') or 'Pending'}")
+                st.markdown(f"- Status: {display_status}")
+                st.markdown(f"- Filled: {safe_float(live_execution_state.get('filled_qty'), 0.0):.0f}")
+                st.markdown(f"- Remaining: {safe_float(live_execution_state.get('remaining_qty'), 0.0):.0f}")
+                st.markdown(f"- Average Fill: {fmt_money(safe_float(live_execution_state.get('avg_fill_price'), 0.0))}")
+
+                if is_working:
+                    modify_qty_key = f"tcc_modify_qty_{symbol}"
+                    _ensure_widget_default(modify_qty_key, max(1, safe_int(live_execution_state.get("qty"), safe_int(sizing.get("qty"), 1))))
+                    st.number_input("Modify quantity", min_value=1, step=1, key=modify_qty_key)
+
+                    mod_col, cancel_col = st.columns(2)
+                    with mod_col:
+                        modify_clicked = st.button("MODIFY ORDER", width="stretch", key=f"tcc_modify_order_{symbol}")
+                    with cancel_col:
+                        cancel_clicked = st.button("CANCEL ORDER", width="stretch", key=f"tcc_cancel_order_{symbol}")
+
+                    if modify_clicked:
+                        replacement_qty = max(1, safe_int(st.session_state.get(modify_qty_key), safe_int(sizing.get("qty"), 1)))
+                        broker_id = str(live_execution_state.get("broker_order_id") or "").strip()
+                        if not broker_connected:
+                            st.error("Broker connection is not active.")
+                        else:
+                            cancel_ok = True
+                            if broker_id and gateway is not None and hasattr(gateway, "cancel_order"):
+                                try:
+                                    cancel_ok = bool(gateway.cancel_order(broker_id))
+                                except Exception:
+                                    cancel_ok = False
+                            if not cancel_ok:
+                                st.error("Failed to cancel the working order before replacement.")
+                            else:
+                                replacement_sizing = dict(sizing)
+                                replacement_sizing["qty"] = replacement_qty
+                                ok, error_text = _start_direct_ibkr_execution(
+                                    symbol=symbol,
+                                    sizing=replacement_sizing,
+                                    decision=decision,
+                                    row=row,
+                                    management=management,
+                                    institutional_review=institutional_review,
+                                    execution_checks=execution_checks,
+                                )
+                                if ok:
+                                    st.success("TRANSMITTING ORDER...")
+                                    st.rerun()
+                                else:
+                                    st.error(f"Replacement order failed: {error_text}")
+
+                    if cancel_clicked:
+                        broker_id = str(live_execution_state.get("broker_order_id") or "").strip()
+                        if not broker_id:
+                            st.error("Broker order ID is missing.")
+                        elif gateway is None or not hasattr(gateway, "cancel_order"):
+                            st.error("Broker gateway does not support order cancellation.")
+                        else:
+                            try:
+                                canceled = bool(gateway.cancel_order(broker_id))
+                            except Exception:
+                                canceled = False
+                            if canceled:
+                                live_execution_state["status"] = "CANCELLED"
+                                st.session_state[live_execution_key] = live_execution_state
+                                st.success("Order cancelled.")
+                            else:
+                                st.error("Order cancellation failed.")
+
+                if is_filled:
+                    auto_open_key = f"tcc_auto_open_pcc_{symbol}_{live_execution_state.get('order_id') or live_execution_state.get('broker_order_id') or ''}"
+                    if not bool(st.session_state.get(auto_open_key, False)):
+                        st.session_state[auto_open_key] = True
+                        navigate_to("Position Command Center")
+
+                    if st.button("OPEN POSITION COMMAND CENTER", width="stretch", key=f"tcc_open_pcc_filled_{symbol}"):
+                        navigate_to("Position Command Center")
+            else:
+                st.markdown("TRANSMITTING ORDER..." if st.session_state.get(f"tcc_send_to_broker_{symbol}") else "Awaiting order transmission")
+
+    section_close()
+
     st.markdown("---")
     with st.expander("▼ Quick Navigation", expanded=False):
         a1, a2, a3, a4, a5 = st.columns(5)
@@ -3228,9 +3496,8 @@ def run_page() -> None:
                 st.session_state["trade_command_symbol"] = symbol
                 navigate_to("Options Center")
         with a3:
-            if st.button("Open OMS Execution", width="stretch", key="tcc_open_oms_bottom_v21"):
-                prepare_oms_ticket(symbol, sizing, decision, row)
-                navigate_to("OMS Execution")
+            if st.button("Open Position Command Center", width="stretch", key="tcc_open_pcc_bottom_v21"):
+                navigate_to("Position Command Center")
         with a4:
             if st.button("Open Journal", width="stretch", key="tcc_open_journal_v21"):
                 navigate_to("Journal")

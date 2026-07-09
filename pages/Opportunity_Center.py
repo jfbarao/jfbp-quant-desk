@@ -1380,6 +1380,13 @@ def publish_handoff(row: Dict[str, Any], destination: str | None = None) -> None
         st.session_state["options_manual_symbol"] = symbol
     elif destination == "Trade Command Center":
         st.session_state["trade_command_handoff_ticket"] = handoff_ticket
+        st.session_state["selected_symbol"] = symbol
+        st.session_state["trade_command_symbol"] = symbol
+        st.session_state["tcc_symbol"] = symbol
+        st.session_state["handoff_symbol"] = symbol
+        st.session_state["handoff_source"] = "Execution Console"
+        if row.get("Asset Class"):
+            st.session_state["handoff_asset_class"] = row.get("Asset Class")
     elif destination == "Research Stock":
         st.session_state["research_handoff_ticket"] = handoff_ticket
     elif destination == "OMS Execution":

@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import hashlib
 import os
+import smtplib
 import time
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -40,6 +42,7 @@ except Exception:  # pragma: no cover
 PLAN_MARKET_PULSE = "MARKET_PULSE"
 PLAN_PRO = "PRO"
 PLAN_ELITE = "ELITE"
+TRIAL_LENGTH_DAYS = 30
 
 ACCOUNT_TRIAL = "TRIAL"
 ACCOUNT_ACTIVE = "ACTIVE"
@@ -179,6 +182,8 @@ DISPOSABLE_EMAIL_DOMAINS = {
 AUTH_DEBUG = False
 RESET_PASSWORD_BACKOFF_STEPS = (15, 30, 60)
 RESET_PASSWORD_RATE_LIMIT_MESSAGE = "Too many password reset requests. Please wait before trying again."
+FOUNDER_TRIAL_EMAIL = "support@jfbpquantdesk.com"
+FOUNDER_TRIAL_SUBJECT = "New JFBP Quant Desk trial started"
 
 
 # =========================================================
@@ -197,6 +202,8 @@ class SaaSUser:
     created_at: datetime
     source: str = "supabase"
     role: str = "user"
+    subscription_status: str = ""
+    provisioning_required: bool = False
 
 
 # =========================================================
@@ -703,6 +710,123 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _parse_dt_or_none(value: Any) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+    if isinstance(value, str) and value.strip():
+        try:
+            cleaned = value.replace("Z", "+00:00")
+            parsed = datetime.fromisoformat(cleaned)
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+
+    return None
+
+
+def auth_user_created_at(auth_user: Any) -> Optional[datetime]:
+    if isinstance(auth_user, dict):
+        return _parse_dt_or_none(auth_user.get("created_at"))
+    return _parse_dt_or_none(getattr(auth_user, "created_at", None))
+
+
+def canonical_trial_window(auth_user: Any) -> tuple[Optional[datetime], Optional[datetime], str]:
+    auth_created = auth_user_created_at(auth_user)
+    if auth_created is None:
+        return None, None, "missing_auth_created_at"
+    return auth_created, auth_created + timedelta(days=TRIAL_LENGTH_DAYS), "auth.users.created_at"
+
+
+def trial_dates_consistent(auth_created_at_value: Any, trial_start_value: Any, trial_end_value: Any) -> bool:
+    auth_created = _parse_dt_or_none(auth_created_at_value)
+    trial_start = _parse_dt_or_none(trial_start_value)
+    trial_end = _parse_dt_or_none(trial_end_value)
+    if auth_created is None or trial_start is None or trial_end is None:
+        return False
+
+    expected_end = auth_created + timedelta(days=TRIAL_LENGTH_DAYS)
+    return trial_start.date() == auth_created.date() and trial_end.date() == expected_end.date()
+
+
+def _dt_text(value: Any) -> str:
+    if isinstance(value, datetime):
+        parsed = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        except Exception:
+            return str(value).strip()
+    return "N/A"
+
+
+def _send_founder_trial_started_email(payload: Dict[str, Any]) -> tuple[bool, str]:
+    smtp_host = _secret_value("TRIAL_ALERT_SMTP_HOST") or _secret_value("FEEDBACK_SMTP_HOST")
+    smtp_user = _secret_value("TRIAL_ALERT_SMTP_USER") or _secret_value("FEEDBACK_SMTP_USER")
+    smtp_password = _secret_value("TRIAL_ALERT_SMTP_PASSWORD") or _secret_value("FEEDBACK_SMTP_PASSWORD")
+    smtp_from = _secret_value("TRIAL_ALERT_SMTP_FROM") or _secret_value("FEEDBACK_SMTP_FROM")
+    smtp_port_raw = _secret_value("TRIAL_ALERT_SMTP_PORT") or _secret_value("FEEDBACK_SMTP_PORT", "587")
+    smtp_tls_raw = _secret_value("TRIAL_ALERT_SMTP_USE_TLS") or _secret_value("FEEDBACK_SMTP_USE_TLS", "true")
+    founder_email = _secret_value("FOUNDER_TRIAL_EMAIL", FOUNDER_TRIAL_EMAIL) or FOUNDER_TRIAL_EMAIL
+
+    missing = []
+    if not smtp_host:
+        missing.append("SMTP_HOST")
+    if not smtp_from:
+        missing.append("SMTP_FROM")
+    if missing:
+        print(f"FOUNDER_TRIAL_NOTIFY: skipped, missing config: {','.join(missing)}")
+        return False, f"Missing SMTP config: {', '.join(missing)}"
+
+    try:
+        smtp_port = int(str(smtp_port_raw or "587").strip())
+    except Exception:
+        smtp_port = 587
+
+    smtp_tls = str(smtp_tls_raw or "true").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    message = EmailMessage()
+    message["Subject"] = FOUNDER_TRIAL_SUBJECT
+    message["From"] = smtp_from
+    message["To"] = founder_email
+    message.set_content(
+        "\n".join(
+            [
+                "New JFBP Quant Desk trial started.",
+                "",
+                f"Name: {payload.get('name', 'N/A')}",
+                f"Email: {payload.get('email', 'N/A')}",
+                f"Plan: {payload.get('plan', 'N/A')}",
+                f"Trial Start: {payload.get('trial_start', 'N/A')}",
+                f"Trial End: {payload.get('trial_end', 'N/A')}",
+                f"Created At: {payload.get('created_at', 'N/A')}",
+                f"Last Login: {payload.get('last_login', 'N/A')}",
+                f"Onboarding Progress: {payload.get('onboarding_progress', 'N/A')}",
+                f"Provisioning Status: {payload.get('provisioning_status', 'N/A')}",
+            ]
+        )
+    )
+
+    try:
+        use_ssl = (smtp_port == 465) and (not smtp_tls)
+        smtp_client = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
+        with smtp_client(smtp_host, smtp_port, timeout=20) as server:
+            if smtp_tls and not use_ssl:
+                server.starttls()
+            if smtp_user and smtp_password:
+                server.login(smtp_user, smtp_password)
+            server.send_message(message)
+        print(f"FOUNDER_TRIAL_NOTIFY: sent to {founder_email}")
+        return True, "Founder notification sent."
+    except Exception as exc:
+        print(f"FOUNDER_TRIAL_NOTIFY: failed: {exc}")
+        return False, str(exc)
+
+
 def _signup_fingerprint() -> Dict[str, Any]:
     headers = _request_headers()
     now = _utc_now()
@@ -1139,6 +1263,52 @@ def _verified_user_row(client: Any, table_name: str, user_id: str) -> list:
     return _response_data(response)
 
 
+def _verified_row_by_email(client: Any, table_name: str, email: str) -> list:
+    clean_email = str(email or "").strip().lower()
+    if not clean_email:
+        return []
+
+    try:
+        response = (
+            client.table(table_name)
+            .select("*")
+            .eq("email", clean_email)
+            .limit(5)
+            .execute()
+        )
+        return _response_data(response)
+    except Exception:
+        return []
+
+
+def _append_provisioning_note(profile_row: Dict[str, Any], note: str) -> str:
+    existing = str(profile_row.get("trial_notes") or "").strip()
+    prefix = "[PROVISIONING]"
+    line = f"{prefix} {note}".strip()
+    if not existing:
+        return line
+
+    lines = [value for value in existing.splitlines() if value.strip()]
+    if lines and lines[-1].strip() == line:
+        return existing
+    lines.append(line)
+    return "\n".join(lines[-8:])
+
+
+def _provisioning_step_summary(steps: List[Dict[str, Any]]) -> str:
+    parts: List[str] = []
+    for step in steps:
+        label = str(step.get("step") or "").strip()
+        ok = bool(step.get("ok"))
+        detail = str(step.get("detail") or "").strip()
+        marker = "OK" if ok else "FAIL"
+        if detail:
+            parts.append(f"{label}:{marker} ({detail})")
+        else:
+            parts.append(f"{label}:{marker}")
+    return " | ".join(parts)
+
+
 def _profile_row_for_auth_user(client: Any, user_id: str, email: str) -> dict:
     """Load the current subscription profile from public.user_profiles.
 
@@ -1190,17 +1360,24 @@ def _create_profile_record(
     trial_metadata: Optional[Dict[str, Any]] = None,
 ) -> list:
     existing = _verified_user_row(client, "user_profiles", user_id)
-    if existing:
-        return existing
+    if not existing:
+        existing = _verified_row_by_email(client, "user_profiles", email)
+
+    existing_row = existing[0] if existing and isinstance(existing[0], dict) else {}
+
+    clean_email = email.strip().lower()
+    full_name_value = full_name.strip() or clean_email or user_id
 
     payload = {
         "user_id": user_id,
-        "email": email.strip().lower(),
-        "full_name": full_name.strip() or "JFBP User",
+        "email": clean_email,
+        "full_name": full_name_value,
         "plan": plan,
         "account_status": account_status,
         "trial_start": trial_start.isoformat(),
         "trial_end": trial_end.isoformat(),
+        "trial_notification_sent": _parse_bool(existing_row.get("trial_notification_sent")) if existing_row else False,
+        "trial_notification_sent_at": existing_row.get("trial_notification_sent_at") if existing_row else None,
     }
 
     if trial_metadata:
@@ -1235,23 +1412,39 @@ def _create_profile_record(
             }
         )
 
+    if existing:
+        target_user = str(existing_row.get("user_id") or user_id or "").strip()
+        if target_user:
+            client.table("user_profiles").update(payload).eq("user_id", target_user).execute()
+        else:
+            client.table("user_profiles").update(payload).eq("email", clean_email).execute()
+        return _verified_user_row(client, "user_profiles", user_id) or _verified_row_by_email(client, "user_profiles", clean_email)
     client.table("user_profiles").insert(payload).execute()
 
     return _verified_user_row(client, "user_profiles", user_id)
 
 
-def _create_subscription_record(client: Any, user_id: str, plan: str, status: str) -> list:
+def _create_subscription_record(client: Any, user_id: str, plan: str, status: str, email: str = "") -> list:
     existing = _verified_user_row(client, "subscriptions", user_id)
-    if existing:
-        return existing
+    if not existing and email:
+        existing = _verified_row_by_email(client, "subscriptions", email)
 
-    client.table("subscriptions").insert(
-        {
-            "user_id": user_id,
-            "plan": plan,
-            "status": status,
-        }
-    ).execute()
+    payload = {
+        "user_id": user_id,
+        "plan": plan,
+        "status": status,
+    }
+
+    if existing:
+        existing_row = existing[0] if isinstance(existing[0], dict) else {}
+        target_user = str(existing_row.get("user_id") or user_id or "").strip()
+        if target_user:
+            client.table("subscriptions").update(payload).eq("user_id", target_user).execute()
+        elif email:
+            client.table("subscriptions").update(payload).eq("email", email.strip().lower()).execute()
+        return _verified_user_row(client, "subscriptions", user_id)
+
+    client.table("subscriptions").insert(payload).execute()
 
     return _verified_user_row(client, "subscriptions", user_id)
 
@@ -1313,12 +1506,21 @@ def ensure_user_workspace_records(
             "Please verify the email if required, then log in to finish creating profile, subscription, and workspace records.",
         )
 
-    now = _utc_now()
     full_name = str(meta.get("full_name") or meta.get("name") or "JFBP User")
     plan = str(meta.get("plan") or selected_plan or PLAN_MARKET_PULSE)
     account_status = str(meta.get("account_status") or ACCOUNT_TRIAL)
-    trial_start = _parse_dt(meta.get("trial_start"), fallback=now)
-    trial_end = _parse_dt(meta.get("trial_end"), fallback=trial_start + timedelta(days=30))
+    canonical_trial_start, canonical_trial_end, trial_source = canonical_trial_window(auth_user)
+    now = _utc_now()
+    if canonical_trial_start is None or canonical_trial_end is None:
+        canonical_trial_start = now
+        canonical_trial_end = now + timedelta(days=TRIAL_LENGTH_DAYS)
+        trial_source = "fallback_now"
+
+    profile_before = _profile_row_for_auth_user(client, user_id, email)
+    existing_trial_start = _parse_dt_or_none(profile_before.get("trial_start"))
+    existing_trial_end = _parse_dt_or_none(profile_before.get("trial_end"))
+    trial_start = existing_trial_start or canonical_trial_start
+    trial_end = existing_trial_end or canonical_trial_end
     login_metadata = _login_metadata()
     merged_metadata = _merge_profile_metadata(meta, login_metadata)
     trial_metadata = {
@@ -1331,7 +1533,7 @@ def ensure_user_workspace_records(
         "user_agent": merged_metadata.get("user_agent"),
         "browser": merged_metadata.get("browser"),
         "operating_system": merged_metadata.get("operating_system"),
-        "trial_started_at": meta.get("trial_started_at") or trial_start.isoformat(),
+        "trial_started_at": profile_before.get("trial_started_at") or meta.get("trial_started_at") or trial_start.isoformat(),
         "trial_attempts": _safe_int(meta.get("trial_attempts"), 1),
         "repeat_ips": _safe_int(meta.get("repeat_ips"), 0),
         "repeat_devices": _safe_int(meta.get("repeat_devices"), 0),
@@ -1356,10 +1558,23 @@ def ensure_user_workspace_records(
             "account_status": account_status,
             "trial_attempts": trial_metadata.get("trial_attempts", 1),
             "risk_score": trial_metadata.get("risk_score", 0),
+            "trial_source": trial_source,
         }
     )
 
+    steps: List[Dict[str, Any]] = []
+
+    def _add_step(step_name: str, ok: bool, detail: str = "") -> None:
+        steps.append({"step": step_name, "ok": ok, "detail": detail})
+
+    _add_step("User Created", True, "Authenticated session verified")
+
     try:
+        trial_before_ready = bool(
+            str(profile_before.get("trial_start") or "").strip()
+            and str(profile_before.get("trial_end") or "").strip()
+        )
+
         profile_rows = _create_profile_record(
             client=client,
             user_id=user_id,
@@ -1371,35 +1586,118 @@ def ensure_user_workspace_records(
             trial_end=trial_end,
             trial_metadata=trial_metadata,
         )
+        if profile_rows:
+            _add_step("Profile Created", True)
+            _add_step("Customer Created", True)
+        else:
+            _add_step("Profile Created", False, "No profile row returned")
+            _add_step("Customer Created", False, "No customer/profile row returned")
+
+        profile_row = profile_rows[0] if profile_rows and isinstance(profile_rows[0], dict) else {}
+        trial_ready = bool(str(profile_row.get("trial_start") or "").strip() and str(profile_row.get("trial_end") or "").strip())
+        trial_created = (not trial_before_ready) and trial_ready
+        _add_step("Trial Created", trial_ready, "Missing trial_start/trial_end" if not trial_ready else "")
+
         subscription_rows = _create_subscription_record(
             client=client,
             user_id=user_id,
             plan=plan,
             status=account_status,
+            email=email,
         )
-        workspace_rows = _create_workspace_record(
-            client=client,
-            user_id=user_id,
-            workspace_name=f"{full_name.strip() or 'Personal'} Workspace",
-        )
+        _add_step("Subscription Created", bool(subscription_rows), "No subscription row returned" if not subscription_rows else "")
+
+        workspace_rows: list = []
+        workspace_error = ""
+        try:
+            workspace_rows = _create_workspace_record(
+                client=client,
+                user_id=user_id,
+                workspace_name=f"{full_name.strip() or 'Personal'} Workspace",
+            )
+        except Exception as ws_exc:
+            workspace_error = str(ws_exc)
 
         debug.update(
             {
                 "user_profiles_rows": len(profile_rows),
                 "subscriptions_rows": len(subscription_rows),
                 "workspaces_rows": len(workspace_rows),
+                "workspace_error": workspace_error,
+                "provisioning_steps": steps,
             }
         )
+
+        failed_steps = [step for step in steps if not bool(step.get("ok"))]
+        provisioning_ok = not failed_steps
+
+        provisioning_note = _provisioning_step_summary(steps)
+        if provisioning_ok:
+            _add_step("Provisioning Completed", True)
+        else:
+            _add_step("Provisioning Completed", False, failed_steps[0].get("step", "Unknown step"))
+
+        profile_row = profile_rows[0] if profile_rows and isinstance(profile_rows[0], dict) else {}
+        trial_notification_sent = _parse_bool(profile_row.get("trial_notification_sent"))
+
+        if provisioning_ok and trial_created and not trial_notification_sent:
+            ok_count = sum(1 for step in steps if bool(step.get("ok")))
+            onboarding_progress = f"{ok_count}/{len(steps)}"
+            notify_payload = {
+                "name": full_name,
+                "email": email,
+                "plan": PLAN_LABELS.get(plan, plan),
+                "trial_start": _dt_text(profile_row.get("trial_start") or trial_start),
+                "trial_end": _dt_text(profile_row.get("trial_end") or trial_end),
+                "created_at": _dt_text(profile_row.get("created_at") or getattr(auth_user, "created_at", None)),
+                "last_login": _dt_text(profile_row.get("last_login_at") or getattr(auth_user, "last_sign_in_at", None)),
+                "onboarding_progress": onboarding_progress,
+                "provisioning_status": "Provisioning Completed",
+            }
+            notify_ok, notify_msg = _send_founder_trial_started_email(notify_payload)
+            _add_step("Founder Notification Sent", notify_ok, "" if notify_ok else notify_msg)
+
+            if notify_ok:
+                notification_ts = _utc_now().isoformat()
+                try:
+                    client.table("user_profiles").update(
+                        {
+                            "trial_notification_sent": True,
+                            "trial_notification_sent_at": notification_ts,
+                        }
+                    ).eq("user_id", user_id).execute()
+                    if profile_row:
+                        profile_row["trial_notification_sent"] = True
+                        profile_row["trial_notification_sent_at"] = notification_ts
+                    _add_step("Founder Notification Marked", True)
+                except Exception as notify_mark_exc:
+                    _add_step("Founder Notification Marked", False, str(notify_mark_exc))
+
+        if profile_rows and isinstance(profile_rows[0], dict):
+            try:
+                profile_row = profile_rows[0]
+                note_text = _append_provisioning_note(profile_row, _provisioning_step_summary(steps))
+                client.table("user_profiles").update({"trial_notes": note_text}).eq("user_id", user_id).execute()
+            except Exception:
+                pass
+
         st.session_state["saas_onboarding_debug"] = debug
 
-        if not profile_rows or not subscription_rows or not workspace_rows:
+        if not provisioning_ok:
+            failed = failed_steps[0] if failed_steps else {"step": "Unknown", "detail": ""}
             return (
                 False,
-                "Onboarding incomplete. Auth works, but one or more database rows could not be verified. "
-                "Check RLS policies and the active Supabase session.",
+                "Onboarding incomplete. "
+                f"Failed at: {failed.get('step')}"
+                + (f" ({failed.get('detail')})" if failed.get("detail") else "")
+                + ". Check RLS policies and the active Supabase session.",
             )
 
-        return True, "Profile, subscription, and workspace records are verified."
+        message_parts = ["Profile and subscription records are verified."]
+        if workspace_error:
+            message_parts.append("Workspace sync skipped due to workspace table constraints.")
+
+        return True, " ".join(message_parts)
 
     except Exception as exc:
         debug["error"] = str(exc)
@@ -1459,11 +1757,28 @@ def build_saas_user_from_auth(auth_user: Any, selected_plan: str | None = None) 
         or st.session_state.get("saas_selected_plan")
         or PLAN_MARKET_PULSE
     )
+    plan = str(plan or PLAN_MARKET_PULSE).strip().upper() or PLAN_MARKET_PULSE
+    if plan not in {PLAN_MARKET_PULSE, PLAN_PRO, PLAN_ELITE}:
+        plan = PLAN_MARKET_PULSE
+
+    raw_trial_start = profile.get("trial_start")
+    raw_trial_end = profile.get("trial_end")
+
     account_status = str(
         profile.get("account_status")
         or meta.get("account_status")
         or ACCOUNT_TRIAL
-    )
+    ).strip().upper()
+    if not account_status:
+        account_status = ACCOUNT_TRIAL
+
+    subscription_status = str(
+        profile.get("subscription_status")
+        or profile.get("status")
+        or account_status
+        or ""
+    ).strip().upper()
+    provisioning_required = not bool(raw_trial_start and raw_trial_end) and subscription_status != ACCOUNT_ACTIVE
 
     # Founder/Admin pass: the captain must never be blocked by trials, plan
     # limits, or Stripe while the SaaS engine is under construction.
@@ -1472,14 +1787,19 @@ def build_saas_user_from_auth(auth_user: Any, selected_plan: str | None = None) 
         plan = PLAN_ELITE
         account_status = ACCOUNT_ACTIVE
 
-    trial_start = _parse_dt(
-        profile.get("trial_start") or meta.get("trial_start"),
-        fallback=now,
-    )
-    trial_end = _parse_dt(
-        profile.get("trial_end") or meta.get("trial_end"),
-        fallback=trial_start + timedelta(days=3650) if role == "admin" else trial_start + timedelta(days=30),
-    )
+    canonical_trial_start, canonical_trial_end, _ = canonical_trial_window(auth_user)
+    if role == "admin":
+        trial_start = _parse_dt(raw_trial_start, fallback=canonical_trial_start or now)
+        trial_end = _parse_dt(
+            raw_trial_end,
+            fallback=trial_start + timedelta(days=3650),
+        )
+    else:
+        trial_start = _parse_dt(raw_trial_start, fallback=canonical_trial_start or now)
+        trial_end = _parse_dt(
+            raw_trial_end,
+            fallback=canonical_trial_end or (trial_start + timedelta(days=TRIAL_LENGTH_DAYS)),
+        )
 
     return SaaSUser(
         user_id=user_id,
@@ -1492,6 +1812,8 @@ def build_saas_user_from_auth(auth_user: Any, selected_plan: str | None = None) 
         created_at=_parse_dt(getattr(auth_user, "created_at", None), fallback=now),
         source="supabase",
         role=role,
+        subscription_status=subscription_status,
+        provisioning_required=provisioning_required,
     )
 
 
@@ -1713,7 +2035,8 @@ def supabase_sign_up(email: str, password: str, full_name: str, plan: str) -> tu
 
     client = get_supabase_client()
     now = _utc_now()
-    trial_end = now + timedelta(days=30)
+    trial_end = now + timedelta(days=TRIAL_LENGTH_DAYS)
+    signup_plan = PLAN_MARKET_PULSE
     clean_email = email.strip().lower()
     st.session_state["saas_trial_warning_message"] = ""
 
@@ -1736,10 +2059,8 @@ def supabase_sign_up(email: str, password: str, full_name: str, plan: str) -> tu
                 "options": {
                     "data": {
                         "full_name": full_name.strip() or "JFBP User",
-                        "plan": plan,
+                        "plan": signup_plan,
                         "account_status": ACCOUNT_TRIAL,
-                        "trial_start": now.isoformat(),
-                        "trial_end": trial_end.isoformat(),
                         "signup_ip": signup_context.get("signup_ip", "UNKNOWN"),
                         "signup_country": signup_context.get("signup_country", "UNKNOWN"),
                         "signup_city": signup_context.get("signup_city", "UNKNOWN"),
@@ -1772,7 +2093,7 @@ def supabase_sign_up(email: str, password: str, full_name: str, plan: str) -> tu
         )
 
         # If Supabase returns a real authenticated session, finish onboarding now.
-        if set_authenticated_session(response, selected_plan=plan):
+        if set_authenticated_session(response, selected_plan=signup_plan):
             return True, "Account created. 30-day trial and workspace are ready."
 
         # Supabase may intentionally return a generic success response when an
@@ -1782,7 +2103,7 @@ def supabase_sign_up(email: str, password: str, full_name: str, plan: str) -> tu
             login_response = client.auth.sign_in_with_password(
                 {"email": clean_email, "password": password}
             )
-            if set_authenticated_session(login_response, selected_plan=plan):
+            if set_authenticated_session(login_response, selected_plan=signup_plan):
                 return True, "This email already has an account. Logged in and verified workspace records."
         except Exception:
             pass
@@ -1939,6 +2260,28 @@ def trial_days_remaining(user: SaaSUser) -> int:
     return max(0, remaining.days)
 
 
+def resolve_access_state(user: SaaSUser) -> str:
+    if is_admin_user(user):
+        return "active"
+
+    today = _utc_now()
+    subscription_status = str(getattr(user, "subscription_status", "") or user.account_status or "").strip().lower()
+
+    if subscription_status == "active":
+        return "active"
+
+    if bool(getattr(user, "provisioning_required", False)):
+        return "provisioning_required"
+
+    trial_end = getattr(user, "trial_end", None)
+    if isinstance(trial_end, datetime):
+        if today <= trial_end:
+            return "trial"
+        return "expired"
+
+    return "provisioning_required"
+
+
 def is_account_open(user: SaaSUser) -> bool:
     if is_admin_user(user):
         return True
@@ -1946,10 +2289,7 @@ def is_account_open(user: SaaSUser) -> bool:
     if user.account_status in {ACCOUNT_SUSPENDED, ACCOUNT_EXPIRED, ACCOUNT_PAST_DUE}:
         return False
 
-    if user.account_status == ACCOUNT_TRIAL and _utc_now() > user.trial_end:
-        return False
-
-    return user.account_status in {ACCOUNT_TRIAL, ACCOUNT_ACTIVE, ACCOUNT_CANCELLED}
+    return resolve_access_state(user) in {"active", "trial"}
 
 
 def can_access_page(user: SaaSUser, page_name: str) -> bool:
@@ -2172,8 +2512,15 @@ def render_login_required(page_name: str) -> None:
 
 def render_account_locked(user: SaaSUser) -> None:
     inject_saas_css()
+    access_state = resolve_access_state(user)
+    if access_state == "expired":
+        headline = "Trial Expired - Upgrade Required"
+    elif access_state == "provisioning_required":
+        headline = "Provisioning Required"
+    else:
+        headline = "Account locked"
     st.markdown(
-        f'<div class="saas-lock"><strong>Account locked.</strong><br>Status: <strong>{user.account_status}</strong><br>Please update your subscription to continue.</div>',
+        f'<div class="saas-lock"><strong>{headline}.</strong><br>Status: <strong>{user.account_status}</strong><br>Please update your subscription to continue.</div>',
         unsafe_allow_html=True,
     )
 
@@ -2362,12 +2709,24 @@ def render_auth_panel() -> None:
 
 def render_user_status(user: SaaSUser) -> None:
     days_left = trial_days_remaining(user)
+    access_state = resolve_access_state(user)
+    if is_admin_user(user):
+        status_detail = "Lifetime admin access"
+    elif access_state == "trial":
+        status_detail = f"Trial: {days_left} days remaining"
+    elif access_state == "expired":
+        status_detail = "Trial expired - upgrade required"
+    elif access_state == "provisioning_required":
+        status_detail = "Provisioning required"
+    else:
+        status_detail = f"Trial: {days_left} days remaining"
+
     role_label = "Admin / Founder" if is_admin_user(user) else "User"
     cards = [
         card("User", user.email, user.full_name),
         card("Role", role_label, "Full platform access" if is_admin_user(user) else "Plan-based access"),
         card("Plan", PLAN_LABELS.get(user.plan, user.plan), PLAN_PRICES.get(user.plan, "")),
-        card("Account Status", user.account_status, "Lifetime admin access" if is_admin_user(user) else f"Trial days remaining: {days_left}"),
+        card("Account Status", user.account_status, status_detail),
         card("Trading Mode", PLAN_TRADING_MODE.get(user.plan, "N/A"), "Controlled by subscription plan"),
     ]
     st.markdown('<div class="jfbp-grid-card-wrap">' + "".join(cards) + "</div>", unsafe_allow_html=True)

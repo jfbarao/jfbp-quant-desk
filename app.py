@@ -1094,7 +1094,7 @@ ACCESS_NAME_BY_PAGE = {
 
 # Internal operating pages must be admin-only. They are hidden from regular
 # users in the sidebar and blocked again here at the router layer.
-ALWAYS_ALLOW_AFTER_LOGIN = set()
+ALWAYS_ALLOW_AFTER_LOGIN = {"SaaS Core"}
 ADMIN_ONLY_PAGES = {"SaaS Core", "Admin Control Center"}
 
 
