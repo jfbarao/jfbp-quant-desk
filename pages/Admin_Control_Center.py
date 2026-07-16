@@ -28,6 +28,8 @@ import requests
 import pandas as pd
 import streamlit as st
 
+from core.canonical_schema import canonical_supports_column, filter_canonical_payload
+
 try:
     from supabase import create_client
 except Exception:  # pragma: no cover
@@ -415,6 +417,10 @@ def _admin_debug_enabled() -> bool:
 def _admin_debug_log(message: str) -> None:
     if _admin_debug_enabled():
         print(f"[Admin-Control][Debug] {message}")
+
+
+def _canonical_log(message: str) -> None:
+    print(message)
 
 
 def _admin_rest_config() -> Tuple[str, str, str]:
@@ -1087,11 +1093,8 @@ def _build_customer_record(
     if not display_name:
         display_name = email or user_id or "Unknown User"
 
-    profile_trial_start = profile.get("trial_start") or profile.get("trial_started_at")
+    profile_trial_start = profile.get("trial_start")
     profile_trial_end = profile.get("trial_end")
-
-    sub_trial_start = sub.get("trial_start") or sub.get("trial_starts_at")
-    sub_trial_end = sub.get("trial_end")
 
     trial_start = profile_trial_start
     trial_end = profile_trial_end
@@ -1103,12 +1106,8 @@ def _build_customer_record(
             if profile.get(field_name):
                 trial_end_source_field = field_name
                 break
-    renewal = (
-        sub.get("current_period_end")
-        or sub.get("renewal_date")
-        or sub.get("period_end")
-        or profile.get("renewal_date")
-    )
+    # Canonical schema has no renewal column in subscriptions.
+    renewal = None
     trial_attempts = _safe_int(profile.get("trial_attempts"), 0)
     whitelisted = _parse_bool(profile.get("trial_whitelisted"))
     ignored = _parse_bool(profile.get("trial_ignored"))
@@ -1252,8 +1251,6 @@ def _build_customer_record(
         print(f"Ray auth_created_at: {auth_created_raw or '—'}")
         print(f"Ray profile trial_start: {profile_trial_start or '—'}")
         print(f"Ray profile trial_end: {profile_trial_end or '—'}")
-        print(f"Ray subscription trial_start: {sub_trial_start or '—'}")
-        print(f"Ray subscription trial_end: {sub_trial_end or '—'}")
         print(f"Final displayed trial_end: {trial_end or '—'}")
         print(f"Final displayed countdown: {trial_countdown or '—'}")
         print(f"Ray trial_end source: table={trial_end_source_table}, field={trial_end_source_field or '—'}")
@@ -1352,7 +1349,6 @@ def merge_customer_rows(
     audit_rows: List[Dict[str, Any]],
 ) -> pd.DataFrame:
     sub_by_user_id = {str(row.get("user_id", "")): row for row in subscriptions if row.get("user_id")}
-    sub_by_email = {_clean_email(row.get("email")): row for row in subscriptions if _clean_email(row.get("email"))}
     profile_by_user_id = {str(row.get("user_id", "")): row for row in profiles if row.get("user_id")}
     profile_by_email = {_clean_email(row.get("email")): row for row in profiles if _clean_email(row.get("email"))}
 
@@ -1371,7 +1367,7 @@ def merge_customer_rows(
                 continue
 
             profile = profile_by_user_id.get(user_id) or profile_by_email.get(email) or {}
-            sub = sub_by_user_id.get(user_id) or sub_by_email.get(email) or {}
+            sub = sub_by_user_id.get(user_id) or {}
             login_rows = login_by_user.get(user_id, [])
             audit_user_rows = audit_by_user.get(user_id, [])
 
@@ -1408,7 +1404,7 @@ def merge_customer_rows(
             if (user_id, email) in seen_auth_keys:
                 continue
 
-            sub = sub_by_user_id.get(user_id) or sub_by_email.get(email) or {}
+            sub = sub_by_user_id.get(user_id) or {}
             login_rows = login_by_user.get(user_id, [])
             audit_user_rows = audit_by_user.get(user_id, [])
             auth_stub = {
@@ -1509,25 +1505,30 @@ def update_customer_plan_status(user_id: str, plan: str, status: str) -> Tuple[b
     if not user_id:
         return False, "Missing user_id for selected customer."
 
+    profile_payload, _ = filter_canonical_payload(
+        "user_profiles",
+        {
+            "plan": plan,
+            "account_status": status,
+        },
+        context="update_customer_plan_status:user_profiles",
+        logger=_canonical_log,
+    )
+    sub_payload, _ = filter_canonical_payload(
+        "subscriptions",
+        {
+            "plan": plan,
+            "status": status,
+        },
+        context="update_customer_plan_status:subscriptions",
+        logger=_canonical_log,
+    )
+
     try:
-        _rest_patch_by_user_id(
-            "user_profiles",
-            user_id,
-            {
-                "plan": plan,
-                "account_status": status,
-            },
-        )
+        _rest_patch_by_user_id("user_profiles", user_id, profile_payload)
 
         try:
-            _rest_patch_by_user_id(
-                "subscriptions",
-                user_id,
-                {
-                    "plan": plan,
-                    "status": status,
-                },
-            )
+            _rest_patch_by_user_id("subscriptions", user_id, sub_payload)
         except Exception:
             # Some accounts may not have a subscription row yet.
             pass
@@ -1542,8 +1543,19 @@ def update_customer_trial_controls(user_id: str, payload: Dict[str, Any]) -> Tup
     if not user_id:
         return False, "Missing user_id for selected customer."
 
+    filtered_payload, dropped = filter_canonical_payload(
+        "user_profiles",
+        payload,
+        context="update_customer_trial_controls",
+        logger=_canonical_log,
+    )
+
+    if not filtered_payload and dropped:
+        _clear_read_caches()
+        return True, "Trial controls saved as unavailable in canonical mode (no canonical columns to persist)."
+
     try:
-        _rest_patch_by_user_id("user_profiles", user_id, payload)
+        _rest_patch_by_user_id("user_profiles", user_id, filtered_payload)
         _clear_read_caches()
         return True, "Trial protection settings updated."
     except Exception as exc:
@@ -1553,8 +1565,20 @@ def update_customer_trial_controls(user_id: str, payload: Dict[str, Any]) -> Tup
 def update_customer_profile_fields(user_id: str, payload: Dict[str, Any]) -> Tuple[bool, str]:
     if not user_id:
         return False, "Missing user_id for selected customer."
+
+    filtered_payload, dropped = filter_canonical_payload(
+        "user_profiles",
+        payload,
+        context="update_customer_profile_fields",
+        logger=_canonical_log,
+    )
+
+    if not filtered_payload and dropped:
+        _clear_read_caches()
+        return True, "Profile update applied in canonical mode (non-canonical fields skipped)."
+
     try:
-        _rest_patch_by_user_id("user_profiles", user_id, payload)
+        _rest_patch_by_user_id("user_profiles", user_id, filtered_payload)
         _clear_read_caches()
         return True, "Customer profile updated."
     except Exception as exc:
@@ -1577,7 +1601,7 @@ def _rest_first_row(table_name: str, user_id: str = "", email: str = "") -> Dict
         except Exception:
             pass
 
-    if clean_email:
+    if clean_email and canonical_supports_column(table_name, "email"):
         try:
             rows = _rest_select(
                 table_name,
@@ -1588,6 +1612,8 @@ def _rest_first_row(table_name: str, user_id: str = "", email: str = "") -> Dict
                 return rows[0]
         except Exception:
             pass
+    elif clean_email:
+        _canonical_log(f"CANONICAL_COMPAT: skip email filter lookup for table={table_name}")
 
     return {}
 
@@ -1649,6 +1675,12 @@ def apply_repair_provisioning(customer_row: Dict[str, Any], reason: str = "") ->
             "trial_started_at": str(existing_profile.get("trial_started_at") or trial_start_dt.isoformat()),
             "trial_attempts": _safe_int(existing_profile.get("trial_attempts") or 1, 1),
         }
+        profile_payload, _ = filter_canonical_payload(
+            "user_profiles",
+            profile_payload,
+            context="apply_repair_provisioning:user_profiles",
+            logger=_canonical_log,
+        )
 
         profile_columns = _load_table_columns("user_profiles")
         if profile_columns:
@@ -1696,6 +1728,12 @@ def apply_repair_provisioning(customer_row: Dict[str, Any], reason: str = "") ->
             "plan": plan_key,
             "status": status_key,
         }
+        subscription_payload, _ = filter_canonical_payload(
+            "subscriptions",
+            subscription_payload,
+            context="apply_repair_provisioning:subscriptions",
+            logger=_canonical_log,
+        )
 
         if existing_subscription:
             _rest_patch_by_user_id("subscriptions", user_id, subscription_payload)

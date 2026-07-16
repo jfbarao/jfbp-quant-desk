@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional
 import requests
 import streamlit as st
 
+from core.canonical_schema import canonical_supports_column, filter_canonical_payload
 from core.responsive import inject_responsive_css
 from core.ui_cards import inject_card_css
 
@@ -952,6 +953,16 @@ def _save_login_metadata(
         payload["signup_city"] = signup_city
         payload["city"] = signup_city
 
+    payload, dropped = filter_canonical_payload(
+        "user_profiles",
+        payload,
+        context="_save_login_metadata",
+        logger=_canonical_log,
+    )
+
+    if not payload and dropped:
+        return True, "Login metadata skipped (non-canonical telemetry).", {}, None
+
     try:
         response = client.table("user_profiles").update(payload).eq("user_id", user_id).execute()
         return True, "Login metadata updated.", payload, response
@@ -1009,14 +1020,10 @@ def _trial_profile_snapshot() -> List[Dict[str, Any]]:
 
     endpoint = f"{url}/rest/v1/user_profiles"
     params = {
-        "select": (
-            "user_id,email,signup_ip,signup_country,device_id,user_agent,"
-            "trial_started_at,trial_attempts,risk_score,trial_whitelisted,"
-            "trial_ignored,trial_blocked,last_ip_activity,created_at"
-        ),
-        "trial_started_at": "not.is.null",
+        "select": "user_id,email,trial_start,trial_end,account_status,created_at",
+        "trial_start": "not.is.null",
         "limit": "5000",
-        "order": "trial_started_at.desc",
+        "order": "trial_start.desc",
     }
 
     try:
@@ -1055,54 +1062,25 @@ def evaluate_trial_protection(email: str, signup_context: Dict[str, Any]) -> Dic
     now = _utc_now()
     profiles = _trial_profile_snapshot()
 
-    signup_ip = str(signup_context.get("signup_ip") or "UNKNOWN")
-    device_id = str(signup_context.get("device_id") or "UNKNOWN")
-
-    eligible_rows = [
-        row for row in profiles
-        if not _parse_bool(row.get("trial_ignored")) and not _parse_bool(row.get("trial_whitelisted"))
-    ]
-
-    same_ip_rows_30d = []
-    same_ip_rows_24h = []
-    same_device_rows = []
+    # Telemetry remains available in-memory, but persistence is canonical-only.
+    same_ip_rows_30d: List[Dict[str, Any]] = []
+    same_ip_rows_24h: List[Dict[str, Any]] = []
+    same_device_rows: List[Dict[str, Any]] = []
     email_rows = []
-    same_device_other_email_rows = []
+    same_device_other_email_rows: List[Dict[str, Any]] = []
 
-    for row in eligible_rows:
-        trial_started_at = _parse_dt(row.get("trial_started_at"), fallback=None)
-        row_ip = str(row.get("signup_ip") or "").strip()
-        row_device = str(row.get("device_id") or "").strip()
+    for row in profiles:
+        trial_started_at = _parse_dt(row.get("trial_start"), fallback=None)
         row_email = str(row.get("email") or "").strip().lower()
 
         if clean_email and row_email == clean_email:
             email_rows.append(row)
 
-        if signup_ip != "UNKNOWN" and row_ip == signup_ip and trial_started_at is not None:
-            if now - trial_started_at <= timedelta(days=30):
-                same_ip_rows_30d.append(row)
-            if now - trial_started_at <= timedelta(hours=24):
-                same_ip_rows_24h.append(row)
-
-        if device_id != "UNKNOWN" and row_device == device_id:
-            same_device_rows.append(row)
-            if row_email and row_email != clean_email:
-                same_device_other_email_rows.append(row)
-
-    blocked_existing = any(_parse_bool(row.get("trial_blocked")) for row in profiles if str(row.get("email") or "").strip().lower() == clean_email)
-    if not blocked_existing and signup_ip != "UNKNOWN":
-        blocked_existing = any(_parse_bool(row.get("trial_blocked")) for row in profiles if str(row.get("signup_ip") or "").strip() == signup_ip)
-    if not blocked_existing and device_id != "UNKNOWN":
-        blocked_existing = any(_parse_bool(row.get("trial_blocked")) for row in profiles if str(row.get("device_id") or "").strip() == device_id)
+    # Explicit deny rule preserved using canonical evidence of prior trial by email.
+    blocked_existing = bool(email_rows)
 
     score = 0
     fraud_flags: List[str] = []
-    if same_device_other_email_rows:
-        score += 30
-        fraud_flags.append("REPEAT_DEVICE")
-    if same_ip_rows_30d:
-        score += 20
-        fraud_flags.append("REPEAT_IP")
     if bool(signup_context.get("vpn_or_proxy")):
         score += 25
         fraud_flags.append("VPN_PROXY")
@@ -1111,9 +1089,9 @@ def evaluate_trial_protection(email: str, signup_context: Dict[str, Any]) -> Dic
         fraud_flags.append("DISPOSABLE_EMAIL")
 
     risk = _risk_level(score)
-    prior_attempts = max(len(same_device_rows), len(same_ip_rows_30d), len(email_rows), 0)
+    prior_attempts = max(len(email_rows), 0)
     trial_attempts = prior_attempts + 1
-    last_ip_activity = same_ip_rows_30d[0].get("last_ip_activity") if same_ip_rows_30d else signup_context.get("last_ip_activity")
+    last_ip_activity = signup_context.get("last_ip_activity")
 
     blocked = blocked_existing or score > 80
     warning = not blocked and score > 60
@@ -1264,6 +1242,10 @@ def _verified_user_row(client: Any, table_name: str, user_id: str) -> list:
 
 
 def _verified_row_by_email(client: Any, table_name: str, email: str) -> list:
+    if not canonical_supports_column(table_name, "email"):
+        print(f"CANONICAL_COMPAT: skip email lookup for table={table_name}")
+        return []
+
     clean_email = str(email or "").strip().lower()
     if not clean_email:
         return []
@@ -1293,6 +1275,10 @@ def _append_provisioning_note(profile_row: Dict[str, Any], note: str) -> str:
         return existing
     lines.append(line)
     return "\n".join(lines[-8:])
+
+
+def _canonical_log(message: str) -> None:
+    print(message)
 
 
 def _provisioning_step_summary(steps: List[Dict[str, Any]]) -> str:
@@ -1376,8 +1362,6 @@ def _create_profile_record(
         "account_status": account_status,
         "trial_start": trial_start.isoformat(),
         "trial_end": trial_end.isoformat(),
-        "trial_notification_sent": _parse_bool(existing_row.get("trial_notification_sent")) if existing_row else False,
-        "trial_notification_sent_at": existing_row.get("trial_notification_sent_at") if existing_row else None,
     }
 
     if trial_metadata:
@@ -1412,6 +1396,13 @@ def _create_profile_record(
             }
         )
 
+    payload, _ = filter_canonical_payload(
+        "user_profiles",
+        payload,
+        context="_create_profile_record",
+        logger=_canonical_log,
+    )
+
     if existing:
         target_user = str(existing_row.get("user_id") or user_id or "").strip()
         if target_user:
@@ -1426,22 +1417,24 @@ def _create_profile_record(
 
 def _create_subscription_record(client: Any, user_id: str, plan: str, status: str, email: str = "") -> list:
     existing = _verified_user_row(client, "subscriptions", user_id)
-    if not existing and email:
-        existing = _verified_row_by_email(client, "subscriptions", email)
 
     payload = {
         "user_id": user_id,
         "plan": plan,
         "status": status,
     }
+    payload, _ = filter_canonical_payload(
+        "subscriptions",
+        payload,
+        context="_create_subscription_record",
+        logger=_canonical_log,
+    )
 
     if existing:
         existing_row = existing[0] if isinstance(existing[0], dict) else {}
         target_user = str(existing_row.get("user_id") or user_id or "").strip()
         if target_user:
             client.table("subscriptions").update(payload).eq("user_id", target_user).execute()
-        elif email:
-            client.table("subscriptions").update(payload).eq("email", email.strip().lower()).execute()
         return _verified_user_row(client, "subscriptions", user_id)
 
     client.table("subscriptions").insert(payload).execute()
@@ -1454,12 +1447,18 @@ def _create_workspace_record(client: Any, user_id: str, workspace_name: str = "P
     if existing:
         return existing
 
-    client.table("workspaces").insert(
-        {
-            "user_id": user_id,
-            "workspace_name": workspace_name,
-        }
-    ).execute()
+    payload = {
+        "user_id": user_id,
+        "workspace_name": workspace_name,
+    }
+    payload, _ = filter_canonical_payload(
+        "workspaces",
+        payload,
+        context="_create_workspace_record",
+        logger=_canonical_log,
+    )
+
+    client.table("workspaces").insert(payload).execute()
 
     return _verified_user_row(client, "workspaces", user_id)
 
@@ -1638,7 +1637,8 @@ def ensure_user_workspace_records(
             _add_step("Provisioning Completed", False, failed_steps[0].get("step", "Unknown step"))
 
         profile_row = profile_rows[0] if profile_rows and isinstance(profile_rows[0], dict) else {}
-        trial_notification_sent = _parse_bool(profile_row.get("trial_notification_sent"))
+        notification_cache = set(st.session_state.get("saas_founder_notify_users", set()) or set())
+        trial_notification_sent = user_id in notification_cache
 
         if provisioning_ok and trial_created and not trial_notification_sent:
             ok_count = sum(1 for step in steps if bool(step.get("ok")))
@@ -1658,28 +1658,14 @@ def ensure_user_workspace_records(
             _add_step("Founder Notification Sent", notify_ok, "" if notify_ok else notify_msg)
 
             if notify_ok:
-                notification_ts = _utc_now().isoformat()
-                try:
-                    client.table("user_profiles").update(
-                        {
-                            "trial_notification_sent": True,
-                            "trial_notification_sent_at": notification_ts,
-                        }
-                    ).eq("user_id", user_id).execute()
-                    if profile_row:
-                        profile_row["trial_notification_sent"] = True
-                        profile_row["trial_notification_sent_at"] = notification_ts
-                    _add_step("Founder Notification Marked", True)
-                except Exception as notify_mark_exc:
-                    _add_step("Founder Notification Marked", False, str(notify_mark_exc))
+                notification_cache.add(user_id)
+                st.session_state["saas_founder_notify_users"] = notification_cache
+                _add_step("Founder Notification Marked", True)
 
         if profile_rows and isinstance(profile_rows[0], dict):
-            try:
-                profile_row = profile_rows[0]
-                note_text = _append_provisioning_note(profile_row, _provisioning_step_summary(steps))
-                client.table("user_profiles").update({"trial_notes": note_text}).eq("user_id", user_id).execute()
-            except Exception:
-                pass
+            profile_row = profile_rows[0]
+            note_text = _append_provisioning_note(profile_row, _provisioning_step_summary(steps))
+            st.session_state["saas_last_provisioning_note"] = note_text
 
         st.session_state["saas_onboarding_debug"] = debug
 
@@ -1742,6 +1728,8 @@ def build_saas_user_from_auth(auth_user: Any, selected_plan: str | None = None) 
     # original trial plan, so database values must win after login.
     client = get_supabase_client()
     profile = _profile_row_for_auth_user(client, user_id, email)
+    sub_rows = _verified_user_row(client, "subscriptions", user_id) if (client is not None and user_id) else []
+    subscription_row = sub_rows[0] if sub_rows and isinstance(sub_rows[0], dict) else {}
 
     full_name = (
         profile.get("full_name")
@@ -1751,7 +1739,8 @@ def build_saas_user_from_auth(auth_user: Any, selected_plan: str | None = None) 
     )
     role = str(profile.get("role") or meta.get("role") or "user").strip().lower()
     plan = (
-        profile.get("plan")
+        subscription_row.get("plan")
+        or profile.get("plan")
         or meta.get("plan")
         or selected_plan
         or st.session_state.get("saas_selected_plan")
@@ -1773,8 +1762,7 @@ def build_saas_user_from_auth(auth_user: Any, selected_plan: str | None = None) 
         account_status = ACCOUNT_TRIAL
 
     subscription_status = str(
-        profile.get("subscription_status")
-        or profile.get("status")
+        subscription_row.get("status")
         or account_status
         or ""
     ).strip().upper()
