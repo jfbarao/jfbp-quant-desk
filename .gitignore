@@ -1,4 +1,5 @@
-.streamlit/secrets.toml
+.streamlit/secrets*.toml
+!.streamlit/secrets.toml.example
 venv/
 .venv/
 venv_py39_backup_2/

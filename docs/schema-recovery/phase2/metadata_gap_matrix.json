@@ -1,0 +1,1202 @@
+{
+  "phase": "Schema Recovery Phase 2 - Canonical Metadata Recovery Plan (No SQL)",
+  "generated_at_utc": "2026-07-15T20:48:21Z",
+  "source_inputs": [
+    "runtime_state/schema_recovery_phase1_20260715_204308/canonical_schema_specification.json",
+    "runtime_state/schema_recovery_phase1_20260715_204308/column_evidence_matrix.json",
+    "runtime_state/prod_schema_export_zqzujesufquifrtqnanb_20260716_031915/openapi_tables_extract.json",
+    "runtime_state/prod_schema_export_zqzujesufquifrtqnanb_20260716_031915/production_tables_ddl_export.sql",
+    "runtime_state/schema_recovery_phase0_20260715_203519/application_table_contracts.json"
+  ],
+  "summary": {
+    "tables": 3,
+    "total_columns": 58,
+    "columns_with_unresolved_metadata": 58,
+    "decision_gate": "Metadata completeness required before non-speculative migration generation."
+  },
+  "tables": {
+    "user_profiles": {
+      "column_count": 43,
+      "columns": [
+        {
+          "column": "id",
+          "tier": "Tier 1 - Verified Production",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Verified",
+            "nullable": "Verified",
+            "default": "Verified",
+            "pk_participation": "Verified",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "A:openapi_tables_extract.json.user_profiles.properties.id",
+            "A:production_tables_ddl_export.sql user_profiles.id"
+          ],
+          "notes": "Primary key marker visible in Swagger description."
+        },
+        {
+          "column": "created_at",
+          "tier": "Tier 1 - Verified Production",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Verified",
+            "nullable": "Verified",
+            "default": "Verified",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "A:openapi_tables_extract.json.user_profiles.properties.created_at",
+            "A:production_tables_ddl_export.sql user_profiles.created_at"
+          ],
+          "notes": "Used heavily for ordering/reporting."
+        },
+        {
+          "column": "email",
+          "tier": "Tier 1 - Verified Production",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Verified",
+            "nullable": "Conflicting",
+            "default": "Verified",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "A:openapi_tables_extract.json.user_profiles.properties.email",
+            "B:application_table_contracts.json user_profiles.email"
+          ],
+          "notes": "Fallback lookup key."
+        },
+        {
+          "column": "full_name",
+          "tier": "Tier 1 - Verified Production",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Verified",
+            "nullable": "Verified",
+            "default": "Verified",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "A:openapi_tables_extract.json.user_profiles.properties.full_name",
+            "B:application_table_contracts.json user_profiles.full_name"
+          ],
+          "notes": "Display name."
+        },
+        {
+          "column": "plan",
+          "tier": "Tier 1 - Verified Production",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Verified",
+            "nullable": "Verified",
+            "default": "Verified",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "A:openapi_tables_extract.json.user_profiles.properties.plan",
+            "B:application_table_contracts.json user_profiles.plan"
+          ],
+          "notes": "Core entitlement driver."
+        },
+        {
+          "column": "account_status",
+          "tier": "Tier 1 - Verified Production",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Verified",
+            "nullable": "Verified",
+            "default": "Verified",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "A:openapi_tables_extract.json.user_profiles.properties.account_status",
+            "B:application_table_contracts.json user_profiles.account_status"
+          ],
+          "notes": "Used with subscription status to determine access."
+        },
+        {
+          "column": "trial_start",
+          "tier": "Tier 1 - Verified Production",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Verified",
+            "nullable": "Verified",
+            "default": "Verified",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "A:openapi_tables_extract.json.user_profiles.properties.trial_start",
+            "B:application_table_contracts.json user_profiles.trial_start"
+          ],
+          "notes": "Missing value triggers provisioning_required path."
+        },
+        {
+          "column": "trial_end",
+          "tier": "Tier 1 - Verified Production",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Verified",
+            "nullable": "Verified",
+            "default": "Verified",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "A:openapi_tables_extract.json.user_profiles.properties.trial_end",
+            "B:application_table_contracts.json user_profiles.trial_end"
+          ],
+          "notes": "Trial gating field."
+        },
+        {
+          "column": "user_id",
+          "tier": "Tier 1 - Verified Production",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Verified",
+            "nullable": "Conflicting",
+            "default": "Verified",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "A:openapi_tables_extract.json.user_profiles.properties.user_id",
+            "B:application_table_contracts.json user_profiles.user_id"
+          ],
+          "notes": "Primary logical key in app flows."
+        },
+        {
+          "column": "stripe_customer_id",
+          "tier": "Tier 1 - Verified Production",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Verified",
+            "nullable": "Verified",
+            "default": "Verified",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "A:openapi_tables_extract.json.user_profiles.properties.stripe_customer_id",
+            "B:application_table_contracts.json user_profiles.stripe_customer_id"
+          ],
+          "notes": "Billing metadata."
+        },
+        {
+          "column": "stripe_subscription_id",
+          "tier": "Tier 1 - Verified Production",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Verified",
+            "nullable": "Verified",
+            "default": "Verified",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "A:openapi_tables_extract.json.user_profiles.properties.stripe_subscription_id",
+            "B:application_table_contracts.json user_profiles.stripe_subscription_id"
+          ],
+          "notes": "Billing metadata."
+        },
+        {
+          "column": "trial_notification_sent",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json user_profiles.trial_notification_sent",
+            "B:pages/SaaS_Core.py lines ~1379,~1665"
+          ],
+          "notes": "Controls one-time founder notification."
+        },
+        {
+          "column": "trial_notification_sent_at",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "Medium",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json user_profiles.trial_notification_sent_at",
+            "B:pages/SaaS_Core.py lines ~1380,~1666"
+          ],
+          "notes": "Timestamp of founder notification."
+        },
+        {
+          "column": "signup_ip",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json grouped telemetry column",
+            "B:pages/SaaS_Core.py lines ~938,~1384"
+          ],
+          "notes": "Fraud/telemetry core field."
+        },
+        {
+          "column": "signup_country",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json grouped telemetry column",
+            "B:pages/SaaS_Core.py lines ~940,~1385"
+          ],
+          "notes": "Geo onboarding metadata."
+        },
+        {
+          "column": "signup_city",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json grouped telemetry column",
+            "B:pages/SaaS_Core.py lines ~942,~1386"
+          ],
+          "notes": "Geo onboarding metadata."
+        },
+        {
+          "column": "city",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json grouped telemetry column",
+            "B:pages/SaaS_Core.py lines ~942,~1387"
+          ],
+          "notes": "Legacy/alternate city field."
+        },
+        {
+          "column": "device_id",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json grouped telemetry column",
+            "B:pages/SaaS_Core.py lines ~926,~1388"
+          ],
+          "notes": "Fraud duplicate-device signals."
+        },
+        {
+          "column": "device_fingerprint",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json grouped telemetry column",
+            "B:pages/SaaS_Core.py lines ~927,~1389"
+          ],
+          "notes": "Primary device-level anti-abuse identifier."
+        },
+        {
+          "column": "user_agent",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json grouped telemetry column",
+            "B:pages/SaaS_Core.py lines ~924,~1390"
+          ],
+          "notes": "Browser parsing input."
+        },
+        {
+          "column": "browser",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json grouped telemetry column",
+            "B:pages/SaaS_Core.py lines ~922,~1391"
+          ],
+          "notes": "Admin telemetry display."
+        },
+        {
+          "column": "operating_system",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json grouped telemetry column",
+            "B:pages/SaaS_Core.py lines ~923,~1392"
+          ],
+          "notes": "Admin telemetry display."
+        },
+        {
+          "column": "trial_started_at",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json grouped telemetry column",
+            "B:pages/SaaS_Core.py line ~1393",
+            "B:pages/Admin_Control_Center.py line ~1648"
+          ],
+          "notes": "Trial history anchor in admin repair flows."
+        },
+        {
+          "column": "trial_attempts",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json grouped telemetry column",
+            "B:pages/SaaS_Core.py line ~1394"
+          ],
+          "notes": "Repeat trial abuse control."
+        },
+        {
+          "column": "repeat_ips",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json grouped telemetry column",
+            "B:pages/SaaS_Core.py line ~1395"
+          ],
+          "notes": "Fraud signal component."
+        },
+        {
+          "column": "repeat_devices",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json grouped telemetry column",
+            "B:pages/SaaS_Core.py line ~1396"
+          ],
+          "notes": "Fraud signal component."
+        },
+        {
+          "column": "risk_score",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json grouped telemetry column",
+            "B:pages/SaaS_Core.py line ~1397",
+            "B:pages/Admin_Control_Center.py line ~1778"
+          ],
+          "notes": "Risk rank backbone."
+        },
+        {
+          "column": "fraud_flags",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json grouped telemetry column",
+            "B:pages/SaaS_Core.py line ~1398"
+          ],
+          "notes": "Fraud explanation string."
+        },
+        {
+          "column": "last_ip_activity",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json grouped telemetry column",
+            "B:pages/SaaS_Core.py lines ~934,~1399"
+          ],
+          "notes": "Activity telemetry."
+        },
+        {
+          "column": "first_login_at",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json grouped telemetry column",
+            "B:pages/SaaS_Core.py line ~936"
+          ],
+          "notes": "Set once on first metadata write."
+        },
+        {
+          "column": "last_login_at",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json grouped telemetry column",
+            "B:pages/SaaS_Core.py lines ~933,~1653"
+          ],
+          "notes": "Latest login timestamp."
+        },
+        {
+          "column": "last_login_ip",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json grouped telemetry column",
+            "B:pages/SaaS_Core.py line ~919"
+          ],
+          "notes": "Fraud/ops telemetry."
+        },
+        {
+          "column": "last_login_country",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json grouped telemetry column",
+            "B:pages/SaaS_Core.py line ~920"
+          ],
+          "notes": "Fraud/ops telemetry."
+        },
+        {
+          "column": "last_login_city",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json grouped telemetry column",
+            "B:pages/SaaS_Core.py line ~921"
+          ],
+          "notes": "Fraud/ops telemetry."
+        },
+        {
+          "column": "total_logins",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json grouped telemetry column",
+            "B:pages/SaaS_Core.py lines ~915,~934"
+          ],
+          "notes": "Incremented on login metadata persistence."
+        },
+        {
+          "column": "trial_whitelisted",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json grouped telemetry column",
+            "B:pages/SaaS_Core.py line ~1403"
+          ],
+          "notes": "Fraud control override."
+        },
+        {
+          "column": "trial_ignored",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json grouped telemetry column",
+            "B:pages/SaaS_Core.py line ~1404"
+          ],
+          "notes": "Fraud workflow override."
+        },
+        {
+          "column": "trial_blocked",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json grouped telemetry column",
+            "B:pages/SaaS_Core.py line ~1405"
+          ],
+          "notes": "Can block trial creation path."
+        },
+        {
+          "column": "trial_notes",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json grouped telemetry column",
+            "B:pages/SaaS_Core.py line ~1690"
+          ],
+          "notes": "Operational annotation field."
+        },
+        {
+          "column": "role",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json user_profiles.role",
+            "B:pages/SaaS_Core.py lines ~1760"
+          ],
+          "notes": "Admin bypass logic depends on role or admin email."
+        },
+        {
+          "column": "status",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "Medium",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json user_profiles.status|subscription_status",
+            "B:pages/SaaS_Core.py line ~1787"
+          ],
+          "notes": "Profile-level fallback for subscription status."
+        },
+        {
+          "column": "subscription_status",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "Medium",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json user_profiles.status|subscription_status",
+            "B:pages/SaaS_Core.py line ~1786"
+          ],
+          "notes": "Optional status source."
+        },
+        {
+          "column": "last_sign_in_at",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "Medium",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:pages/Admin_Control_Center.py lines ~810,~1156"
+          ],
+          "notes": "Read as fallback to auth.users sign-in timestamp."
+        }
+      ],
+      "table_object_status": {
+        "primary_key": "Conflicting",
+        "foreign_keys": "Unknown",
+        "unique_constraints": "Unknown",
+        "check_constraints": "Unknown",
+        "indexes": "Unknown",
+        "triggers": "Unknown",
+        "rls_policies": "Unknown",
+        "grants": "Unknown",
+        "trigger_functions": "Unknown"
+      },
+      "table_object_evidence": {
+        "primary_key": "Source A marks id as pk in OpenAPI description, but canonical PK constraint DDL is not available.",
+        "foreign_keys": "No authoritative FK metadata in available artifacts.",
+        "unique_constraints": "No authoritative UNIQUE metadata in available artifacts.",
+        "check_constraints": "No authoritative CHECK metadata in available artifacts.",
+        "indexes": "No authoritative index metadata in available artifacts.",
+        "triggers": "No trigger metadata in available artifacts.",
+        "rls_policies": "No RLS policy metadata in available artifacts.",
+        "grants": "No grants metadata in available artifacts.",
+        "trigger_functions": "No trigger function metadata in available artifacts."
+      }
+    },
+    "subscriptions": {
+      "column_count": 11,
+      "columns": [
+        {
+          "column": "id",
+          "tier": "Tier 1 - Verified Production",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Verified",
+            "nullable": "Verified",
+            "default": "Verified",
+            "pk_participation": "Verified",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "A:openapi_tables_extract.json.subscriptions.properties.id",
+            "A:production_tables_ddl_export.sql subscriptions.id"
+          ],
+          "notes": "PK marker visible in Swagger description."
+        },
+        {
+          "column": "user_id",
+          "tier": "Tier 1 - Verified Production",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Verified",
+            "nullable": "Conflicting",
+            "default": "Verified",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "A:openapi_tables_extract.json.subscriptions.properties.user_id",
+            "B:application_table_contracts.json subscriptions.user_id"
+          ],
+          "notes": "Primary lookup key in app behavior."
+        },
+        {
+          "column": "plan",
+          "tier": "Tier 1 - Verified Production",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Verified",
+            "nullable": "Verified",
+            "default": "Verified",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "A:openapi_tables_extract.json.subscriptions.properties.plan",
+            "B:application_table_contracts.json subscriptions.plan"
+          ],
+          "notes": "Entitlement mirror."
+        },
+        {
+          "column": "status",
+          "tier": "Tier 1 - Verified Production",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Verified",
+            "nullable": "Verified",
+            "default": "Verified",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "A:openapi_tables_extract.json.subscriptions.properties.status",
+            "B:application_table_contracts.json subscriptions.status"
+          ],
+          "notes": "Activation/suspension state."
+        },
+        {
+          "column": "stripe_customer_id",
+          "tier": "Tier 1 - Verified Production",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Verified",
+            "nullable": "Verified",
+            "default": "Verified",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "A:openapi_tables_extract.json.subscriptions.properties.stripe_customer_id",
+            "B:application_table_contracts.json subscriptions.stripe_customer_id"
+          ],
+          "notes": "Stripe mapping."
+        },
+        {
+          "column": "stripe_subscription_id",
+          "tier": "Tier 1 - Verified Production",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Verified",
+            "nullable": "Verified",
+            "default": "Verified",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "A:openapi_tables_extract.json.subscriptions.properties.stripe_subscription_id",
+            "B:application_table_contracts.json subscriptions.stripe_subscription_id"
+          ],
+          "notes": "Stripe mapping."
+        },
+        {
+          "column": "created_at",
+          "tier": "Tier 1 - Verified Production",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Verified",
+            "nullable": "Verified",
+            "default": "Verified",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "A:openapi_tables_extract.json.subscriptions.properties.created_at",
+            "A:production_tables_ddl_export.sql subscriptions.created_at"
+          ],
+          "notes": "Admin sorting."
+        },
+        {
+          "column": "email",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json subscriptions.email",
+            "B:pages/SaaS_Core.py line ~1444"
+          ],
+          "notes": "Fallback identity key; not in Swagger-visible schema."
+        },
+        {
+          "column": "current_period_end",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "Medium",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json subscriptions grouped fields",
+            "B:pages/Admin_Control_Center.py line ~1107"
+          ],
+          "notes": "Admin/reporting billing lifecycle field."
+        },
+        {
+          "column": "trial_start",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "Medium",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json subscriptions grouped fields"
+          ],
+          "notes": "Optional subscription-side trial metadata."
+        },
+        {
+          "column": "trial_end",
+          "tier": "Tier 2 - Verified Application Contract",
+          "confidence": "Medium",
+          "property_status": {
+            "sql_type": "Unknown",
+            "nullable": "Unknown",
+            "default": "Unknown",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "B:application_table_contracts.json subscriptions grouped fields"
+          ],
+          "notes": "Optional subscription-side trial metadata."
+        }
+      ],
+      "table_object_status": {
+        "primary_key": "Conflicting",
+        "foreign_keys": "Unknown",
+        "unique_constraints": "Unknown",
+        "check_constraints": "Unknown",
+        "indexes": "Unknown",
+        "triggers": "Unknown",
+        "rls_policies": "Unknown",
+        "grants": "Unknown",
+        "trigger_functions": "Unknown"
+      },
+      "table_object_evidence": {
+        "primary_key": "Source A marks id as pk in OpenAPI description, but canonical PK constraint DDL is not available.",
+        "foreign_keys": "No authoritative FK metadata in available artifacts.",
+        "unique_constraints": "No authoritative UNIQUE metadata in available artifacts.",
+        "check_constraints": "No authoritative CHECK metadata in available artifacts.",
+        "indexes": "No authoritative index metadata in available artifacts.",
+        "triggers": "No trigger metadata in available artifacts.",
+        "rls_policies": "No RLS policy metadata in available artifacts.",
+        "grants": "No grants metadata in available artifacts.",
+        "trigger_functions": "No trigger function metadata in available artifacts."
+      }
+    },
+    "workspaces": {
+      "column_count": 4,
+      "columns": [
+        {
+          "column": "id",
+          "tier": "Tier 1 - Verified Production",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Verified",
+            "nullable": "Verified",
+            "default": "Verified",
+            "pk_participation": "Verified",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "A:openapi_tables_extract.json.workspaces.properties.id",
+            "A:production_tables_ddl_export.sql workspaces.id"
+          ],
+          "notes": "PK marker visible in Swagger description."
+        },
+        {
+          "column": "user_id",
+          "tier": "Tier 1 - Verified Production",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Verified",
+            "nullable": "Verified",
+            "default": "Verified",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "A:openapi_tables_extract.json.workspaces.properties.user_id",
+            "B:application_table_contracts.json workspaces.user_id"
+          ],
+          "notes": "Links workspace to user."
+        },
+        {
+          "column": "workspace_name",
+          "tier": "Tier 1 - Verified Production",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Verified",
+            "nullable": "Verified",
+            "default": "Verified",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "A:openapi_tables_extract.json.workspaces.properties.workspace_name",
+            "B:application_table_contracts.json workspaces.workspace_name"
+          ],
+          "notes": "Onboarding sets '<name> Workspace' or fallback Personal Workspace."
+        },
+        {
+          "column": "created_at",
+          "tier": "Tier 1 - Verified Production",
+          "confidence": "High",
+          "property_status": {
+            "sql_type": "Verified",
+            "nullable": "Verified",
+            "default": "Verified",
+            "pk_participation": "Unknown",
+            "fk_participation": "Unknown",
+            "unique_constraint": "Unknown",
+            "check_constraint": "Unknown"
+          },
+          "evidence_sources": [
+            "A:openapi_tables_extract.json.workspaces.properties.created_at",
+            "A:production_tables_ddl_export.sql workspaces.created_at",
+            "B:application_table_contracts.json workspaces.created_at"
+          ],
+          "notes": "Audit timestamp only."
+        }
+      ],
+      "table_object_status": {
+        "primary_key": "Conflicting",
+        "foreign_keys": "Unknown",
+        "unique_constraints": "Unknown",
+        "check_constraints": "Unknown",
+        "indexes": "Unknown",
+        "triggers": "Unknown",
+        "rls_policies": "Unknown",
+        "grants": "Unknown",
+        "trigger_functions": "Unknown"
+      },
+      "table_object_evidence": {
+        "primary_key": "Source A marks id as pk in OpenAPI description, but canonical PK constraint DDL is not available.",
+        "foreign_keys": "No authoritative FK metadata in available artifacts.",
+        "unique_constraints": "No authoritative UNIQUE metadata in available artifacts.",
+        "check_constraints": "No authoritative CHECK metadata in available artifacts.",
+        "indexes": "No authoritative index metadata in available artifacts.",
+        "triggers": "No trigger metadata in available artifacts.",
+        "rls_policies": "No RLS policy metadata in available artifacts.",
+        "grants": "No grants metadata in available artifacts.",
+        "trigger_functions": "No trigger function metadata in available artifacts."
+      }
+    }
+  }
+}

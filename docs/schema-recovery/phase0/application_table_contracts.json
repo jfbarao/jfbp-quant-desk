@@ -1,0 +1,365 @@
+{
+  "generated_at_utc": "2026-07-16T03:35:19Z",
+  "tables": {
+    "public.user_profiles": {
+      "contract_sources": [
+        "pages/SaaS_Core.py",
+        "pages/Admin_Control_Center.py"
+      ],
+      "field_usage_inventory": [
+        {
+          "column": "user_id",
+          "read_locations": [
+            "pages/SaaS_Core.py:_profile_row_for_auth_user",
+            "pages/SaaS_Core.py:_verified_user_row",
+            "pages/Admin_Control_Center.py:_rest_first_row",
+            "pages/Admin_Control_Center.py:merge_customer_rows"
+          ],
+          "write_locations": [
+            "pages/SaaS_Core.py:_create_profile_record",
+            "pages/Admin_Control_Center.py:apply_repair_provisioning"
+          ],
+          "required_by_behavior": true,
+          "assumptions": [
+            "used as primary lookup key for profile row",
+            "expected to map to authenticated user identity"
+          ]
+        },
+        {
+          "column": "email",
+          "read_locations": [
+            "pages/SaaS_Core.py:_profile_row_for_auth_user",
+            "pages/SaaS_Core.py:_verified_row_by_email",
+            "pages/Admin_Control_Center.py:_rest_first_row",
+            "pages/Admin_Control_Center.py:merge_customer_rows"
+          ],
+          "write_locations": [
+            "pages/SaaS_Core.py:_create_profile_record",
+            "pages/Admin_Control_Center.py:apply_repair_provisioning"
+          ],
+          "required_by_behavior": true,
+          "assumptions": [
+            "normalized lower-case",
+            "used as fallback identity key when user_id lookup misses"
+          ]
+        },
+        {
+          "column": "full_name",
+          "read_locations": [
+            "pages/SaaS_Core.py:build_saas_user_from_auth",
+            "pages/Admin_Control_Center.py:_build_customer_record"
+          ],
+          "write_locations": [
+            "pages/SaaS_Core.py:_create_profile_record",
+            "pages/Admin_Control_Center.py:apply_repair_provisioning"
+          ],
+          "required_by_behavior": true,
+          "assumptions": [
+            "display fallback to email/user_id if missing"
+          ]
+        },
+        {
+          "column": "plan",
+          "read_locations": [
+            "pages/SaaS_Core.py:build_saas_user_from_auth",
+            "pages/Admin_Control_Center.py:_build_customer_record"
+          ],
+          "write_locations": [
+            "pages/SaaS_Core.py:_create_profile_record",
+            "pages/Admin_Control_Center.py:update_customer_plan_status",
+            "pages/Admin_Control_Center.py:apply_repair_provisioning"
+          ],
+          "required_by_behavior": true,
+          "assumptions": [
+            "drives entitlement and page access behavior"
+          ]
+        },
+        {
+          "column": "account_status",
+          "read_locations": [
+            "pages/SaaS_Core.py:build_saas_user_from_auth",
+            "pages/Admin_Control_Center.py:_build_customer_record"
+          ],
+          "write_locations": [
+            "pages/SaaS_Core.py:_create_profile_record",
+            "pages/Admin_Control_Center.py:update_customer_plan_status",
+            "pages/Admin_Control_Center.py:apply_repair_provisioning"
+          ],
+          "required_by_behavior": true,
+          "assumptions": [
+            "used with subscription_status to determine account openness"
+          ]
+        },
+        {
+          "column": "trial_start",
+          "read_locations": [
+            "pages/SaaS_Core.py:ensure_user_workspace_records",
+            "pages/SaaS_Core.py:build_saas_user_from_auth",
+            "pages/Admin_Control_Center.py:_build_customer_record"
+          ],
+          "write_locations": [
+            "pages/SaaS_Core.py:_create_profile_record",
+            "pages/Admin_Control_Center.py:apply_repair_provisioning"
+          ],
+          "required_by_behavior": true,
+          "assumptions": [
+            "missing trial_start contributes to provisioning_required state"
+          ]
+        },
+        {
+          "column": "trial_end",
+          "read_locations": [
+            "pages/SaaS_Core.py:ensure_user_workspace_records",
+            "pages/SaaS_Core.py:build_saas_user_from_auth",
+            "pages/Admin_Control_Center.py:_build_customer_record"
+          ],
+          "write_locations": [
+            "pages/SaaS_Core.py:_create_profile_record",
+            "pages/Admin_Control_Center.py:apply_repair_provisioning"
+          ],
+          "required_by_behavior": true,
+          "assumptions": [
+            "missing trial_end contributes to provisioning_required state"
+          ]
+        },
+        {
+          "column": "created_at",
+          "read_locations": [
+            "pages/SaaS_Core.py:notification payload",
+            "pages/Admin_Control_Center.py:_rest_select order by created_at",
+            "pages/Admin_Control_Center.py:_build_customer_record"
+          ],
+          "write_locations": [],
+          "required_by_behavior": false,
+          "assumptions": [
+            "expected to exist for ordering and admin display"
+          ]
+        },
+        {
+          "column": "stripe_customer_id",
+          "read_locations": [
+            "pages/SaaS_Core.py:build_saas_user_from_auth",
+            "pages/Admin_Control_Center.py:_build_customer_record"
+          ],
+          "write_locations": [],
+          "required_by_behavior": false,
+          "assumptions": [
+            "optional billing metadata"
+          ]
+        },
+        {
+          "column": "stripe_subscription_id",
+          "read_locations": [
+            "pages/SaaS_Core.py:build_saas_user_from_auth",
+            "pages/Admin_Control_Center.py:_build_customer_record"
+          ],
+          "write_locations": [],
+          "required_by_behavior": false,
+          "assumptions": [
+            "optional billing metadata"
+          ]
+        },
+        {
+          "column": "trial_notification_sent",
+          "read_locations": [
+            "pages/SaaS_Core.py:ensure_user_workspace_records"
+          ],
+          "write_locations": [
+            "pages/SaaS_Core.py:_create_profile_record",
+            "pages/SaaS_Core.py:ensure_user_workspace_records (Founder Notification Marked)"
+          ],
+          "required_by_behavior": false,
+          "assumptions": [
+            "optional workflow flag"
+          ]
+        },
+        {
+          "column": "trial_notification_sent_at",
+          "read_locations": [
+            "pages/SaaS_Core.py:_create_profile_record"
+          ],
+          "write_locations": [
+            "pages/SaaS_Core.py:_create_profile_record",
+            "pages/SaaS_Core.py:ensure_user_workspace_records"
+          ],
+          "required_by_behavior": false,
+          "assumptions": [
+            "optional workflow timestamp"
+          ]
+        },
+        {
+          "column": "signup_ip|signup_country|signup_city|city|device_id|device_fingerprint|user_agent|browser|operating_system|trial_started_at|trial_attempts|repeat_ips|repeat_devices|risk_score|fraud_flags|last_ip_activity|first_login_at|last_login_at|last_login_ip|last_login_country|last_login_city|total_logins|trial_whitelisted|trial_ignored|trial_blocked|trial_notes",
+          "read_locations": [
+            "pages/SaaS_Core.py:_save_login_metadata and evaluate_trial_protection",
+            "pages/Admin_Control_Center.py:_build_customer_record and risk analytics"
+          ],
+          "write_locations": [
+            "pages/SaaS_Core.py:_create_profile_record",
+            "pages/SaaS_Core.py:_save_login_metadata",
+            "pages/SaaS_Core.py:trial_notes update",
+            "pages/Admin_Control_Center.py:update_customer_trial_controls",
+            "pages/Admin_Control_Center.py:apply_repair_provisioning (subset)"
+          ],
+          "required_by_behavior": true,
+          "assumptions": [
+            "app logic expects these telemetry/risk fields to be writable and readable",
+            "many are treated as nullable with code-level defaults"
+          ]
+        },
+        {
+          "column": "role",
+          "read_locations": [
+            "pages/SaaS_Core.py:build_saas_user_from_auth",
+            "pages/Admin_Control_Center.py:_build_customer_record"
+          ],
+          "write_locations": [],
+          "required_by_behavior": true,
+          "assumptions": [
+            "admin/founder privilege path depends on role or admin email"
+          ]
+        },
+        {
+          "column": "status|subscription_status",
+          "read_locations": [
+            "pages/SaaS_Core.py:build_saas_user_from_auth"
+          ],
+          "write_locations": [],
+          "required_by_behavior": false,
+          "assumptions": [
+            "used as optional profile-level fallback for subscription status"
+          ]
+        }
+      ]
+    },
+    "public.subscriptions": {
+      "contract_sources": [
+        "pages/SaaS_Core.py",
+        "pages/Admin_Control_Center.py"
+      ],
+      "field_usage_inventory": [
+        {
+          "column": "user_id",
+          "read_locations": [
+            "pages/SaaS_Core.py:_verified_user_row",
+            "pages/Admin_Control_Center.py:_rest_first_row",
+            "pages/Admin_Control_Center.py:merge_customer_rows"
+          ],
+          "write_locations": [
+            "pages/SaaS_Core.py:_create_subscription_record",
+            "pages/Admin_Control_Center.py:update_customer_plan_status",
+            "pages/Admin_Control_Center.py:apply_repair_provisioning"
+          ],
+          "required_by_behavior": true,
+          "assumptions": [
+            "used as primary lookup key for one subscription row per user"
+          ]
+        },
+        {
+          "column": "email",
+          "read_locations": [
+            "pages/SaaS_Core.py:_verified_row_by_email",
+            "pages/Admin_Control_Center.py:_rest_first_row",
+            "pages/Admin_Control_Center.py:merge_customer_rows"
+          ],
+          "write_locations": [
+            "pages/SaaS_Core.py:_create_subscription_record (email path)",
+            "pages/Admin_Control_Center.py:_rest_insert/_rest_patch_by_user_id (optional via payload)"
+          ],
+          "required_by_behavior": false,
+          "assumptions": [
+            "optional fallback key"
+          ]
+        },
+        {
+          "column": "plan",
+          "read_locations": [
+            "pages/Admin_Control_Center.py:_build_customer_record",
+            "pages/Admin_Control_Center.py:merge_customer_rows"
+          ],
+          "write_locations": [
+            "pages/SaaS_Core.py:_create_subscription_record",
+            "pages/Admin_Control_Center.py:update_customer_plan_status",
+            "pages/Admin_Control_Center.py:apply_repair_provisioning"
+          ],
+          "required_by_behavior": true,
+          "assumptions": [
+            "drives displayed plan and subscription operations"
+          ]
+        },
+        {
+          "column": "status",
+          "read_locations": [
+            "pages/Admin_Control_Center.py:_build_customer_record"
+          ],
+          "write_locations": [
+            "pages/SaaS_Core.py:_create_subscription_record",
+            "pages/Admin_Control_Center.py:update_customer_plan_status",
+            "pages/Admin_Control_Center.py:apply_repair_provisioning"
+          ],
+          "required_by_behavior": true,
+          "assumptions": [
+            "status expected for account state and admin actions"
+          ]
+        },
+        {
+          "column": "stripe_customer_id|stripe_subscription_id|current_period_end|trial_start|trial_end|created_at",
+          "read_locations": [
+            "pages/Admin_Control_Center.py:_build_customer_record",
+            "pages/Admin_Control_Center.py:merge_customer_rows"
+          ],
+          "write_locations": [],
+          "required_by_behavior": false,
+          "assumptions": [
+            "optional billing and lifecycle metadata"
+          ]
+        }
+      ]
+    },
+    "public.workspaces": {
+      "contract_sources": [
+        "pages/SaaS_Core.py"
+      ],
+      "field_usage_inventory": [
+        {
+          "column": "user_id",
+          "read_locations": [
+            "pages/SaaS_Core.py:_verified_user_row"
+          ],
+          "write_locations": [
+            "pages/SaaS_Core.py:_create_workspace_record"
+          ],
+          "required_by_behavior": true,
+          "assumptions": [
+            "workspace row linked to authenticated user"
+          ]
+        },
+        {
+          "column": "workspace_name",
+          "read_locations": [],
+          "write_locations": [
+            "pages/SaaS_Core.py:_create_workspace_record"
+          ],
+          "required_by_behavior": true,
+          "assumptions": [
+            "defaults to '<name> Workspace' or Personal Workspace"
+          ]
+        },
+        {
+          "column": "created_at",
+          "read_locations": [],
+          "write_locations": [],
+          "required_by_behavior": false,
+          "assumptions": [
+            "expected for operational traceability"
+          ]
+        }
+      ]
+    }
+  },
+  "global_assumptions": [
+    "user_profiles and subscriptions are expected to support user_id and email addressability",
+    "authenticated-session writes assume RLS policies allow auth.uid() = user_id",
+    "code generally treats non-core telemetry columns as nullable with runtime defaults",
+    "absence of trial_start/trial_end can trigger provisioning_required behavior"
+  ]
+}

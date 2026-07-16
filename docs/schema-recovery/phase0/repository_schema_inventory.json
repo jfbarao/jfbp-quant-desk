@@ -1,0 +1,558 @@
+{
+  "audit_phase": "Schema Recovery Phase 0 — Canonical Migration Audit",
+  "generated_at_utc": "2026-07-16T03:35:19Z",
+  "workspace_root": "/Users/josepereira/rs_clean",
+  "guardrails": {
+    "executed_sql": false,
+    "modified_production": false,
+    "modified_development": false,
+    "created_or_applied_migrations": false
+  },
+  "search_scope": {
+    "searched_paths": [
+      "workspace root (recursive)",
+      "pages/",
+      "core/",
+      "data/",
+      "tests/",
+      "docs/",
+      "scripts/",
+      "runtime_state/",
+      "hidden paths where present (.streamlit, .pytest_cache)"
+    ],
+    "expected_locations_checked": [
+      "supabase/",
+      "supabase/migrations/",
+      "migrations/",
+      "database/",
+      "db/",
+      "schema/",
+      "scripts/",
+      "docs/",
+      ".github/"
+    ],
+    "not_present_in_repo": [
+      "supabase/",
+      "supabase/migrations/",
+      "migrations/",
+      "database/",
+      "db/",
+      "schema/",
+      ".github/"
+    ],
+    "excluded_noise_dirs": [
+      "venv/",
+      "venv_py39_backup_2/",
+      "__pycache__/"
+    ],
+    "keywords": [
+      "create table",
+      "alter table",
+      "drop table",
+      "user_profiles",
+      "subscriptions",
+      "workspaces",
+      "auth.users",
+      "rls",
+      "policy",
+      "trigger",
+      "stripe_customer_id",
+      "stripe_subscription_id"
+    ]
+  },
+  "canonical_migration_found": false,
+  "schema_sources": [
+    {
+      "path": "runtime_state/prod_schema_export_zqzujesufquifrtqnanb_20260716_031915/production_tables_ddl_export.sql",
+      "classification": "generated_active_artifact",
+      "source_kind": "derived_ddl",
+      "tables": {
+        "public.user_profiles": {
+          "defines_or_modifies": true,
+          "columns_defined": [
+            "id",
+            "created_at",
+            "email",
+            "full_name",
+            "plan",
+            "account_status",
+            "trial_start",
+            "trial_end",
+            "user_id",
+            "stripe_customer_id",
+            "stripe_subscription_id"
+          ],
+          "defaults_defined": {
+            "id": "gen_random_uuid()",
+            "created_at": "now()"
+          },
+          "primary_keys": "unknown_not_exported",
+          "foreign_keys": "unknown_not_exported",
+          "unique_or_check_constraints": "unknown_not_exported",
+          "indexes": "unknown_not_exported",
+          "rls_settings_or_policies": "unknown_not_exported",
+          "triggers": "unknown_not_exported",
+          "trigger_functions": "unknown_not_exported"
+        },
+        "public.subscriptions": {
+          "defines_or_modifies": true,
+          "columns_defined": [
+            "id",
+            "user_id",
+            "plan",
+            "status",
+            "stripe_customer_id",
+            "stripe_subscription_id",
+            "created_at"
+          ],
+          "defaults_defined": {
+            "id": "gen_random_uuid()",
+            "created_at": "now()"
+          },
+          "primary_keys": "unknown_not_exported",
+          "foreign_keys": "unknown_not_exported",
+          "unique_or_check_constraints": "unknown_not_exported",
+          "indexes": "unknown_not_exported",
+          "rls_settings_or_policies": "unknown_not_exported",
+          "triggers": "unknown_not_exported",
+          "trigger_functions": "unknown_not_exported"
+        },
+        "public.workspaces": {
+          "defines_or_modifies": true,
+          "columns_defined": [
+            "id",
+            "user_id",
+            "workspace_name",
+            "created_at"
+          ],
+          "defaults_defined": {
+            "id": "gen_random_uuid()",
+            "created_at": "now()"
+          },
+          "primary_keys": "unknown_not_exported",
+          "foreign_keys": "unknown_not_exported",
+          "unique_or_check_constraints": "unknown_not_exported",
+          "indexes": "unknown_not_exported",
+          "rls_settings_or_policies": "unknown_not_exported",
+          "triggers": "unknown_not_exported",
+          "trigger_functions": "unknown_not_exported"
+        }
+      },
+      "compatibility_with_app_code": "partial_conflict",
+      "production_swagger_alignment": "matches_swagger_columns_types_defaults",
+      "notes": "Strongest machine-readable schema baseline in repo, but not canonical for constraints/indexes/RLS/triggers."
+    },
+    {
+      "path": "runtime_state/prod_schema_export_zqzujesufquifrtqnanb_20260716_031915/openapi_tables_extract.json",
+      "classification": "generated_active_artifact",
+      "source_kind": "swagger_extract",
+      "tables": {
+        "public.user_profiles": {
+          "defines_or_modifies": true,
+          "columns_defined": [
+            "id",
+            "created_at",
+            "email",
+            "full_name",
+            "plan",
+            "account_status",
+            "trial_start",
+            "trial_end",
+            "user_id",
+            "stripe_customer_id",
+            "stripe_subscription_id"
+          ],
+          "defaults_defined": {
+            "id": "gen_random_uuid()",
+            "created_at": "now()"
+          },
+          "primary_keys": "partially_visible_id_marked_pk",
+          "foreign_keys": "not_exposed",
+          "unique_or_check_constraints": "not_exposed",
+          "indexes": "not_exposed",
+          "rls_settings_or_policies": "not_exposed",
+          "triggers": "not_exposed",
+          "trigger_functions": "not_exposed"
+        },
+        "public.subscriptions": {
+          "defines_or_modifies": true,
+          "columns_defined": [
+            "id",
+            "user_id",
+            "plan",
+            "status",
+            "stripe_customer_id",
+            "stripe_subscription_id",
+            "created_at"
+          ],
+          "defaults_defined": {
+            "id": "gen_random_uuid()",
+            "created_at": "now()"
+          },
+          "primary_keys": "partially_visible_id_marked_pk",
+          "foreign_keys": "not_exposed",
+          "unique_or_check_constraints": "not_exposed",
+          "indexes": "not_exposed",
+          "rls_settings_or_policies": "not_exposed",
+          "triggers": "not_exposed",
+          "trigger_functions": "not_exposed"
+        },
+        "public.workspaces": {
+          "defines_or_modifies": true,
+          "columns_defined": [
+            "id",
+            "user_id",
+            "workspace_name",
+            "created_at"
+          ],
+          "defaults_defined": {
+            "id": "gen_random_uuid()",
+            "created_at": "now()"
+          },
+          "primary_keys": "partially_visible_id_marked_pk",
+          "foreign_keys": "not_exposed",
+          "unique_or_check_constraints": "not_exposed",
+          "indexes": "not_exposed",
+          "rls_settings_or_policies": "not_exposed",
+          "triggers": "not_exposed",
+          "trigger_functions": "not_exposed"
+        }
+      },
+      "compatibility_with_app_code": "partial_conflict",
+      "production_swagger_alignment": "authoritative_for_swagger_scope",
+      "notes": "Best production-derived machine format for this repo state."
+    },
+    {
+      "path": "pages/SaaS_Core.py",
+      "classification": "active_application_code",
+      "source_kind": "runtime_contract",
+      "tables": {
+        "public.user_profiles": {
+          "defines_or_modifies": "modifies_and_reads",
+          "columns_defined": [
+            "user_id",
+            "email",
+            "full_name",
+            "plan",
+            "account_status",
+            "trial_start",
+            "trial_end",
+            "trial_notification_sent",
+            "trial_notification_sent_at",
+            "signup_ip",
+            "signup_country",
+            "signup_city",
+            "city",
+            "device_id",
+            "device_fingerprint",
+            "user_agent",
+            "browser",
+            "operating_system",
+            "trial_started_at",
+            "trial_attempts",
+            "repeat_ips",
+            "repeat_devices",
+            "risk_score",
+            "fraud_flags",
+            "last_ip_activity",
+            "first_login_at",
+            "last_login_at",
+            "last_login_ip",
+            "last_login_country",
+            "last_login_city",
+            "total_logins",
+            "trial_whitelisted",
+            "trial_ignored",
+            "trial_blocked",
+            "trial_notes",
+            "created_at",
+            "role",
+            "status",
+            "subscription_status",
+            "stripe_customer_id",
+            "stripe_subscription_id"
+          ],
+          "defaults_defined": {
+            "browser": "UNKNOWN fallback",
+            "operating_system": "UNKNOWN fallback",
+            "trial_attempts": 1,
+            "repeat_ips": 0,
+            "repeat_devices": 0,
+            "risk_score": 0,
+            "fraud_flags": "",
+            "total_logins": 0,
+            "trial_whitelisted": false,
+            "trial_ignored": false,
+            "trial_blocked": false,
+            "trial_notes": ""
+          },
+          "primary_keys": "not_declared_in_code",
+          "foreign_keys": "assumes_user_id_relates_to_auth_user",
+          "unique_or_check_constraints": "assumes_user_id_and_email_addressability",
+          "indexes": "not_declared_in_code",
+          "rls_settings_or_policies": "assumes_auth_uid_user_id_policy_for_authenticated_writes",
+          "triggers": "none_declared_in_code",
+          "trigger_functions": "none_declared_in_code"
+        },
+        "public.subscriptions": {
+          "defines_or_modifies": "modifies_and_reads",
+          "columns_defined": [
+            "user_id",
+            "email",
+            "plan",
+            "status",
+            "created_at",
+            "stripe_customer_id",
+            "stripe_subscription_id"
+          ],
+          "defaults_defined": {},
+          "primary_keys": "not_declared_in_code",
+          "foreign_keys": "assumes_user_id_links_to_auth_user",
+          "unique_or_check_constraints": "assumes_single_user_subscription_row_behavior",
+          "indexes": "not_declared_in_code",
+          "rls_settings_or_policies": "assumed_by_authenticated_session_flow",
+          "triggers": "none_declared_in_code",
+          "trigger_functions": "none_declared_in_code"
+        },
+        "public.workspaces": {
+          "defines_or_modifies": "modifies_and_reads",
+          "columns_defined": [
+            "user_id",
+            "workspace_name",
+            "created_at"
+          ],
+          "defaults_defined": {
+            "workspace_name": "Personal Workspace fallback"
+          },
+          "primary_keys": "not_declared_in_code",
+          "foreign_keys": "assumes_user_id_links_to_auth_user",
+          "unique_or_check_constraints": "assumes_one_workspace_row_is_acceptable",
+          "indexes": "not_declared_in_code",
+          "rls_settings_or_policies": "assumed_by_authenticated_session_flow",
+          "triggers": "none_declared_in_code",
+          "trigger_functions": "none_declared_in_code"
+        }
+      },
+      "compatibility_with_app_code": "self_consistent",
+      "production_swagger_alignment": "conflicts_requires_additional_columns_not_in_swagger",
+      "notes": "Primary runtime contract driving onboarding and login metadata writes."
+    },
+    {
+      "path": "pages/Admin_Control_Center.py",
+      "classification": "active_application_code",
+      "source_kind": "admin_runtime_contract",
+      "tables": {
+        "public.user_profiles": {
+          "defines_or_modifies": "modifies_and_reads",
+          "columns_defined": [
+            "user_id",
+            "email",
+            "full_name",
+            "plan",
+            "account_status",
+            "trial_start",
+            "trial_end",
+            "trial_started_at",
+            "trial_attempts",
+            "trial_whitelisted",
+            "trial_ignored",
+            "trial_blocked",
+            "trial_notes",
+            "risk_score",
+            "last_ip_activity",
+            "browser",
+            "operating_system",
+            "device_id",
+            "device_fingerprint",
+            "signup_ip",
+            "signup_country",
+            "signup_city",
+            "city",
+            "last_login_ip",
+            "last_login_country",
+            "last_login_city",
+            "first_login_at",
+            "last_login_at",
+            "total_logins",
+            "role",
+            "created_at",
+            "last_sign_in_at",
+            "stripe_customer_id",
+            "stripe_subscription_id"
+          ],
+          "defaults_defined": {},
+          "primary_keys": "not_declared_in_code",
+          "foreign_keys": "not_declared_in_code",
+          "unique_or_check_constraints": "not_declared_in_code",
+          "indexes": "not_declared_in_code",
+          "rls_settings_or_policies": "expects_service_role_for_admin_reads",
+          "triggers": "none_declared_in_code",
+          "trigger_functions": "none_declared_in_code"
+        },
+        "public.subscriptions": {
+          "defines_or_modifies": "modifies_and_reads",
+          "columns_defined": [
+            "user_id",
+            "email",
+            "plan",
+            "status",
+            "stripe_customer_id",
+            "stripe_subscription_id",
+            "current_period_end",
+            "trial_start",
+            "trial_end",
+            "created_at"
+          ],
+          "defaults_defined": {},
+          "primary_keys": "not_declared_in_code",
+          "foreign_keys": "not_declared_in_code",
+          "unique_or_check_constraints": "not_declared_in_code",
+          "indexes": "not_declared_in_code",
+          "rls_settings_or_policies": "expects_service_role_for_admin_reads",
+          "triggers": "none_declared_in_code",
+          "trigger_functions": "none_declared_in_code"
+        },
+        "public.workspaces": {
+          "defines_or_modifies": "read_not_directly_used_for_admin_actions",
+          "columns_defined": [],
+          "defaults_defined": {},
+          "primary_keys": "unknown",
+          "foreign_keys": "unknown",
+          "unique_or_check_constraints": "unknown",
+          "indexes": "unknown",
+          "rls_settings_or_policies": "unknown",
+          "triggers": "unknown",
+          "trigger_functions": "unknown"
+        }
+      },
+      "compatibility_with_app_code": "self_consistent_for_admin_features",
+      "production_swagger_alignment": "partial_conflict_admin_expects_extra_profile_fields",
+      "notes": "Contains explicit recommended table contract text and repair-upsert paths."
+    },
+    {
+      "path": "runtime_state/schema_recovery_dev_qkqexvlprzjqjtsarqbz_20260716_030658/base_schema_draft.sql",
+      "classification": "generated_obsolete_draft",
+      "source_kind": "reconstructed_ddl_draft",
+      "tables": {
+        "public.user_profiles": {
+          "defines_or_modifies": true,
+          "columns_defined": [
+            "id",
+            "created_at",
+            "email",
+            "full_name",
+            "plan",
+            "account_status",
+            "trial_start",
+            "trial_end",
+            "user_id",
+            "stripe_customer_id",
+            "stripe_subscription_id"
+          ],
+          "defaults_defined": {
+            "id": "gen_random_uuid()",
+            "created_at": "now()"
+          },
+          "primary_keys": "not_declared",
+          "foreign_keys": "not_declared",
+          "unique_or_check_constraints": "not_declared",
+          "indexes": "not_declared",
+          "rls_settings_or_policies": "not_declared",
+          "triggers": "not_declared",
+          "trigger_functions": "not_declared"
+        },
+        "public.subscriptions": {
+          "defines_or_modifies": true,
+          "columns_defined": [
+            "id",
+            "user_id",
+            "plan",
+            "status",
+            "stripe_customer_id",
+            "stripe_subscription_id",
+            "created_at"
+          ],
+          "defaults_defined": {
+            "id": "gen_random_uuid()",
+            "created_at": "now()"
+          },
+          "primary_keys": "not_declared",
+          "foreign_keys": "not_declared",
+          "unique_or_check_constraints": "not_declared",
+          "indexes": "not_declared",
+          "rls_settings_or_policies": "not_declared",
+          "triggers": "not_declared",
+          "trigger_functions": "not_declared"
+        },
+        "public.workspaces": {
+          "defines_or_modifies": true,
+          "columns_defined": [
+            "id",
+            "user_id",
+            "workspace_name",
+            "created_at"
+          ],
+          "defaults_defined": {
+            "id": "gen_random_uuid()",
+            "created_at": "now()"
+          },
+          "primary_keys": "not_declared",
+          "foreign_keys": "not_declared",
+          "unique_or_check_constraints": "not_declared",
+          "indexes": "not_declared",
+          "rls_settings_or_policies": "not_declared",
+          "triggers": "not_declared",
+          "trigger_functions": "not_declared"
+        }
+      },
+      "compatibility_with_app_code": "insufficient_for_current_runtime_writes",
+      "production_swagger_alignment": "matches_swagger_scope",
+      "notes": "Useful draft baseline but not canonical repository migration source."
+    },
+    {
+      "path": "runtime_state/schema_recovery_20260715_user_profiles/user_profiles_schema_summary.json",
+      "classification": "archived_snapshot",
+      "source_kind": "historical_summary",
+      "tables": {
+        "public.user_profiles": {
+          "defines_or_modifies": true,
+          "columns_defined": [
+            "id",
+            "created_at",
+            "email",
+            "full_name",
+            "plan",
+            "account_status",
+            "trial_start",
+            "trial_end",
+            "user_id",
+            "stripe_customer_id",
+            "stripe_subscription_id"
+          ],
+          "defaults_defined": {
+            "id": "gen_random_uuid()",
+            "created_at": "now()"
+          },
+          "primary_keys": "unknown",
+          "foreign_keys": "unknown",
+          "unique_or_check_constraints": "unknown",
+          "indexes": "unknown",
+          "rls_settings_or_policies": "unknown",
+          "triggers": "unknown",
+          "trigger_functions": "unknown"
+        }
+      },
+      "compatibility_with_app_code": "insufficient_as_full_contract",
+      "production_swagger_alignment": "matches_user_profiles_swagger_scope",
+      "notes": "Historical export only; does not include subscriptions/workspaces details."
+    }
+  ],
+  "summary": {
+    "canonical_existing_migration_in_repo": false,
+    "strongest_available_schema_source": "runtime_state/prod_schema_export_zqzujesufquifrtqnanb_20260716_031915/openapi_tables_extract.json + production_tables_ddl_export.sql",
+    "conflicting_or_obsolete_sources": [
+      "runtime_state/schema_recovery_dev_qkqexvlprzjqjtsarqbz_20260716_030658/base_schema_draft.sql (generated draft, not canonical)",
+      "application runtime contracts in pages/SaaS_Core.py and pages/Admin_Control_Center.py require many columns absent from Swagger-visible production schema"
+    ]
+  }
+}
