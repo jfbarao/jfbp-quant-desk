@@ -1,20 +1,10 @@
-# =========================================================
-# 🧠 STANDALONE IBKR CONNECTOR TEST (NO STREAMLIT)
-# =========================================================
-
 import asyncio
+import os
 import threading
 import time
 
-try:
-    from ib_insync import IB, Stock, MarketOrder
-except Exception as e:
-    raise ImportError(f"ib_insync not installed or broken: {e}")
+import pytest
 
-
-# =========================================================
-# 🧠 EVENT LOOP RUNNER (THREAD SAFE)
-# =========================================================
 
 class EventLoopThread:
     def __init__(self):
@@ -30,13 +20,10 @@ class EventLoopThread:
         return self.loop
 
 
-# =========================================================
-# 🧠 IBKR CONNECTOR (MINIMAL DEBUG VERSION)
-# =========================================================
-
 class IBKRTestConnector:
-    def __init__(self):
-        self.ib = IB()
+    def __init__(self, ib_module):
+        self.ib_module = ib_module
+        self.ib = ib_module.IB()
         self.loop_runner = EventLoopThread()
         self.loop = self.loop_runner.start()
 
@@ -44,92 +31,75 @@ class IBKRTestConnector:
         self.account = None
         self.last_error = ""
 
-    # ---------------------------------------------------------
-    # CONNECT
-    # ---------------------------------------------------------
     def connect(self, host="127.0.0.1", port=7497, client_id=1):
         try:
-            print("Connecting to IBKR...")
-
             future = asyncio.run_coroutine_threadsafe(
                 self.ib.connectAsync(host, port, clientId=client_id),
-                self.loop
+                self.loop,
             )
 
             result = future.result(timeout=10)
-
             if not result:
                 self.last_error = "Connection returned False"
-                print(self.last_error)
                 return False
 
             self.connected = True
-
             accounts = self.ib.managedAccounts()
             self.account = accounts[0] if accounts else None
-
-            print("CONNECTED ✔")
-            print("Account:", self.account)
-
             return True
-
-        except Exception as e:
-            self.last_error = str(e)
-            print("CONNECT FAILED ❌", self.last_error)
+        except Exception as exc:
+            self.last_error = str(exc)
             return False
 
-    # ---------------------------------------------------------
-    # SNAPSHOT TEST
-    # ---------------------------------------------------------
     def test_market_data(self, symbol="AAPL"):
         if not self.connected:
-            print("Not connected")
-            return
+            return None
 
-        try:
-            contract = Stock(symbol, "SMART", "USD")
-            self.ib.qualifyContracts(contract)
+        contract = self.ib_module.Stock(symbol, "SMART", "USD")
+        self.ib.qualifyContracts(contract)
+        ticker = self.ib.reqMktData(contract)
+        time.sleep(3)
+        return {
+            "symbol": symbol,
+            "last": ticker.last,
+            "bid": ticker.bid,
+            "ask": ticker.ask,
+        }
 
-            ticker = self.ib.reqMktData(contract)
-
-            time.sleep(3)  # allow data to populate
-
-            print("\n--- MARKET DATA ---")
-            print("Symbol:", symbol)
-            print("Last:", ticker.last)
-            print("Bid:", ticker.bid)
-            print("Ask:", ticker.ask)
-
-        except Exception as e:
-            print("MARKET DATA ERROR:", str(e))
-
-    # ---------------------------------------------------------
-    # DISCONNECT
-    # ---------------------------------------------------------
     def disconnect(self):
         try:
             self.ib.disconnect()
+        finally:
             self.connected = False
-            print("DISCONNECTED")
-        except Exception as e:
-            print("DISCONNECT ERROR:", str(e))
 
 
-# =========================================================
-# 🧪 RUN TEST
-# =========================================================
+@pytest.fixture
+def require_ibkr_integration() -> None:
+    if os.getenv("RUN_IBKR_INTEGRATION_TESTS", "").strip() != "1":
+        pytest.skip("IBKR integration tests disabled. Set RUN_IBKR_INTEGRATION_TESTS=1 to enable.")
 
-if __name__ == "__main__":
-    ibkr = IBKRTestConnector()
 
-    ok = ibkr.connect(
-        host="127.0.0.1",
-        port=7497,   # paper trading default
-        client_id=7
-    )
+@pytest.mark.integration
+def test_ibkr_async_connect_disconnect(require_ibkr_integration: None) -> None:
+    ib_insync = pytest.importorskip("ib_insync")
+    connector = IBKRTestConnector(ib_insync)
+    try:
+        ok = connector.connect(host="127.0.0.1", port=7497, client_id=7)
+        assert ok, connector.last_error
+        assert connector.connected
+    finally:
+        connector.disconnect()
 
-    if ok:
-        ibkr.test_market_data("AAPL")
 
-        time.sleep(2)
-        ibkr.disconnect()
+@pytest.mark.integration
+def test_ibkr_market_data_snapshot(require_ibkr_integration: None) -> None:
+    ib_insync = pytest.importorskip("ib_insync")
+    connector = IBKRTestConnector(ib_insync)
+    try:
+        ok = connector.connect(host="127.0.0.1", port=7497, client_id=7)
+        assert ok, connector.last_error
+        quote = connector.test_market_data("AAPL")
+        assert quote is not None
+        assert quote["symbol"] == "AAPL"
+    finally:
+        connector.disconnect()
