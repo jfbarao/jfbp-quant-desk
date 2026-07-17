@@ -6,10 +6,11 @@ Status: Completed (isolated experimental test only)
 ## Scope and Safety
 - No application code was modified.
 - No changes were made to `app.py` or `pages/SaaS_Core.py`.
-- One isolated experimental test was created and executed:
+- One isolated experimental integration test was created and executed:
   - `tests/test_phase9a2_supabase_restoration_proof.py`
 - Test ran against development environment (`APP_ENV=development`).
 - The test creates a temporary auth user through admin API and deletes it in `finally` cleanup.
+- The proof is excluded from ordinary test runs and requires explicit opt-in.
 
 ## Objective
 Prove end-to-end that the installed Supabase Python client can restore an authenticated session using only the server-side refresh material intended for storage.
@@ -41,6 +42,17 @@ Command:
 Result:
 - `1 passed`
 - warnings only (gotrue deprecation, unregistered custom test mark)
+
+Approved intentional execution command for the live proof:
+
+```bash
+ENABLE_LIVE_SUPABASE_USER_CREATION=1 \
+python -m pytest -q -m integration \
+tests/test_phase9a2_supabase_restoration_proof.py
+```
+
+Cleanup guarantee:
+- Temporary users are deleted in `finally` regardless of success, assertion failure, corrupted-token failure, revoked-token failure, or encryption failure.
 
 ## Conclusion
 The installed Supabase Python client restored authenticated state successfully using only refresh material (the minimum server-side auth material selected for Phase 9A.2 persistence).

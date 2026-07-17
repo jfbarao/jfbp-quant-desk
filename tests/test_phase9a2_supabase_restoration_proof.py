@@ -4,12 +4,27 @@ import os
 import secrets
 import tomllib
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
 import requests
 from supabase import create_client
 
 from core.session_crypto import SessionCrypto, SessionCryptoError
+
+
+pytestmark = pytest.mark.integration
+
+DEVELOPMENT_PROJECT_REF = "qkqexvlprzjqjtsarqbz"
+
+
+def _live_user_creation_enabled() -> bool:
+    return str(os.environ.get("ENABLE_LIVE_SUPABASE_USER_CREATION", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _secret_value(name: str, default: str = "") -> str:
@@ -23,6 +38,30 @@ def _secret_value(name: str, default: str = "") -> str:
         return str(data.get(name, default) or default).strip()
 
     return str(default or "").strip()
+
+
+def _project_ref_from_url(url: str) -> str:
+    host = str(urlparse(str(url or "").strip()).hostname or "").strip().lower()
+    if not host:
+        return ""
+    return host.split(".", 1)[0]
+
+
+def _require_development_project() -> tuple[str, str, str]:
+    app_env = _secret_value("APP_ENV", "")
+    if app_env.strip().lower() != "development":
+        pytest.skip("Live Supabase proof is restricted to the approved development project.")
+
+    supabase_url = _secret_value("SUPABASE_URL", "")
+    if not supabase_url:
+        pytest.skip("Live Supabase proof is restricted to the approved development project.")
+
+    if _project_ref_from_url(supabase_url) != DEVELOPMENT_PROJECT_REF:
+        pytest.skip("Live Supabase proof is restricted to the approved development project.")
+
+    anon_key = _secret_value("SUPABASE_ANON_KEY", "")
+    service_key = _secret_value("SUPABASE_SERVICE_ROLE_KEY", "")
+    return supabase_url, anon_key, service_key
 
 
 def _admin_headers(service_key: str) -> dict[str, str]:
@@ -61,9 +100,12 @@ def _delete_temp_user(url: str, service_key: str, user_id: str) -> None:
 @pytest.mark.live
 def test_supabase_refresh_only_restoration_proof():
     """Live proof that refresh-material-only restoration works with installed client."""
-    supabase_url = _secret_value("SUPABASE_URL", "")
-    anon_key = _secret_value("SUPABASE_ANON_KEY", "")
-    service_key = _secret_value("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not _live_user_creation_enabled():
+        pytest.skip(
+            "Live user creation is disabled by default. Set ENABLE_LIVE_SUPABASE_USER_CREATION=1 to opt in."
+        )
+
+    supabase_url, anon_key, service_key = _require_development_project()
 
     assert supabase_url, "SUPABASE_URL is required"
     assert anon_key, "SUPABASE_ANON_KEY is required"
@@ -73,6 +115,9 @@ def test_supabase_refresh_only_restoration_proof():
     temp_password = f"Proof-{secrets.token_urlsafe(18)}-Aa1!"
 
     temp_user_id = ""
+
+    body_error: BaseException | None = None
+    cleanup_error: BaseException | None = None
 
     try:
         temp_user_id = _create_temp_user(supabase_url, service_key, temp_email, temp_password)
@@ -155,5 +200,18 @@ def test_supabase_refresh_only_restoration_proof():
         with pytest.raises(SessionCryptoError):
             wrong_key_crypto.decrypt(encrypted_refresh_material)
 
+    except BaseException as exc:
+        body_error = exc
+        raise
     finally:
-        _delete_temp_user(supabase_url, service_key, temp_user_id)
+        try:
+            _delete_temp_user(supabase_url, service_key, temp_user_id)
+        except BaseException as cleanup_exc:
+            cleanup_error = cleanup_exc
+
+        if cleanup_error is not None:
+            if body_error is not None:
+                pytest.fail(
+                    f"Cleanup failed after test error: {body_error.__class__.__name__}: {body_error}; cleanup error: {cleanup_error.__class__.__name__}: {cleanup_error}"
+                )
+            pytest.fail(f"Cleanup failed for temporary Supabase user: {cleanup_error.__class__.__name__}: {cleanup_error}")
