@@ -15,6 +15,7 @@ from email.message import EmailMessage
 import streamlit as st
 
 from core.bootstrap import init_core
+from core.environment_validation import EnvironmentValidationError, validate_runtime_environment
 from core.ui_utils import scroll_to_top
 
 from pages.Navigation_Guide import run_page as navigation_guide_page
@@ -1153,6 +1154,13 @@ def run_protected_page(page_key: str, runner) -> None:
 # =========================================================
 
 def app():
+    try:
+        validate_runtime_environment()
+    except EnvironmentValidationError as exc:
+        st.error("Configuration boundary check failed. Fix APP_ENV/Supabase/Stripe/redirect settings.")
+        st.caption(str(exc))
+        st.stop()
+        return
 
     init_core()
     enforce_app_login()

@@ -10,6 +10,7 @@ import hashlib
 import os
 import smtplib
 import time
+from types import SimpleNamespace
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -20,6 +21,12 @@ import requests
 import streamlit as st
 
 from core.canonical_schema import canonical_supports_column, filter_canonical_payload
+from core.environment_validation import (
+    build_runtime_config_from_secrets,
+    default_password_reset_redirect_for_env,
+    default_signup_redirect_for_env,
+    validate_runtime_environment,
+)
 from core.responsive import inject_responsive_css
 from core.ui_cards import inject_card_css
 
@@ -296,6 +303,7 @@ def init_saas_state() -> None:
     st.session_state.setdefault("saas_auth_debug", {})
     st.session_state.setdefault("saas_trial_warning_message", "")
     st.session_state.setdefault("saas_trial_protection", {})
+    st.session_state.setdefault("saas_provisioning_repair_attempts", {})
     if not st.session_state.get("saas_logged_in", False):
         _rehydrate_authenticated_session()
 
@@ -1152,6 +1160,11 @@ def get_supabase_client():
 
 
 def supabase_ready() -> tuple[bool, str]:
+    try:
+        validate_runtime_environment()
+    except Exception as exc:
+        return False, f"Environment validation failed: {exc}"
+
     if create_client is None:
         return False, "Python package `supabase` is not installed. Add `supabase` to requirements.txt."
 
@@ -1204,6 +1217,25 @@ def _auth_response_user(auth_response: Any) -> Any:
         return user
     except Exception:
         return None
+
+
+def _signup_email_redirect_to() -> str:
+    """Return explicit signup confirmation redirect URL from environment config."""
+    explicit = str(_secret_value("SUPABASE_EMAIL_REDIRECT_TO", "") or "").strip()
+    if explicit:
+        return explicit
+
+    runtime_config = build_runtime_config_from_secrets()
+    return default_signup_redirect_for_env(runtime_config.get("APP_ENV", "development"))
+
+
+def _password_reset_redirect_to() -> str:
+    explicit = str(_secret_value("SUPABASE_PASSWORD_RESET_REDIRECT_TO", "") or "").strip()
+    if explicit:
+        return explicit
+
+    runtime_config = build_runtime_config_from_secrets()
+    return default_password_reset_redirect_for_env(runtime_config.get("APP_ENV", "development"))
 
 
 def _apply_auth_session_to_client(client: Any, session: Any) -> bool:
@@ -2010,6 +2042,7 @@ def clear_authenticated_session() -> None:
     st.session_state["saas_onboarding_debug"] = {}
     st.session_state["saas_auth_debug"] = {}
     st.session_state["saas_metadata_debug_message"] = ""
+    st.session_state["saas_provisioning_repair_attempts"] = {}
 
 
 # =========================================================
@@ -2040,43 +2073,49 @@ def supabase_sign_up(email: str, password: str, full_name: str, plan: str) -> tu
         )
 
     try:
+        signup_options: Dict[str, Any] = {
+            "data": {
+                "full_name": full_name.strip() or "JFBP User",
+                "plan": signup_plan,
+                "account_status": ACCOUNT_TRIAL,
+                "signup_ip": signup_context.get("signup_ip", "UNKNOWN"),
+                "signup_country": signup_context.get("signup_country", "UNKNOWN"),
+                "signup_city": signup_context.get("signup_city", "UNKNOWN"),
+                "city": signup_context.get("city", "UNKNOWN"),
+                "device_id": signup_context.get("device_id", "UNKNOWN"),
+                "device_fingerprint": signup_context.get("device_fingerprint", "UNKNOWN"),
+                "user_agent": signup_context.get("user_agent", "UNKNOWN"),
+                "browser": signup_context.get("browser", "UNKNOWN"),
+                "operating_system": signup_context.get("operating_system", "UNKNOWN"),
+                "trial_started_at": signup_context.get("trial_started_at", now.isoformat()),
+                "trial_attempts": trial_protection.get("trial_attempts", 1),
+                "repeat_ips": trial_protection.get("repeat_ips", 0),
+                "repeat_devices": trial_protection.get("repeat_devices", 0),
+                "risk_score": trial_protection.get("risk_score", 0),
+                "fraud_flags": trial_protection.get("fraud_flags", ""),
+                "last_ip_activity": trial_protection.get("last_ip_activity", now.isoformat()),
+                "first_login_at": None,
+                "last_login_at": None,
+                "last_login_ip": None,
+                "last_login_country": None,
+                "last_login_city": None,
+                "total_logins": 0,
+                "trial_whitelisted": False,
+                "trial_ignored": False,
+                "trial_blocked": blocked,
+                "trial_notes": "",
+            }
+        }
+        email_redirect_to = _signup_email_redirect_to()
+        if email_redirect_to:
+            signup_options["redirect_to"] = email_redirect_to
+            signup_options["email_redirect_to"] = email_redirect_to
+
         response = client.auth.sign_up(
             {
                 "email": clean_email,
                 "password": password,
-                "options": {
-                    "data": {
-                        "full_name": full_name.strip() or "JFBP User",
-                        "plan": signup_plan,
-                        "account_status": ACCOUNT_TRIAL,
-                        "signup_ip": signup_context.get("signup_ip", "UNKNOWN"),
-                        "signup_country": signup_context.get("signup_country", "UNKNOWN"),
-                        "signup_city": signup_context.get("signup_city", "UNKNOWN"),
-                        "city": signup_context.get("city", "UNKNOWN"),
-                        "device_id": signup_context.get("device_id", "UNKNOWN"),
-                        "device_fingerprint": signup_context.get("device_fingerprint", "UNKNOWN"),
-                        "user_agent": signup_context.get("user_agent", "UNKNOWN"),
-                        "browser": signup_context.get("browser", "UNKNOWN"),
-                        "operating_system": signup_context.get("operating_system", "UNKNOWN"),
-                        "trial_started_at": signup_context.get("trial_started_at", now.isoformat()),
-                        "trial_attempts": trial_protection.get("trial_attempts", 1),
-                        "repeat_ips": trial_protection.get("repeat_ips", 0),
-                        "repeat_devices": trial_protection.get("repeat_devices", 0),
-                        "risk_score": trial_protection.get("risk_score", 0),
-                        "fraud_flags": trial_protection.get("fraud_flags", ""),
-                        "last_ip_activity": trial_protection.get("last_ip_activity", now.isoformat()),
-                        "first_login_at": None,
-                        "last_login_at": None,
-                        "last_login_ip": None,
-                        "last_login_country": None,
-                        "last_login_city": None,
-                        "total_logins": 0,
-                        "trial_whitelisted": False,
-                        "trial_ignored": False,
-                        "trial_blocked": blocked,
-                        "trial_notes": "",
-                    }
-                },
+                "options": signup_options,
             }
         )
 
@@ -2084,26 +2123,10 @@ def supabase_sign_up(email: str, password: str, full_name: str, plan: str) -> tu
         if set_authenticated_session(response, selected_plan=signup_plan):
             return True, "Account created. 30-day trial and workspace are ready."
 
-        # Supabase may intentionally return a generic success response when an
-        # email already exists. Try a login with the supplied password. If it
-        # succeeds, treat this as an existing account and finish onboarding.
-        try:
-            login_response = client.auth.sign_in_with_password(
-                {"email": clean_email, "password": password}
-            )
-            if set_authenticated_session(login_response, selected_plan=signup_plan):
-                return True, "This email already has an account. Logged in and verified workspace records."
-        except Exception:
-            pass
-
-        # No active session and immediate login failed. Do not say the account
-        # was definitely created, because Supabase may be protecting an existing
-        # email address from account enumeration.
-        return (
-            False,
-            "Account not completed. This email may already be registered, or it may need email verification. "
-            "Try Login first, or use Reset Password if this email is already on file.",
-        )
+        # With email verification enabled, signup can succeed without an active
+        # session. This should be treated as success and keeps enumeration-safe
+        # behavior because the message is generic.
+        return True, "Account created. Check your email to verify your account."
 
     except Exception as exc:
         error_text = str(exc)
@@ -2180,7 +2203,7 @@ def supabase_reset_password(email: str) -> tuple[bool, str, Dict[str, Any]]:
         "email": email_value,
     }
     query = {
-        "redirect_to": "https://jfbpquantdesk.com/reset-password",
+        "redirect_to": _password_reset_redirect_to(),
     }
 
     try:
@@ -2270,6 +2293,69 @@ def resolve_access_state(user: SaaSUser) -> str:
     return "provisioning_required"
 
 
+def _auto_repair_provisioning(user: SaaSUser, trigger: str = "") -> tuple[bool, str]:
+    """Attempt one authenticated onboarding repair for a locked trial user."""
+    user_id = str(getattr(user, "user_id", "") or "").strip()
+    if not user_id:
+        return False, "Provisioning recovery failed: missing user_id."
+
+    attempts = dict(st.session_state.get("saas_provisioning_repair_attempts", {}) or {})
+    attempt_count = int(attempts.get(user_id, 0) or 0)
+    if attempt_count >= 1:
+        return False, "Provisioning is still incomplete. Use 'Verify my SaaS onboarding rows' in SaaS Core for detailed diagnostics."
+
+    attempts[user_id] = attempt_count + 1
+    st.session_state["saas_provisioning_repair_attempts"] = attempts
+
+    client = get_supabase_client()
+    if client is None:
+        return False, "Provisioning recovery failed: Supabase client unavailable."
+
+    session_payload = st.session_state.get("saas_auth_session")
+    if not _apply_auth_session_to_client(client, session_payload):
+        return False, "Provisioning recovery failed: authenticated session missing. Please log out and log in again."
+
+    auth_user = None
+    try:
+        auth_user = _auth_response_user(client.auth.get_user())
+    except Exception:
+        auth_user = None
+
+    if auth_user is None:
+        auth_user = SimpleNamespace(
+            id=user.user_id,
+            email=user.email,
+            created_at=user.created_at,
+            user_metadata={
+                "full_name": user.full_name,
+                "plan": user.plan,
+                "account_status": user.account_status,
+                "role": user.role,
+            },
+        )
+
+    onboarding_ok, onboarding_message = ensure_user_workspace_records(
+        auth_user,
+        selected_plan=user.plan,
+        auth_session=session_payload,
+    )
+    st.session_state["saas_onboarding_ready"] = onboarding_ok
+    st.session_state["saas_auth_last_message"] = onboarding_message
+    st.session_state["saas_user"] = build_saas_user_from_auth(auth_user, selected_plan=user.plan)
+
+    _set_auth_debug(
+        "auto_repair_provisioning",
+        {
+            "user_id": user_id,
+            "trigger": trigger,
+            "ok": onboarding_ok,
+            "message": onboarding_message,
+        },
+    )
+
+    return onboarding_ok, onboarding_message
+
+
 def is_account_open(user: SaaSUser) -> bool:
     if is_admin_user(user):
         return True
@@ -2299,6 +2385,13 @@ def require_page_access(page_name: str) -> bool:
     if user is None:
         render_login_required(page_name)
         return False
+
+    if resolve_access_state(user) == "provisioning_required":
+        repaired, _ = _auto_repair_provisioning(user, trigger=f"require_page_access:{page_name}")
+        if repaired:
+            refreshed_user = get_current_user()
+            if refreshed_user is not None:
+                user = refreshed_user
 
     if not is_account_open(user):
         render_account_locked(user)
@@ -2511,6 +2604,16 @@ def render_account_locked(user: SaaSUser) -> None:
         f'<div class="saas-lock"><strong>{headline}.</strong><br>Status: <strong>{user.account_status}</strong><br>Please update your subscription to continue.</div>',
         unsafe_allow_html=True,
     )
+
+    if access_state == "provisioning_required":
+        st.info("We detected incomplete onboarding records. You can complete provisioning without buying a plan.")
+        if st.button("Complete provisioning now", use_container_width=True, key="saas_complete_provisioning_now"):
+            repaired, message = _auto_repair_provisioning(user, trigger="render_account_locked")
+            if repaired:
+                st.success(message)
+                st.rerun()
+            else:
+                st.error(message)
 
 
 def render_upgrade_required(user: SaaSUser, page_name: str) -> None:
