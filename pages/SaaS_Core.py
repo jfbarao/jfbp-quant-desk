@@ -1622,6 +1622,9 @@ RECOVERY_QUERY_PARAM_NAMES = (
     "code",
     "access_token",
     "refresh_token",
+    "token_type",
+    "expires_in",
+    "expires_at",
     "error",
     "error_code",
 )
@@ -1638,11 +1641,120 @@ def _clear_recovery_query_params() -> None:
         return
 
 
+def _clear_auth_callback_query_params() -> None:
+    """Clear callback parameters that may contain sensitive auth values."""
+    _clear_recovery_query_params()
+
+
+def _bridge_fragment_auth_callback_to_query() -> None:
+    """Bridge URL fragments into query params so Streamlit can consume callbacks.
+
+    Streamlit server code cannot read URL fragments directly. This bridge runs in
+    a sandboxed iframe, reads the parent page fragment, copies supported callback
+    keys into the query string, removes the fragment from the address bar, and
+    reloads once so Python receives the callback through st.query_params.
+    """
+    bridge_html = """
+        <script>
+        (function () {
+            try {
+                var parentWin = window;
+                try {
+                    while (parentWin.parent && parentWin.parent !== parentWin) {
+                        parentWin = parentWin.parent;
+                    }
+                } catch (_walkErr) {
+                    parentWin = (window.parent && window.parent !== window) ? window.parent : window;
+                }
+
+                var hash = String(parentWin.location.hash || '');
+                if (!hash || hash.length <= 1) {
+                    return;
+                }
+
+                var hashParams = new URLSearchParams(hash.slice(1));
+                var callbackKeys = [
+                    'type',
+                    'code',
+                    'token_hash',
+                    'token',
+                    'access_token',
+                    'refresh_token',
+                    'error',
+                    'error_code',
+                    'token_type',
+                    'expires_in',
+                    'expires_at'
+                ];
+
+                var hasCallbackPayload = callbackKeys.some(function (key) {
+                    return Boolean(hashParams.get(key));
+                });
+                if (!hasCallbackPayload) {
+                    return;
+                }
+
+                var queryParams = new URLSearchParams(parentWin.location.search || '');
+                var changed = false;
+                callbackKeys.forEach(function (key) {
+                    var value = hashParams.get(key);
+                    if (!value) {
+                        return;
+                    }
+                    if (!queryParams.get(key)) {
+                        queryParams.set(key, value);
+                        changed = true;
+                    }
+                });
+
+                var basePath = parentWin.location.pathname;
+                var nextSearch = queryParams.toString();
+                var nextUrl = nextSearch ? (basePath + '?' + nextSearch) : basePath;
+
+                // Remove fragment immediately so tokens do not remain in the bar.
+                parentWin.history.replaceState({}, '', nextUrl);
+
+                if (changed) {
+                    parentWin.location.reload();
+                }
+            } catch (_err) {
+                // Never raise client-side callback bridge errors into the app.
+            }
+        })();
+        </script>
+    """
+
+    try:
+        if hasattr(st, "html"):
+            st.html(bridge_html)
+            return
+    except Exception:
+        pass
+
+    try:
+        st.components.v1.html(bridge_html, height=0)
+    except Exception:
+        return
+
+
 def _recovery_flow_type() -> str:
     return _query_param_value("type").lower()
 
 
 def _has_recovery_callback_params() -> bool:
+    keys = (
+        "code",
+        "token_hash",
+        "token",
+        "access_token",
+        "refresh_token",
+        "error",
+        "error_code",
+    )
+    return any(bool(_query_param_value(name)) for name in keys)
+
+
+def _has_auth_callback_params() -> bool:
     keys = (
         "code",
         "token_hash",
@@ -1676,6 +1788,87 @@ def _recovery_error_summary() -> tuple[str, str]:
 def _sanitize_reset_error(exc: Exception) -> str:
     _code, message = _sanitize_auth_error(exc)
     return message
+
+
+def _establish_non_recovery_session_from_query(client: Any) -> tuple[bool, bool, str]:
+    """Consume non-recovery auth callbacks from query parameters.
+
+    Returns: (consumed, ok, message)
+    - consumed=False means no relevant callback was present for this handler.
+    - consumed=True means callback params were present and handled.
+    """
+    if not _has_auth_callback_params():
+        return False, False, ""
+
+    callback_type = _recovery_flow_type()
+    if callback_type == "recovery":
+        return False, False, ""
+
+    if client is None:
+        _clear_auth_callback_query_params()
+        return True, False, "Supabase client unavailable for callback session handling."
+
+    code = _query_param_value("code")
+    token_hash = _query_param_value("token_hash")
+    token = _query_param_value("token")
+    callback_email = _query_param_value("email").strip().lower()
+    access_token = _query_param_value("access_token")
+    refresh_token = _query_param_value("refresh_token")
+    err = _query_param_value("error")
+    err_code = _query_param_value("error_code")
+
+    if err or err_code:
+        _clear_auth_callback_query_params()
+        text = str(err_code or err).strip().lower()
+        if text == "access_denied":
+            return True, False, "Confirmation link denied. Request a fresh link and try again."
+        return True, False, f"Confirmation callback error: {text or 'unknown error'}."
+
+    try:
+        if code and hasattr(client.auth, "exchange_code_for_session"):
+            client.auth.exchange_code_for_session(code)
+        elif token_hash and hasattr(client.auth, "verify_otp"):
+            verify_type = callback_type or "signup"
+            try:
+                client.auth.verify_otp({"type": verify_type, "token_hash": token_hash})
+            except TypeError:
+                client.auth.verify_otp({"type": verify_type, "token": token_hash})
+        elif token and hasattr(client.auth, "verify_otp"):
+            verify_type = callback_type or "signup"
+            payload: Dict[str, Any] = {"type": verify_type, "token": token}
+            if callback_email:
+                payload["email"] = callback_email
+            client.auth.verify_otp(payload)
+        elif access_token or refresh_token:
+            if not access_token or not refresh_token:
+                _clear_auth_callback_query_params()
+                return True, False, "Callback session requires both access and refresh tokens."
+            if not _apply_auth_session_to_client(
+                client,
+                {
+                    "access_token": access_token,
+                    "refresh_token": refresh_token,
+                },
+            ):
+                _clear_auth_callback_query_params()
+                return True, False, "Callback session could not be established."
+        else:
+            _clear_auth_callback_query_params()
+            return True, False, "Confirmation callback is missing required parameters."
+
+        session = client.auth.get_session()
+        auth_response = SimpleNamespace(
+            user=_auth_response_user(SimpleNamespace(session=session, user=None)),
+            session=session,
+        )
+        ok = set_authenticated_session(auth_response)
+        _clear_auth_callback_query_params()
+        if ok:
+            return True, True, "Confirmation callback consumed. Session established."
+        return True, False, "Confirmation callback consumed but no authenticated session was returned."
+    except Exception as exc:
+        _clear_auth_callback_query_params()
+        return True, False, f"Confirmation callback failed: {exc}"
 
 
 def _has_active_recovery_session(client: Any) -> bool:
@@ -3314,10 +3507,23 @@ def render_auth_status() -> None:
 def render_auth_panel() -> None:
     left, center, right = st.columns([0.75, 1.2, 0.75], gap="large")
     with center:
+        _bridge_fragment_auth_callback_to_query()
+
         st.markdown('<div class="saas-auth-shell">', unsafe_allow_html=True)
         st.subheader("🔐 Secure Access")
         st.caption("Sign in to JFBP Quant Desk to access your workspace and tools.")
         render_auth_status()
+
+        callback_client = get_supabase_client()
+        callback_consumed, callback_ok, callback_message = _establish_non_recovery_session_from_query(
+            callback_client
+        )
+        if callback_consumed:
+            if callback_ok:
+                st.success(callback_message)
+                st.rerun()
+            else:
+                st.error(callback_message)
 
         trial_warning_message = str(st.session_state.get("saas_trial_warning_message", "") or "")
         if trial_warning_message:

@@ -264,6 +264,9 @@ def test_clear_recovery_query_params_removes_sensitive_keys(monkeypatch):
         "code": "code-123",
         "access_token": "access-123",
         "refresh_token": "refresh-123",
+        "token_type": "bearer",
+        "expires_in": "3600",
+        "expires_at": "999999",
         "other": "keep-me",
     }
     monkeypatch.setattr(saas.st, "query_params", fake_params, raising=False)
@@ -271,3 +274,69 @@ def test_clear_recovery_query_params_removes_sensitive_keys(monkeypatch):
     saas._clear_recovery_query_params()
 
     assert fake_params == {"other": "keep-me"}
+
+
+def test_non_recovery_callback_consumes_access_refresh_and_sets_session(monkeypatch):
+    client = _FakeRecoveryClient()
+    cleaned = {"called": False}
+
+    monkeypatch.setattr(saas, "_has_auth_callback_params", lambda: True)
+    monkeypatch.setattr(saas, "_recovery_flow_type", lambda: "signup")
+    monkeypatch.setattr(
+        saas,
+        "_query_param_value",
+        lambda name: {
+            "access_token": "access-123",
+            "refresh_token": "refresh-123",
+            "type": "signup",
+        }.get(name, ""),
+    )
+    monkeypatch.setattr(saas, "set_authenticated_session", lambda _response: True)
+    monkeypatch.setattr(
+        saas,
+        "_clear_auth_callback_query_params",
+        lambda: cleaned.__setitem__("called", True),
+    )
+
+    consumed, ok, message = saas._establish_non_recovery_session_from_query(client)
+
+    assert consumed is True
+    assert ok is True
+    assert "consumed" in message.lower()
+    assert client.auth.set_session_calls == [
+        {"access_token": "access-123", "refresh_token": "refresh-123"}
+    ]
+    assert cleaned["called"] is True
+
+
+def test_non_recovery_callback_ignores_recovery_type(monkeypatch):
+    monkeypatch.setattr(saas, "_has_auth_callback_params", lambda: True)
+    monkeypatch.setattr(saas, "_recovery_flow_type", lambda: "recovery")
+
+    consumed, ok, message = saas._establish_non_recovery_session_from_query(_FakeRecoveryClient())
+
+    assert consumed is False
+    assert ok is False
+    assert message == ""
+
+
+def test_non_recovery_callback_rejects_incomplete_token_pair(monkeypatch):
+    client = _FakeRecoveryClient()
+
+    monkeypatch.setattr(saas, "_has_auth_callback_params", lambda: True)
+    monkeypatch.setattr(saas, "_recovery_flow_type", lambda: "signup")
+    monkeypatch.setattr(
+        saas,
+        "_query_param_value",
+        lambda name: {
+            "access_token": "access-123",
+            "refresh_token": "",
+            "type": "signup",
+        }.get(name, ""),
+    )
+
+    consumed, ok, message = saas._establish_non_recovery_session_from_query(client)
+
+    assert consumed is True
+    assert ok is False
+    assert "both access and refresh" in message.lower()
