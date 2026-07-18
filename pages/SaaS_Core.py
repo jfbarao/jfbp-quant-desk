@@ -6,10 +6,13 @@
 
 from __future__ import annotations
 
+import base64
+import hmac
 import hashlib
 import os
 import smtplib
 import time
+from urllib.parse import urlparse
 from types import SimpleNamespace
 
 from dataclasses import dataclass
@@ -27,6 +30,12 @@ from core.environment_validation import (
     default_signup_redirect_for_env,
     validate_runtime_environment,
 )
+from core.session_store import (
+    SessionCreationInput,
+    SessionLookupStatus,
+    SessionStore,
+    SessionStoreError,
+)
 from core.responsive import inject_responsive_css
 from core.ui_cards import inject_card_css
 
@@ -41,6 +50,11 @@ try:
     from supabase import create_client
 except Exception:  # pragma: no cover
     create_client = None
+
+try:
+    import extra_streamlit_components as stx
+except Exception:  # pragma: no cover
+    stx = None
 
 
 # =========================================================
@@ -193,6 +207,15 @@ RESET_PASSWORD_RATE_LIMIT_MESSAGE = "Too many password reset requests. Please wa
 FOUNDER_TRIAL_EMAIL = "support@jfbpquantdesk.com"
 FOUNDER_TRIAL_SUBJECT = "New JFBP Quant Desk trial started"
 
+SESSION_COOKIE_NAME = "opaque_session_handle"
+SESSION_COOKIE_VERSION = "v1"
+SESSION_COOKIE_SIGNATURE_SEP = "."
+COOKIE_READINESS_NOT_READY = "COOKIE_NOT_READY"
+COOKIE_READINESS_ABSENT = "COOKIE_ABSENT"
+COOKIE_READINESS_PRESENT = "COOKIE_PRESENT"
+COOKIE_READINESS_STATE_KEY = "saas_cookie_readiness_state"
+COOKIE_READINESS_ATTEMPTS_KEY = "saas_cookie_readiness_attempts"
+
 
 # =========================================================
 # DATA MODELS
@@ -212,6 +235,12 @@ class SaaSUser:
     role: str = "user"
     subscription_status: str = ""
     provisioning_required: bool = False
+
+
+@dataclass(frozen=True)
+class CookieReadResult:
+    state: str
+    value: str = ""
 
 
 # =========================================================
@@ -266,6 +295,169 @@ def _secret_status(name: str) -> str:
     return f"FOUND len={len(value)} prefix={value[:3]}..."
 
 
+def _session_signing_key() -> bytes:
+    raw = _secret_value("SESSION_COOKIE_SIGNING_KEY", "")
+    if not raw:
+        raw = _secret_value("SESSION_ENCRYPTION_KEY", "")
+    if not raw:
+        raise SessionStoreError("Missing SESSION_COOKIE_SIGNING_KEY/SESSION_ENCRYPTION_KEY")
+    return raw.encode("utf-8")
+
+
+def _is_production_runtime() -> bool:
+    env = str(build_runtime_config_from_secrets().get("APP_ENV", "") or "").strip().lower()
+    return env in {"production", "prod", "live"}
+
+
+def _cookie_manager():
+    if stx is None:
+        return None
+    manager = st.session_state.get("_saas_cookie_manager")
+    if manager is not None:
+        return manager
+    manager = stx.CookieManager()
+    st.session_state["_saas_cookie_manager"] = manager
+    return manager
+
+
+def _clear_cookie_readiness_state() -> None:
+    st.session_state.pop(COOKIE_READINESS_STATE_KEY, None)
+    st.session_state.pop(COOKIE_READINESS_ATTEMPTS_KEY, None)
+
+
+def _mark_cookie_readiness_present() -> None:
+    st.session_state[COOKIE_READINESS_STATE_KEY] = COOKIE_READINESS_PRESENT
+    st.session_state[COOKIE_READINESS_ATTEMPTS_KEY] = 0
+
+
+def _mark_cookie_readiness_not_ready() -> None:
+    st.session_state[COOKIE_READINESS_STATE_KEY] = COOKIE_READINESS_NOT_READY
+    st.session_state[COOKIE_READINESS_ATTEMPTS_KEY] = 1
+
+
+def _mark_cookie_readiness_absent() -> None:
+    st.session_state[COOKIE_READINESS_STATE_KEY] = COOKIE_READINESS_ABSENT
+    st.session_state[COOKIE_READINESS_ATTEMPTS_KEY] = 0
+
+
+def _read_session_cookie_result() -> CookieReadResult:
+    manager = _cookie_manager()
+    if manager is None:
+        return CookieReadResult(COOKIE_READINESS_ABSENT, "")
+
+    try:
+        raw = str(manager.get(SESSION_COOKIE_NAME) or "").strip()
+    except Exception:
+        raw = ""
+
+    if raw:
+        _mark_cookie_readiness_present()
+        return CookieReadResult(COOKIE_READINESS_PRESENT, raw)
+
+    current_state = str(st.session_state.get(COOKIE_READINESS_STATE_KEY, "") or "").strip()
+    attempts = int(st.session_state.get(COOKIE_READINESS_ATTEMPTS_KEY, 0) or 0)
+
+    if current_state == COOKIE_READINESS_PRESENT:
+        _mark_cookie_readiness_absent()
+        return CookieReadResult(COOKIE_READINESS_ABSENT, "")
+
+    if current_state == COOKIE_READINESS_ABSENT:
+        return CookieReadResult(COOKIE_READINESS_ABSENT, "")
+
+    if current_state == COOKIE_READINESS_NOT_READY or attempts >= 1:
+        _mark_cookie_readiness_absent()
+        return CookieReadResult(COOKIE_READINESS_ABSENT, "")
+
+    _mark_cookie_readiness_not_ready()
+    return CookieReadResult(COOKIE_READINESS_NOT_READY, "")
+
+
+def _sign_session_handle(raw_handle: str) -> str:
+    payload = f"{SESSION_COOKIE_VERSION}:{raw_handle}".encode("utf-8")
+    sig = hmac.new(_session_signing_key(), payload, hashlib.sha256).digest()
+    sig_b64 = base64.urlsafe_b64encode(sig).decode("utf-8").rstrip("=")
+    return f"{SESSION_COOKIE_VERSION}:{raw_handle}{SESSION_COOKIE_SIGNATURE_SEP}{sig_b64}"
+
+
+def _unsign_session_handle(cookie_value: str) -> str:
+    value = str(cookie_value or "").strip()
+    if not value or SESSION_COOKIE_SIGNATURE_SEP not in value:
+        raise SessionStoreError("Malformed session cookie")
+
+    signed_payload, sig_b64 = value.rsplit(SESSION_COOKIE_SIGNATURE_SEP, 1)
+    if ":" not in signed_payload:
+        raise SessionStoreError("Malformed session cookie")
+
+    version, raw_handle = signed_payload.split(":", 1)
+    if version != SESSION_COOKIE_VERSION or not raw_handle:
+        raise SessionStoreError("Unsupported session cookie version")
+
+    payload = signed_payload.encode("utf-8")
+    expected_sig = hmac.new(_session_signing_key(), payload, hashlib.sha256).digest()
+    expected_b64 = base64.urlsafe_b64encode(expected_sig).decode("utf-8").rstrip("=")
+
+    if not hmac.compare_digest(expected_b64, sig_b64):
+        raise SessionStoreError("Invalid session cookie signature")
+
+    return raw_handle
+
+
+def _set_session_cookie(raw_handle: str, remember_me: bool = False) -> bool:
+    manager = _cookie_manager()
+    expires_days = 30 if remember_me else 1
+    expires_at = _utc_now() + timedelta(days=expires_days)
+    secure_flag = _is_production_runtime()
+    same_site_value = "lax"
+    path_value = "/"
+
+    if manager is None:
+        return False
+
+    try:
+        signed_value = _sign_session_handle(raw_handle)
+        manager.set(
+            SESSION_COOKIE_NAME,
+            signed_value,
+            expires_at=expires_at,
+            secure=secure_flag,
+            same_site=same_site_value,
+            path=path_value,
+        )
+        return True
+    except Exception as exc:
+        return False
+
+
+def _read_session_cookie() -> str:
+    manager = _cookie_manager()
+    if manager is None:
+        return ""
+
+    try:
+        raw = manager.get(SESSION_COOKIE_NAME)
+        return str(raw or "").strip()
+    except Exception as exc:
+        return ""
+
+
+def _clear_session_cookie() -> None:
+    manager = _cookie_manager()
+    if manager is None:
+        return
+
+    try:
+        manager.delete(SESSION_COOKIE_NAME)
+    except Exception:
+        pass
+
+
+def _session_store() -> Optional[SessionStore]:
+    try:
+        return SessionStore()
+    except Exception:
+        return None
+
+
 def _admin_email_set() -> set[str]:
     """Emails that receive founder/admin access.
 
@@ -304,8 +496,12 @@ def init_saas_state() -> None:
     st.session_state.setdefault("saas_trial_warning_message", "")
     st.session_state.setdefault("saas_trial_protection", {})
     st.session_state.setdefault("saas_provisioning_repair_attempts", {})
+    st.session_state.setdefault("saas_app_session_id", "")
+    st.session_state.setdefault("saas_remember_me", False)
     if not st.session_state.get("saas_logged_in", False):
-        _rehydrate_authenticated_session()
+        rehydrate_result = _rehydrate_authenticated_session()
+        if rehydrate_result is None:
+            return
 
 
 @st.cache_resource(show_spinner=False)
@@ -526,13 +722,87 @@ def clear_active_page_cache() -> None:
     _active_page_cache().pop(key, None)
 
 
-def _rehydrate_authenticated_session() -> bool:
+def _rehydrate_authenticated_session() -> bool | None:
     if st.session_state.get("saas_logged_in", False) and isinstance(
         st.session_state.get("saas_user"),
         SaaSUser,
     ):
+        _mark_cookie_readiness_present()
         return True
 
+    # Primary: durable app-session restoration using signed opaque cookie.
+    store = _session_store()
+    cookie_result = _read_session_cookie_result()
+    if cookie_result.state == COOKIE_READINESS_NOT_READY:
+        try:
+            st.rerun()
+        except Exception:
+            pass
+        return None
+
+    cookie_value = cookie_result.value
+    if store is not None and cookie_value:
+        try:
+            raw_handle = _unsign_session_handle(cookie_value)
+        except Exception:
+            _clear_session_cookie()
+            _mark_cookie_readiness_absent()
+            raw_handle = ""
+
+        if raw_handle:
+            lookup = store.get_session_by_handle(raw_handle)
+            if lookup.status == SessionLookupStatus.VALID and lookup.record is not None:
+                refresh_material = store.get_refresh_material_for_handle(raw_handle)
+                if refresh_material:
+                    client = get_supabase_client()
+                    if client is not None:
+                        try:
+                            restored = client.auth.refresh_session(refresh_material)
+                        except Exception:
+                            restored = None
+
+                        session = _auth_response_session(restored)
+                        auth_user = _auth_response_user(restored)
+
+                        if session is None:
+                            try:
+                                auth_user = _auth_response_user(client.auth.get_user())
+                                session = client.auth.get_session()
+                            except Exception:
+                                auth_user = None
+                                session = None
+
+                        if session is not None and auth_user is not None:
+                            session_payload = _session_cache_payload(session)
+                            st.session_state["saas_auth_session"] = session_payload
+                            st.session_state["saas_user"] = build_saas_user_from_auth(
+                                auth_user,
+                                selected_plan=st.session_state.get("saas_selected_plan"),
+                            )
+                            st.session_state["saas_logged_in"] = True
+                            st.session_state["saas_app_session_id"] = lookup.record.id
+                            _cache_authenticated_session(session_payload)
+                            _mark_cookie_readiness_present()
+                            return True
+
+                # Session exists but restoration cannot complete.
+                try:
+                    store.revoke_session(lookup.record.id, reason="RESTORE_FAILED")
+                except Exception:
+                    pass
+                _clear_session_cookie()
+                _mark_cookie_readiness_absent()
+            elif lookup.status in {
+                SessionLookupStatus.MISSING,
+                SessionLookupStatus.REVOKED,
+                SessionLookupStatus.IDLE_EXPIRED,
+                SessionLookupStatus.ABSOLUTE_EXPIRED,
+                SessionLookupStatus.MALFORMED,
+            }:
+                _clear_session_cookie()
+                _mark_cookie_readiness_absent()
+
+    # Secondary optimization: existing in-memory cache.
     key = _browser_auth_cache_key()
     if not key:
         return False
@@ -570,6 +840,7 @@ def _rehydrate_authenticated_session() -> bool:
         selected_plan=st.session_state.get("saas_selected_plan"),
     )
     st.session_state["saas_logged_in"] = True
+    _mark_cookie_readiness_present()
     return True
 
 
@@ -605,6 +876,99 @@ def _request_header(headers: Dict[str, str], *names: str) -> str:
         if value:
             return value
     return ""
+
+
+def _project_ref_from_url(url: str) -> str:
+    host = str(urlparse(str(url or "").strip()).hostname or "").strip().lower()
+    if not host:
+        return ""
+    return host.split(".", 1)[0]
+
+
+def _sanitize_auth_error(exc: Exception) -> tuple[str, str]:
+    text = str(exc or "")
+    compact = " ".join(text.split())
+    lowered = compact.lower()
+
+    if "invalid login credentials" in lowered:
+        return "invalid_credentials", "Invalid login credentials"
+    if "email not confirmed" in lowered:
+        return "email_not_confirmed", "Email not confirmed"
+    if "too many" in lowered and "request" in lowered:
+        return "rate_limited", "Too many requests"
+    if "network" in lowered or "timeout" in lowered:
+        return "network_error", "Network or timeout error"
+
+    if not compact:
+        return "unknown_error", "Unknown auth error"
+
+    return "auth_error", compact[:160]
+
+
+def _direct_password_grant_probe(email: str, password: str) -> Dict[str, Any]:
+    url = str(st.secrets.get("SUPABASE_URL", "") or "").strip().rstrip("/")
+    key = str(st.secrets.get("SUPABASE_ANON_KEY", "") or "").strip()
+    endpoint = f"{url}/auth/v1/token"
+    meta: Dict[str, Any] = {
+        "status": 0,
+        "user_present": False,
+        "access_present": False,
+        "refresh_present": False,
+        "user_id": "",
+        "error_code": "",
+        "error_message": "",
+        "project_ref": _project_ref_from_url(url),
+    }
+
+    if not url or not key:
+        meta["error_code"] = "missing_supabase_config"
+        meta["error_message"] = "Missing Supabase URL or anon key"
+        return meta
+
+    headers = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "email": email,
+        "password": password,
+    }
+    query = {
+        "grant_type": "password",
+    }
+
+    try:
+        response = requests.post(endpoint, headers=headers, params=query, json=payload, timeout=30)
+        meta["status"] = int(response.status_code)
+
+        body = {}
+        try:
+            body = response.json() if response.text else {}
+        except Exception:
+            body = {}
+
+        if isinstance(body, dict):
+            user_obj = body.get("user") if isinstance(body.get("user"), dict) else {}
+            meta["user_present"] = bool(user_obj)
+            meta["user_id"] = str(user_obj.get("id", "") or "").strip()
+            meta["access_present"] = bool(str(body.get("access_token", "") or "").strip())
+            meta["refresh_present"] = bool(str(body.get("refresh_token", "") or "").strip())
+            meta["error_code"] = str(body.get("error_code", "") or "").strip().lower()
+            raw_message = str(body.get("msg", "") or body.get("message", "") or "").strip()
+            meta["error_message"] = " ".join(raw_message.split())[:160]
+
+        if response.status_code >= 400 and not meta["error_code"]:
+            meta["error_code"] = f"http_{response.status_code}"
+            if not meta["error_message"]:
+                meta["error_message"] = "Password grant request failed"
+
+    except Exception as exc:
+        code, message = _sanitize_auth_error(exc)
+        meta["error_code"] = code
+        meta["error_message"] = message
+
+    return meta
 
 
 def _client_ip(headers: Dict[str, str]) -> str:
@@ -1236,6 +1600,216 @@ def _password_reset_redirect_to() -> str:
 
     runtime_config = build_runtime_config_from_secrets()
     return default_password_reset_redirect_for_env(runtime_config.get("APP_ENV", "development"))
+
+
+def _query_param_value(name: str) -> str:
+    try:
+        value = st.query_params.get(name, "")
+    except Exception:
+        return ""
+
+    if isinstance(value, list):
+        value = value[0] if value else ""
+    return str(value or "").strip()
+
+
+RECOVERY_QUERY_PARAM_NAMES = (
+    "type",
+    "token_hash",
+    "token",
+    "email",
+    "phone",
+    "code",
+    "access_token",
+    "refresh_token",
+    "error",
+    "error_code",
+)
+
+
+def _clear_recovery_query_params() -> None:
+    try:
+        for name in RECOVERY_QUERY_PARAM_NAMES:
+            try:
+                del st.query_params[name]
+            except Exception:
+                pass
+    except Exception:
+        return
+
+
+def _recovery_flow_type() -> str:
+    return _query_param_value("type").lower()
+
+
+def _has_recovery_callback_params() -> bool:
+    keys = (
+        "code",
+        "token_hash",
+        "token",
+        "access_token",
+        "refresh_token",
+        "error",
+        "error_code",
+    )
+    return any(bool(_query_param_value(name)) for name in keys)
+
+
+def _is_recovery_callback() -> bool:
+    return _recovery_flow_type() == "recovery"
+
+
+def _recovery_error_summary() -> tuple[str, str]:
+    code = _query_param_value("error_code").lower()
+    err = _query_param_value("error").lower()
+
+    if code == "otp_expired":
+        return "otp_expired", "Recovery link expired. Request a new password reset email and open it immediately."
+    if err == "access_denied":
+        return "access_denied", "Recovery link denied. Request a new password reset email and open it immediately."
+    if code or err:
+        text = code or err
+        return text, f"Recovery link error: {text}."
+    return "", ""
+
+
+def _sanitize_reset_error(exc: Exception) -> str:
+    _code, message = _sanitize_auth_error(exc)
+    return message
+
+
+def _has_active_recovery_session(client: Any) -> bool:
+    if client is None:
+        return False
+
+    try:
+        session = client.auth.get_session()
+    except Exception:
+        session = None
+
+    access, _refresh = _get_session_tokens(session)
+    return bool(access)
+
+
+def _establish_recovery_session_from_query(client: Any) -> tuple[bool, str]:
+    """Establish a recovery session from server-visible URL query parameters.
+
+    Intentionally supported callback formats:
+    - `?type=recovery&token_hash=...`
+      Uses `client.auth.verify_otp({"type": "recovery", "token_hash": ...})`.
+      This matches the installed gotrue Python client, which supports token-hash
+      verification for email recovery without requiring `email`.
+    - `?type=recovery&token=...&email=...`
+      Uses `client.auth.verify_otp({"type": "recovery", "token": ..., "email": ...})`.
+      This matches the installed client branch for email OTP verification, where
+      a plain token must be paired with exactly one identity field.
+    - `?type=recovery&code=...`
+      Uses `client.auth.exchange_code_for_session(...)` when the runtime/client
+      exposes a PKCE-style code exchange entry point.
+    - `?type=recovery&access_token=...&refresh_token=...`
+      Applies an already-issued session directly to the Supabase client.
+
+    Intentionally unsupported format:
+    - URL fragments such as `#access_token=...&refresh_token=...`
+      Streamlit's Python runtime only receives query parameters via
+      `st.query_params`; fragment identifiers are browser-local and are not
+      delivered to the server. Supporting fragments would require a dedicated
+      front-end callback bridge or a different recovery email template.
+    """
+    if client is None:
+        return False, "Supabase client unavailable for recovery."
+
+    if not _is_recovery_callback():
+        return False, "Recovery flow not detected."
+
+    code = _query_param_value("code")
+    token_hash = _query_param_value("token_hash")
+    token = _query_param_value("token")
+    recovery_email = _query_param_value("email").strip().lower()
+    recovery_phone = _query_param_value("phone").strip()
+    access_token = _query_param_value("access_token")
+    refresh_token = _query_param_value("refresh_token")
+
+    try:
+        if code and hasattr(client.auth, "exchange_code_for_session"):
+            client.auth.exchange_code_for_session(code)
+
+        elif token_hash and hasattr(client.auth, "verify_otp"):
+            try:
+                client.auth.verify_otp({"type": "recovery", "token_hash": token_hash})
+            except TypeError:
+                client.auth.verify_otp({"type": "recovery", "token": token_hash})
+
+        elif token and hasattr(client.auth, "verify_otp"):
+            if recovery_email and recovery_phone:
+                return False, "Recovery token must include exactly one identity field."
+            if not recovery_email:
+                return False, "Recovery token callback requires the email address."
+
+            payload = {
+                "type": "recovery",
+                "token": token,
+            }
+            payload["email"] = recovery_email
+            client.auth.verify_otp(payload)
+
+        elif access_token or refresh_token:
+            if not access_token or not refresh_token:
+                return False, "Recovery session callback requires both access and refresh tokens."
+            if not _apply_auth_session_to_client(
+                client,
+                {
+                    "access_token": access_token,
+                    "refresh_token": refresh_token,
+                },
+            ):
+                return False, "Recovery session could not be established."
+
+        else:
+            return False, "Recovery link is missing required parameters."
+
+        session = None
+        try:
+            session = client.auth.get_session()
+        except Exception:
+            session = None
+
+        access, _refresh = _get_session_tokens(session)
+        if not access:
+            return False, "Recovery session is not active."
+
+        return True, "Recovery session established."
+    except Exception as exc:
+        return False, _sanitize_reset_error(exc)
+
+
+def _validate_password_recovery_inputs(new_password: str, confirm_password: str) -> tuple[bool, str]:
+    password_value = str(new_password or "")
+    confirm_value = str(confirm_password or "")
+
+    if len(password_value) < 8:
+        return False, "Password must be at least 8 characters."
+    if password_value != confirm_value:
+        return False, "Passwords do not match."
+    return True, ""
+
+
+def _complete_password_recovery(client: Any, new_password: str) -> tuple[bool, str]:
+    if client is None:
+        return False, "Supabase client unavailable for password update."
+
+    try:
+        if not hasattr(client.auth, "update_user"):
+            return False, "Supabase password update is unavailable in this runtime."
+
+        try:
+            client.auth.update_user({"password": new_password})
+        except TypeError:
+            client.auth.update_user(password=new_password)
+
+        return True, "Password updated successfully. Please log in with your new password."
+    except Exception as exc:
+        return False, f"Password update failed: {_sanitize_reset_error(exc)}"
 
 
 def _apply_auth_session_to_client(client: Any, session: Any) -> bool:
@@ -1871,6 +2445,29 @@ def initialize_session(user: Any, session: Any, selected_plan: str | None = None
     st.session_state["saas_logged_in"] = True
     _cache_authenticated_session(session_payload)
 
+    # Phase 9A.3 durable app session integration (primary persistence).
+    store = _session_store()
+    refresh_material = str(session_payload.get("refresh_token", "") or "").strip()
+    user_id = _auth_user_id(user)
+    cookie_write_ok = False
+    if store is not None and user_id and refresh_material:
+        remember_me = bool(st.session_state.get("saas_remember_me", False))
+        created = store.create_session(
+            SessionCreationInput(
+                user_id=user_id,
+                remember_me=remember_me,
+                user_agent=_user_agent(_request_headers()),
+                client_metadata={
+                    "browser_fingerprint": _browser_auth_cache_key(),
+                },
+                refresh_material=refresh_material,
+            )
+        )
+        st.session_state["saas_app_session_id"] = created.record.id
+        cookie_write_ok = _set_session_cookie(created.raw_handle, remember_me=remember_me)
+
+    _clear_cookie_readiness_state()
+
     _set_auth_debug(
         "initialize_session",
         {
@@ -2032,12 +2629,24 @@ def set_authenticated_session(auth_response: Any, selected_plan: str | None = No
 
 
 def clear_authenticated_session() -> None:
+    app_session_id = str(st.session_state.get("saas_app_session_id", "") or "").strip()
+    if app_session_id:
+        store = _session_store()
+        if store is not None:
+            try:
+                store.revoke_session(app_session_id, reason="USER_LOGOUT")
+            except Exception:
+                pass
+
     _clear_cached_authenticated_session()
+    _clear_session_cookie()
+    _clear_cookie_readiness_state()
     clear_active_page_cache()
     clear_stripe_checkout_state()
     st.session_state["saas_logged_in"] = False
     st.session_state["saas_user"] = None
     st.session_state["saas_auth_session"] = None
+    st.session_state["saas_app_session_id"] = ""
     st.session_state["saas_onboarding_ready"] = False
     st.session_state["saas_onboarding_debug"] = {}
     st.session_state["saas_auth_debug"] = {}
@@ -2142,15 +2751,20 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
         return False, message
 
     client = get_supabase_client()
+    clean_email = str(email or "").strip().lower()
+    password_value = password if isinstance(password, str) else str(password or "")
 
     try:
         response = client.auth.sign_in_with_password(
             {
-                "email": email.strip().lower(),
-                "password": password,
+                "email": clean_email,
+                "password": password_value,
             }
         )
 
+        diag_user = _auth_response_user(response)
+        diag_session = _auth_response_session(response)
+        diag_access, diag_refresh = _get_session_tokens(diag_session)
         if set_authenticated_session(response):
             onboarding_message = st.session_state.get("saas_auth_last_message", "")
             if st.session_state.get("saas_onboarding_ready", False):
@@ -2173,6 +2787,22 @@ def supabase_logout() -> tuple[bool, str]:
 
     clear_authenticated_session()
     return True, "Logged out."
+
+
+def supabase_logout_all() -> tuple[bool, str]:
+    user = get_current_user()
+    user_id = str(getattr(user, "user_id", "") or "").strip() if user is not None else ""
+
+    if user_id:
+        store = _session_store()
+        if store is not None:
+            try:
+                store.revoke_all_sessions_for_user(user_id, reason="USER_LOGOUT_ALL")
+            except Exception:
+                pass
+
+    clear_authenticated_session()
+    return True, "Logged out from all sessions."
 
 
 def supabase_reset_password(email: str) -> tuple[bool, str, Dict[str, Any]]:
@@ -2693,16 +3323,21 @@ def render_auth_panel() -> None:
         if trial_warning_message:
             st.warning(trial_warning_message)
 
+        recovery_mode_active = bool(st.session_state.get("saas_recovery_session_active", False))
         mode = st.radio("Choose access action", ["Login", "Create Account", "Reset Password"], horizontal=True)
+        if _is_recovery_callback() or recovery_mode_active:
+            mode = "Reset Password"
 
         st.markdown('<div class="saas-auth-form">', unsafe_allow_html=True)
         if mode == "Login":
             with st.form("saas_login_form"):
                 email = st.text_input("Email", value="")
                 password = st.text_input("Password", type="password")
+                remember_me = st.checkbox("Remember Me", value=False)
                 submitted = st.form_submit_button("Login", use_container_width=True)
 
             if submitted:
+                st.session_state["saas_remember_me"] = bool(remember_me)
                 ok, message = supabase_login(email=email, password=password)
                 if ok:
                     st.success(message)
@@ -2759,6 +3394,69 @@ def render_auth_panel() -> None:
                         st.error(message)
 
         else:
+            if _is_recovery_callback() or recovery_mode_active:
+                st.info("Recovery link detected. Set a new password to complete account recovery.")
+                recovery_client = get_supabase_client()
+                recovery_ready = False
+                recovery_message = ""
+
+                if _is_recovery_callback():
+                    recovery_error_code, recovery_error_message = _recovery_error_summary()
+                    if recovery_error_code:
+                        st.session_state["saas_recovery_session_active"] = False
+                        _clear_recovery_query_params()
+                        st.error(recovery_error_message)
+                        st.info("Use Reset Password once to request a fresh link.")
+                        st.markdown('</div>', unsafe_allow_html=True)
+                        st.markdown('</div>', unsafe_allow_html=True)
+                        return
+
+                    recovery_ready, recovery_message = _establish_recovery_session_from_query(recovery_client)
+                    if recovery_ready:
+                        st.session_state["saas_recovery_session_active"] = True
+                    else:
+                        st.session_state["saas_recovery_session_active"] = False
+                    _clear_recovery_query_params()
+                else:
+                    recovery_ready = _has_active_recovery_session(recovery_client)
+                    recovery_message = (
+                        "Recovery session established."
+                        if recovery_ready
+                        else "Recovery session is not active."
+                    )
+
+                if recovery_ready:
+                    with st.form("saas_complete_password_recovery_form"):
+                        new_password = st.text_input("New Password", type="password")
+                        confirm_password = st.text_input("Confirm New Password", type="password")
+                        update_submitted = st.form_submit_button(
+                            "Update Password",
+                            use_container_width=True,
+                        )
+
+                    if update_submitted:
+                        valid, validation_message = _validate_password_recovery_inputs(
+                            new_password,
+                            confirm_password,
+                        )
+                        if not valid:
+                            st.error(validation_message)
+                        else:
+                            updated, update_message = _complete_password_recovery(
+                                recovery_client,
+                                new_password,
+                            )
+                            if updated:
+                                st.session_state["saas_recovery_session_active"] = False
+                                _clear_recovery_query_params()
+                                st.success(update_message)
+                                st.info("Password recovery complete. Return to Login and sign in with your new password.")
+                            else:
+                                st.error(update_message)
+                else:
+                    st.session_state["saas_recovery_session_active"] = False
+                    st.error(f"Recovery session unavailable: {recovery_message}")
+
             cooldown_remaining = _reset_password_cooldown_remaining()
             if cooldown_remaining > 0:
                 st.warning(

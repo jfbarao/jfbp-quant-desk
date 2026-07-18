@@ -24,15 +24,50 @@ def _next_refresh_token(user_id: str) -> str:
 class _FakeCookieManager:
     def __init__(self):
         self.store = {}
+        self.last_set = None
 
     def get(self, key):
         return self.store.get(key)
 
-    def set(self, key, value, **_kwargs):
-        self.store[key] = value
+    def set(
+        self,
+        cookie: str,
+        val,
+        key: str = "set",
+        path: str = "/",
+        expires_at=None,
+        max_age=None,
+        domain=None,
+        secure=None,
+        same_site="strict",
+    ):
+        self.store[cookie] = val
+        self.last_set = {
+            "cookie": cookie,
+            "key": key,
+            "path": path,
+            "expires_at": expires_at,
+            "max_age": max_age,
+            "domain": domain,
+            "secure": secure,
+            "same_site": same_site,
+        }
 
     def delete(self, key):
         self.store.pop(key, None)
+
+
+class _SequencedCookieManager(_FakeCookieManager):
+    def __init__(self, sequence=None):
+        super().__init__()
+        self.sequence = list(sequence or [])
+        self.get_calls = 0
+
+    def get(self, key):
+        self.get_calls += 1
+        if self.sequence:
+            return self.sequence.pop(0)
+        return super().get(key)
 
 
 class _FakeAuthResponse:
@@ -182,6 +217,7 @@ def reset_state(monkeypatch):
     monkeypatch.setattr(saas, "_request_headers", lambda: {"user-agent": "pytest"})
     monkeypatch.setattr(saas, "_browser_auth_cache_key", lambda: "browser-key")
     monkeypatch.setattr(saas, "_cache_authenticated_session", lambda _s: None)
+    monkeypatch.setattr(saas.st, "rerun", lambda: None)
     monkeypatch.setattr(
         saas,
         "build_saas_user_from_auth",
@@ -211,6 +247,104 @@ def test_cookie_signed_and_tamper_detected():
         saas._unsign_session_handle(tampered)
 
 
+def test_cookie_manager_set_uses_supported_argument_contract(monkeypatch):
+    manager = _FakeCookieManager()
+    monkeypatch.setattr(saas, "_cookie_manager", lambda: manager)
+    monkeypatch.setattr(saas, "_is_production_runtime", lambda: False)
+
+    ok = saas._set_session_cookie("opaque-handle", remember_me=False)
+
+    assert ok is True
+    assert manager.last_set is not None
+    assert manager.last_set["cookie"] == saas.SESSION_COOKIE_NAME
+    assert manager.last_set["path"] == "/"
+    assert manager.last_set["secure"] is False
+    assert manager.last_set["same_site"] == "lax"
+
+
+def test_cookie_readiness_retries_once_then_accepts_present_cookie(monkeypatch):
+    store = _FakeSessionStore()
+    client = _FakeSupabaseClient(user_id="u-ready")
+    monkeypatch.setattr(saas, "_session_store", lambda: store)
+    monkeypatch.setattr(saas, "get_supabase_client", lambda: client)
+    monkeypatch.setattr(saas, "ensure_user_workspace_records", lambda *_a, **_k: (True, "ok"))
+    monkeypatch.setattr(saas, "_profile_row_for_auth_user", lambda *_a, **_k: {})
+    monkeypatch.setattr(saas, "_save_login_metadata", lambda *_a, **_k: (True, "ok", {}, None))
+
+    saas.initialize_session(client.auth._user, client.auth._session)
+    cookie_value = saas._read_session_cookie()
+
+    manager = _SequencedCookieManager(sequence=["", cookie_value])
+    monkeypatch.setattr(saas, "_cookie_manager", lambda: manager)
+
+    saas.st.session_state.clear()
+    saas.st.session_state["saas_logged_in"] = False
+    saas.st.session_state["saas_user"] = None
+    saas.st.session_state["saas_selected_plan"] = saas.PLAN_MARKET_PULSE
+
+    first_result = saas._rehydrate_authenticated_session()
+    assert first_result is None
+    assert saas.st.session_state.get(saas.COOKIE_READINESS_STATE_KEY) == saas.COOKIE_READINESS_NOT_READY
+    assert saas.st.session_state.get(saas.COOKIE_READINESS_ATTEMPTS_KEY) == 1
+
+    second_result = saas._rehydrate_authenticated_session()
+    assert second_result is True
+    assert saas.st.session_state.get(saas.COOKIE_READINESS_STATE_KEY) == saas.COOKIE_READINESS_PRESENT
+    assert saas.st.session_state.get(saas.COOKIE_READINESS_ATTEMPTS_KEY) == 0
+    assert saas.st.session_state.get("saas_logged_in") is True
+    assert store.counter == 1
+
+
+def test_cookie_readiness_bounded_when_cookie_absent(monkeypatch):
+    store = _FakeSessionStore()
+    manager = _SequencedCookieManager(sequence=["", "", ""])
+    monkeypatch.setattr(saas, "_session_store", lambda: store)
+    monkeypatch.setattr(saas, "_cookie_manager", lambda: manager)
+
+    cleared = []
+    reruns = []
+    monkeypatch.setattr(saas, "_clear_session_cookie", lambda: cleared.append(True))
+    monkeypatch.setattr(saas.st, "rerun", lambda: reruns.append(True))
+
+    saas.st.session_state["saas_logged_in"] = False
+    saas.st.session_state["saas_user"] = None
+
+    first_result = saas._rehydrate_authenticated_session()
+    second_result = saas._rehydrate_authenticated_session()
+    third_result = saas._rehydrate_authenticated_session()
+
+    assert first_result is None
+    assert second_result is False
+    assert third_result is False
+    assert len(reruns) == 1
+    assert not cleared
+    assert saas.st.session_state.get(saas.COOKIE_READINESS_STATE_KEY) == saas.COOKIE_READINESS_ABSENT
+    assert saas.st.session_state.get(saas.COOKIE_READINESS_ATTEMPTS_KEY) == 0
+
+
+def test_present_cookie_still_verifies_signature(monkeypatch):
+    store = _FakeSessionStore()
+    client = _FakeSupabaseClient(user_id="u-signature")
+    monkeypatch.setattr(saas, "_session_store", lambda: store)
+    monkeypatch.setattr(saas, "get_supabase_client", lambda: client)
+    monkeypatch.setattr(saas, "ensure_user_workspace_records", lambda *_a, **_k: (True, "ok"))
+    monkeypatch.setattr(saas, "_profile_row_for_auth_user", lambda *_a, **_k: {})
+    monkeypatch.setattr(saas, "_save_login_metadata", lambda *_a, **_k: (True, "ok", {}, None))
+
+    saas.initialize_session(client.auth._user, client.auth._session)
+    signed_cookie = saas._read_session_cookie()
+    handle = saas._unsign_session_handle(signed_cookie)
+
+    saas.st.session_state.clear()
+    saas.st.session_state["saas_logged_in"] = False
+    saas.st.session_state["saas_user"] = None
+    monkeypatch.setattr(saas, "_read_session_cookie_result", lambda: saas.CookieReadResult(saas.COOKIE_READINESS_PRESENT, signed_cookie))
+
+    assert saas._rehydrate_authenticated_session() is True
+    assert saas.st.session_state.get("saas_app_session_id")
+    assert handle in store.rows
+
+
 def test_login_creates_durable_session_and_cookie(monkeypatch):
     store = _FakeSessionStore()
     client = _FakeSupabaseClient(user_id="u-login")
@@ -238,6 +372,7 @@ def test_rehydrate_from_cookie_with_fresh_client(monkeypatch):
     monkeypatch.setattr(saas, "_save_login_metadata", lambda *_a, **_k: (True, "ok", {}, None))
 
     saas.initialize_session(client1.auth._user, client1.auth._session)
+    initial_session_count = store.counter
 
     saas.st.session_state.clear()
     saas.st.session_state["saas_logged_in"] = False
@@ -248,18 +383,46 @@ def test_rehydrate_from_cookie_with_fresh_client(monkeypatch):
     # Simulate browser restart/fresh client instance.
     client2 = _FakeSupabaseClient(user_id="u-rehydrate")
     monkeypatch.setattr(saas, "get_supabase_client", lambda: client2)
-    monkeypatch.setattr(saas, "_read_session_cookie", lambda: cookie_value)
+    monkeypatch.setattr(saas, "_read_session_cookie_result", lambda: saas.CookieReadResult(saas.COOKIE_READINESS_PRESENT, cookie_value))
 
     assert saas._rehydrate_authenticated_session() is True
     assert saas.st.session_state.get("saas_logged_in") is True
+    assert store.counter == initial_session_count
+    assert saas.st.session_state.get(saas.COOKIE_READINESS_STATE_KEY) == saas.COOKIE_READINESS_PRESENT
+    assert saas.st.session_state.get(saas.COOKIE_READINESS_ATTEMPTS_KEY) == 0
 
 
 def test_malformed_cookie_clears_safely(monkeypatch):
     store = _FakeSessionStore()
     monkeypatch.setattr(saas, "_session_store", lambda: store)
-    monkeypatch.setattr(saas, "_read_session_cookie", lambda: "malformed")
+    monkeypatch.setattr(saas, "_read_session_cookie_result", lambda: saas.CookieReadResult(saas.COOKIE_READINESS_PRESENT, "malformed"))
 
     assert saas._rehydrate_authenticated_session() is False
+
+
+def test_invalid_signed_cookie_remains_rejected(monkeypatch):
+    store = _FakeSessionStore()
+    client = _FakeSupabaseClient(user_id="u-invalid")
+    monkeypatch.setattr(saas, "_session_store", lambda: store)
+    monkeypatch.setattr(saas, "get_supabase_client", lambda: client)
+    monkeypatch.setattr(saas, "ensure_user_workspace_records", lambda *_a, **_k: (True, "ok"))
+    monkeypatch.setattr(saas, "_profile_row_for_auth_user", lambda *_a, **_k: {})
+    monkeypatch.setattr(saas, "_save_login_metadata", lambda *_a, **_k: (True, "ok", {}, None))
+
+    saas.initialize_session(client.auth._user, client.auth._session)
+    signed_cookie = saas._read_session_cookie()
+    tampered_cookie = signed_cookie[:-1] + ("A" if signed_cookie[-1] != "A" else "B")
+
+    cleared = []
+    monkeypatch.setattr(saas, "_read_session_cookie_result", lambda: saas.CookieReadResult(saas.COOKIE_READINESS_PRESENT, tampered_cookie))
+    monkeypatch.setattr(saas, "_clear_session_cookie", lambda: cleared.append(True))
+
+    saas.st.session_state["saas_logged_in"] = False
+    saas.st.session_state["saas_user"] = None
+
+    assert saas._rehydrate_authenticated_session() is False
+    assert cleared
+    assert saas.st.session_state.get(saas.COOKIE_READINESS_STATE_KEY) == saas.COOKIE_READINESS_ABSENT
 
 
 def test_invalid_signature_clears_cookie_safely(monkeypatch):
@@ -277,7 +440,7 @@ def test_invalid_signature_clears_cookie_safely(monkeypatch):
 
     saas.st.session_state["saas_logged_in"] = False
     saas.st.session_state["saas_user"] = None
-    monkeypatch.setattr(saas, "_read_session_cookie", lambda: tampered_cookie)
+    monkeypatch.setattr(saas, "_read_session_cookie_result", lambda: saas.CookieReadResult(saas.COOKIE_READINESS_PRESENT, tampered_cookie))
 
     assert saas._rehydrate_authenticated_session() is False
     assert saas._cookie_manager().get(saas.SESSION_COOKIE_NAME) is None
@@ -300,7 +463,7 @@ def test_missing_durable_session_clears_cookie_safely(monkeypatch):
     store.refresh.pop(handle, None)
     saas.st.session_state["saas_logged_in"] = False
     saas.st.session_state["saas_user"] = None
-    monkeypatch.setattr(saas, "_read_session_cookie", lambda: cookie_value)
+    monkeypatch.setattr(saas, "_read_session_cookie_result", lambda: saas.CookieReadResult(saas.COOKIE_READINESS_PRESENT, cookie_value))
 
     assert saas._rehydrate_authenticated_session() is False
     assert saas._cookie_manager().get(saas.SESSION_COOKIE_NAME) is None
@@ -347,6 +510,8 @@ def test_logout_revokes_current_session_and_clears_cookie(monkeypatch):
 
     ok, _ = saas.supabase_logout()
     assert ok is True
+    assert saas.st.session_state.get(saas.COOKIE_READINESS_STATE_KEY) is None
+    assert saas.st.session_state.get(saas.COOKIE_READINESS_ATTEMPTS_KEY) is None
 
     revoked_count = 0
     for row in store.rows.values():
@@ -398,6 +563,23 @@ def test_remember_me_and_standard_duration_policy(monkeypatch):
     assert remember_duration >= timedelta(days=29)
 
 
+def test_successful_login_resets_readiness_state(monkeypatch):
+    store = _FakeSessionStore()
+    client = _FakeSupabaseClient(user_id="u-login-reset")
+    monkeypatch.setattr(saas, "_session_store", lambda: store)
+    monkeypatch.setattr(saas, "get_supabase_client", lambda: client)
+    monkeypatch.setattr(saas, "ensure_user_workspace_records", lambda *_a, **_k: (True, "ok"))
+    monkeypatch.setattr(saas, "_profile_row_for_auth_user", lambda *_a, **_k: {})
+    monkeypatch.setattr(saas, "_save_login_metadata", lambda *_a, **_k: (True, "ok", {}, None))
+
+    saas.st.session_state[saas.COOKIE_READINESS_STATE_KEY] = saas.COOKIE_READINESS_NOT_READY
+    saas.st.session_state[saas.COOKIE_READINESS_ATTEMPTS_KEY] = 1
+
+    assert saas.set_authenticated_session(_FakeAuthResponse(user=client.auth._user, session=client.auth._session)) is True
+    assert saas.st.session_state.get(saas.COOKIE_READINESS_STATE_KEY) is None
+    assert saas.st.session_state.get(saas.COOKIE_READINESS_ATTEMPTS_KEY) is None
+
+
 def test_no_token_leakage_in_cookie_value(monkeypatch):
     store = _FakeSessionStore()
     client = _FakeSupabaseClient(user_id="u-leak", refresh_token="sensitive-refresh")
@@ -429,7 +611,7 @@ def test_cross_user_isolation(monkeypatch):
     # Different user client should not authenticate as user1 when forced mismatched store refresh.
     user2 = _FakeSupabaseClient(user_id="user-2")
     monkeypatch.setattr(saas, "get_supabase_client", lambda: user2)
-    monkeypatch.setattr(saas, "_read_session_cookie", lambda: cookie_user1)
+    monkeypatch.setattr(saas, "_read_session_cookie_result", lambda: saas.CookieReadResult(saas.COOKIE_READINESS_PRESENT, cookie_user1))
     saas.st.session_state["saas_logged_in"] = False
     saas.st.session_state["saas_user"] = None
 
