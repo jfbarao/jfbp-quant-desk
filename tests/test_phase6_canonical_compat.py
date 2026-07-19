@@ -552,7 +552,11 @@ def test_mismatched_redirect_host_fails():
 
 
 def test_explicit_redirect_selection_by_environment(monkeypatch):
+    fake_st = SimpleNamespace(secrets={}, session_state={})
+    monkeypatch.setattr(saas, "st", fake_st)
     monkeypatch.setattr(saas, "_secret_value", lambda name, default="": "")
+    monkeypatch.delenv("SUPABASE_EMAIL_REDIRECT_TO", raising=False)
+    monkeypatch.delenv("SUPABASE_PASSWORD_RESET_REDIRECT_TO", raising=False)
 
     monkeypatch.setattr(
         saas,

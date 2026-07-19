@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import smtplib
+import re
 import time
 from urllib.parse import urlparse
 from types import SimpleNamespace
@@ -206,6 +207,11 @@ DISPOSABLE_EMAIL_DOMAINS = {
 AUTH_DEBUG = False
 RESET_PASSWORD_BACKOFF_STEPS = (15, 30, 60)
 RESET_PASSWORD_RATE_LIMIT_MESSAGE = "Too many password reset requests. Please wait before trying again."
+SIGNUP_RATE_LIMIT_MESSAGE = (
+    "Too many verification emails have been requested recently. "
+    "Please wait a little while before trying again."
+)
+SIGNUP_GENERIC_FAILURE_MESSAGE = "Sign up failed. Please try again."
 FOUNDER_TRIAL_EMAIL = "support@jfbpquantdesk.com"
 FOUNDER_TRIAL_SUBJECT = "New JFBP Quant Desk trial started"
 
@@ -1060,6 +1066,59 @@ def _sanitize_auth_error(exc: Exception) -> tuple[str, str]:
         return "unknown_error", "Unknown auth error"
 
     return "auth_error", compact[:160]
+
+
+def _redact_signup_error_text(value: Any) -> str:
+    compact = " ".join(str(value or "").split())
+    if not compact:
+        return ""
+
+    redacted = re.sub(
+        r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
+        "[redacted-email]",
+        compact,
+    )
+    redacted = re.sub(
+        r"\b(?:eyJ[A-Za-z0-9_\-]+|sk_(?:live|test)_[A-Za-z0-9_\-]+|sbp_[A-Za-z0-9_\-]+|supabase_[A-Za-z0-9_\-]+)\b",
+        "[redacted-token]",
+        redacted,
+    )
+    redacted = re.sub(
+        r"(?i)\b(password|passphrase|secret|token|refresh_token|access_token|api_key|apikey)\s*[:=]\s*([^\s,;]+)",
+        r"\1=[redacted]",
+        redacted,
+    )
+    return redacted[:220]
+
+
+def _signup_error_response(exc: Exception) -> tuple[str, str, str]:
+    sanitized_error = _redact_signup_error_text(exc)
+    lowered = sanitized_error.lower()
+
+    if (
+        "over_email_send_rate_limit" in lowered
+        or "email send rate limit" in lowered
+        or ("verification email" in lowered and "rate limit" in lowered)
+    ):
+        return "rate_limited", SIGNUP_RATE_LIMIT_MESSAGE, sanitized_error
+
+    if "already" in lowered or "registered" in lowered or "exists" in lowered:
+        return "duplicate_email", "This email is already on file. Please use Login or Reset Password.", sanitized_error
+
+    return "unknown_error", SIGNUP_GENERIC_FAILURE_MESSAGE, sanitized_error
+
+
+def _log_signup_failure_diagnostic(classification: str, sanitized_error: str) -> None:
+    payload = {
+        "app_hostname": _runtime_app_hostname(),
+        "classification": str(classification or "unknown_error"),
+        "commit_hash": _runtime_commit_hash(),
+        "event": "supabase_sign_up_error",
+        "error_preview": str(sanitized_error or "")[:180],
+    }
+    line = f"SUPABASE_SIGNUP_DIAGNOSTIC {json.dumps(payload, sort_keys=True)}"
+    print(line, flush=True)
+    logger.warning("%s", line)
 
 
 def _direct_password_grant_probe(email: str, password: str) -> Dict[str, Any]:
@@ -2208,6 +2267,38 @@ def _complete_password_recovery(client: Any, new_password: str) -> tuple[bool, s
         return False, f"Password update failed: {_sanitize_reset_error(exc)}"
 
 
+def _validate_signup_inputs(
+    email: str,
+    full_name: str,
+    password: str,
+    password_confirm: str,
+    plan: str,
+) -> tuple[bool, str]:
+    clean_email = str(email or "").strip()
+    clean_name = str(full_name or "").strip()
+    clean_password = str(password or "")
+    clean_confirm = str(password_confirm or "")
+    clean_plan = str(plan or "").strip().upper()
+
+    if not clean_name:
+        return False, "Enter your full name."
+    if not clean_email or clean_email.count("@") != 1:
+        return False, "Enter a valid email address."
+
+    local_part, domain_part = clean_email.split("@", 1)
+    if not local_part or not domain_part or "." not in domain_part or domain_part.startswith(".") or domain_part.endswith("."):
+        return False, "Enter a valid email address."
+
+    if len(clean_password) < 8:
+        return False, "Password must be at least 8 characters."
+    if clean_password != clean_confirm:
+        return False, "Passwords do not match."
+    if clean_plan not in PLAN_LABELS:
+        return False, "Select a valid plan."
+
+    return True, ""
+
+
 def _apply_auth_session_to_client(client: Any, session: Any) -> bool:
     """Attach the authenticated user's JWT to the Supabase client.
 
@@ -3178,7 +3269,9 @@ def supabase_sign_up(email: str, password: str, full_name: str, plan: str) -> tu
     client = get_supabase_client()
     now = _utc_now()
     trial_end = now + timedelta(days=TRIAL_LENGTH_DAYS)
-    signup_plan = PLAN_MARKET_PULSE
+    signup_plan = str(plan or PLAN_MARKET_PULSE).strip().upper()
+    if signup_plan not in PLAN_LABELS:
+        signup_plan = PLAN_MARKET_PULSE
     clean_email = email.strip().lower()
     st.session_state["saas_trial_warning_message"] = ""
 
@@ -3262,11 +3355,9 @@ def supabase_sign_up(email: str, password: str, full_name: str, plan: str) -> tu
         return True, "Account created. Check your email to verify your account."
 
     except Exception as exc:
-        error_text = str(exc)
-        lowered = error_text.lower()
-        if "already" in lowered or "registered" in lowered or "exists" in lowered:
-            return False, "This email is already on file. Please use Login or Reset Password."
-        return False, f"Sign up failed: {exc}"
+        classification, user_message, sanitized_error = _signup_error_response(exc)
+        _log_signup_failure_diagnostic(classification, sanitized_error)
+        return False, user_message
 
 
 def supabase_login(email: str, password: str) -> tuple[bool, str]:
@@ -3591,9 +3682,26 @@ def inject_saas_css() -> None:
             .saas-upgrade {border:1px solid #fde68a;background:#fffbeb;border-radius:18px;padding:1rem;margin:1rem 0;}
             .saas-ok {border:1px solid #bbf7d0;background:#ecfdf5;border-radius:18px;padding:0.85rem 1rem;margin:0.75rem 0;color:#166534;font-weight:850;}
             .saas-warn {border:1px solid #fde68a;background:#fffbeb;border-radius:18px;padding:0.85rem 1rem;margin:0.75rem 0;color:#92400e;font-weight:850;}
+            .saas-auth-shell .stMarkdown,
+            .saas-auth-shell .stCaption,
+            .saas-auth-shell .stInfo,
+            .saas-auth-shell .stWarning,
+            .saas-auth-shell .stSuccess,
+            .saas-auth-shell .stError {
+                overflow-wrap:anywhere;
+                word-break:break-word;
+            }
+            .saas-auth-shell .stRadio [role="radiogroup"] {
+                flex-wrap:wrap;
+                row-gap:0.35rem;
+            }
             @media (max-width: 820px) {
                 .saas-auth-form, .saas-auth-shell {max-width:100%;}
                 .saas-auth-shell div[data-testid="stForm"] {max-width:100%;}
+                .saas-auth-shell div[data-testid="stFormSubmitButton"] button,
+                .saas-auth-shell .stButton>button {width:100%;}
+                .saas-auth-shell {padding-left:0.15rem; padding-right:0.15rem;}
+                .saas-auth-shell .saas-hero {padding-left:0.8rem; padding-right:0.8rem;}
             }
         </style>
         """,
@@ -3889,6 +3997,7 @@ def render_auth_panel() -> None:
                     st.error(message)
 
         elif mode == "Create Account":
+            signup_processing = bool(st.session_state.get("saas_signup_processing", False))
             with st.form("saas_signup_form"):
                 email = st.text_input("Email", value="")
                 full_name = st.text_input("Full Name", value="")
@@ -3900,41 +4009,53 @@ def render_auth_panel() -> None:
                     format_func=lambda p: f"{PLAN_LABELS[p]} — {PLAN_PRICES[p]}",
                     index=0,
                 )
-                st.success(
+                st.caption("Already have an account? Use Login above to return to the sign-in form.")
+                st.info(
                     "📧 **One More Step**\n\n"
                     "After creating your account, we'll send a verification email to activate your access.\n\n"
                     "Please check your **Inbox** first. If you don't receive it within a few minutes, check your **Junk/Spam** folder and mark the email as **Not Spam** to ensure future JFBP Quant Desk emails arrive correctly.\n\n"
                     "Click the verification link before attempting to log in."
                 )
 
-                submitted = st.form_submit_button("Create Account & Start Trial", use_container_width=True)
+                submitted = st.form_submit_button(
+                    "Create Account & Start Trial",
+                    use_container_width=True,
+                    disabled=signup_processing,
+                )
 
-            if submitted:
-                if not email or "@" not in email:
-                    st.error("Enter a valid email.")
-                elif len(password or "") < 8:
-                    st.error("Password must be at least 8 characters.")
-                elif password != password_confirm:
-                    st.error("Passwords do not match.")
-                else:
-                    ok, message = supabase_sign_up(email=email, password=password, full_name=full_name, plan=plan)
-                    if ok:
-                        st.success(
-                            "✅ **Almost Done!**\n\n"
-                            "Your account has been created successfully.\n\n"
-                            "We've sent a verification email to your email address.\n\n"
-                            "Please:\n\n"
-                            "• Check your Inbox\n"
-                            "• Check your Junk/Spam folder\n"
-                            "• Click the verification link\n"
-                            "• Return here and log in\n\n"
-                            "If you don't receive the email after **5–10 minutes**, check your **Junk/Spam** folder and mark it as **Not Spam** if necessary.\n\n"
-                            "If it's still missing, use **Reset Password** or contact **[support@jfbpquantdesk.com](mailto:support@jfbpquantdesk.com)**."
-                        )
-                        if st.session_state.get("saas_logged_in", False):
-                            st.rerun()
+            if submitted and not signup_processing:
+                st.session_state["saas_signup_processing"] = True
+                try:
+                    valid, validation_message = _validate_signup_inputs(
+                        email=email,
+                        full_name=full_name,
+                        password=password,
+                        password_confirm=password_confirm,
+                        plan=plan,
+                    )
+                    if not valid:
+                        st.error(validation_message)
                     else:
-                        st.error(message)
+                        ok, message = supabase_sign_up(email=email, password=password, full_name=full_name, plan=plan)
+                        if ok:
+                            st.success(
+                                "✅ **Almost Done!**\n\n"
+                                "Your account has been created successfully.\n\n"
+                                "We've sent a verification email to your email address.\n\n"
+                                "Please:\n\n"
+                                "• Check your Inbox\n"
+                                "• Check your Junk/Spam folder\n"
+                                "• Click the verification link\n"
+                                "• Use Login above after verification\n\n"
+                                "If you don't receive the email after **5–10 minutes**, check your **Junk/Spam** folder and mark it as **Not Spam** if necessary.\n\n"
+                                "If it's still missing, use **Reset Password** or contact **[support@jfbpquantdesk.com](mailto:support@jfbpquantdesk.com)**."
+                            )
+                            if st.session_state.get("saas_logged_in", False):
+                                st.rerun()
+                        else:
+                            st.error(message)
+                finally:
+                    st.session_state["saas_signup_processing"] = False
 
         else:
             if _is_recovery_callback() or recovery_mode_active:
