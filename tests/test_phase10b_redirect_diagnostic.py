@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 from types import SimpleNamespace
 
 from pages import SaaS_Core as saas
@@ -73,3 +74,46 @@ def test_signup_redirect_diagnostic_logs_are_sanitized(monkeypatch):
     assert "ST_SECRETS" in log_line
     assert "https://www.jfbpquantdesk.com" not in log_line
     assert "SUPABASE_EMAIL_REDIRECT_TO" not in log_line
+
+
+def test_phase10b_gate_uses_expected_secret_name(monkeypatch):
+    calls: list[str] = []
+
+    def _fake_secret_value(name: str, default: str = ""):
+        calls.append(name)
+        if name == "PHASE10B_REDIRECT_DIAGNOSTIC":
+            return "true"
+        return default
+
+    monkeypatch.setattr(saas, "_secret_value", _fake_secret_value)
+
+    assert saas._phase10b_redirect_diagnostic_enabled() is True
+    assert calls == ["PHASE10B_REDIRECT_DIAGNOSTIC"]
+
+
+def test_reachability_marker_prints_once_when_gated(monkeypatch):
+    captured: list[str] = []
+
+    monkeypatch.setattr(saas, "_phase10b_redirect_diagnostic_enabled", lambda: True)
+    monkeypatch.setattr(saas, "_runtime_commit_hash", lambda: "abcdef1")
+    monkeypatch.setattr(
+        saas,
+        "_runtime_app_hostname",
+        lambda: "jfbp-quant-desk-sw9qbylj9ywd9hglnadzqk.streamlit.app",
+    )
+    monkeypatch.setattr(
+        builtins,
+        "print",
+        lambda *args, **kwargs: captured.append(" ".join(str(part) for part in args)),
+    )
+    monkeypatch.setattr(saas.logger, "info", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(saas, "_PHASE10B_REACHABILITY_EMITTED", False)
+
+    saas._emit_phase10b_reachability_marker_once()
+    saas._emit_phase10b_reachability_marker_once()
+
+    marker_lines = [line for line in captured if "PHASE10B_REDIRECT_DIAGNOSTIC_REACHABLE" in line]
+    assert len(marker_lines) == 1
+    marker_line = marker_lines[0]
+    assert "https://" not in marker_line
+    assert "SUPABASE_" not in marker_line

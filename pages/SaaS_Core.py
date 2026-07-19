@@ -219,8 +219,11 @@ COOKIE_READINESS_STATE_KEY = "saas_cookie_readiness_state"
 COOKIE_READINESS_ATTEMPTS_KEY = "saas_cookie_readiness_attempts"
 
 PHASE10B_REDIRECT_DIAGNOSTIC_PREFIX = "PHASE10B_REDIRECT_DIAGNOSTIC"
+PHASE10B_REDIRECT_DIAGNOSTIC_REACHABLE = "PHASE10B_REDIRECT_DIAGNOSTIC_REACHABLE"
 
 logger = logging.getLogger(__name__)
+
+_PHASE10B_REACHABILITY_EMITTED = False
 
 
 # =========================================================
@@ -372,7 +375,28 @@ def _log_phase10b_redirect_diagnostic(event: str, payload: Dict[str, Any]) -> No
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         **payload,
     }
-    logger.info("%s %s", PHASE10B_REDIRECT_DIAGNOSTIC_PREFIX, json.dumps(safe_payload, sort_keys=True))
+    line = f"{PHASE10B_REDIRECT_DIAGNOSTIC_PREFIX} {json.dumps(safe_payload, sort_keys=True)}"
+    print(line, flush=True)
+    logger.info("%s", line)
+
+
+def _emit_phase10b_reachability_marker_once() -> None:
+    global _PHASE10B_REACHABILITY_EMITTED
+
+    if _PHASE10B_REACHABILITY_EMITTED:
+        return
+    if not _phase10b_redirect_diagnostic_enabled():
+        return
+
+    marker_payload = {
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "commit_hash": _runtime_commit_hash(),
+        "app_hostname": _runtime_app_hostname(),
+    }
+    line = f"{PHASE10B_REDIRECT_DIAGNOSTIC_REACHABLE} {json.dumps(marker_payload, sort_keys=True)}"
+    print(line, flush=True)
+    logger.info("%s", line)
+    _PHASE10B_REACHABILITY_EMITTED = True
 
 
 def _resolve_secret_value_with_source(name: str, default: str = "") -> Dict[str, Any]:
@@ -602,6 +626,8 @@ def is_admin_user(user: "SaaSUser | None") -> bool:
     return str(getattr(user, "role", "user") or "user").upper() == "ADMIN" or is_admin_email(user.email)
 
 def init_saas_state() -> None:
+    _emit_phase10b_reachability_marker_once()
+
     st.session_state.setdefault("saas_logged_in", False)
     st.session_state.setdefault("saas_user", None)
     st.session_state.setdefault("saas_selected_plan", PLAN_MARKET_PULSE)
