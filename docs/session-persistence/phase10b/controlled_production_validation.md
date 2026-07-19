@@ -1,7 +1,7 @@
 # Phase 10B - Controlled Production Validation
 
 Date: 2026-07-19
-Scope mode: Preparation only (no live validation execution)
+Scope mode: Controlled live validation in progress (single-check authorization)
 Repository: /Users/josepereira/rs_clean
 
 ## 1) Purpose and Scope
@@ -26,10 +26,10 @@ All preconditions must be satisfied before the first live validation action:
 - Existing account state for the approved inbox checked before beginning.
 
 Precondition status checklist:
-- PENDING: Phase 10A committed and certified ready
-- PENDING: Production application URL confirmed
+- PASS: Phase 10A committed and certified ready
+- PASS: Production application URL confirmed
 - PENDING: Approved inbox supplied
-- PENDING: Operator live-action authorization granted
+- PASS: Operator live-action authorization granted (B10B-001 only)
 - PENDING: Production Supabase environment confirmed
 - PENDING: Production Stripe environment confirmed
 - PENDING: Existing account state checked
@@ -51,7 +51,7 @@ Governance rule:
 
 Status legend: PASS, FAIL, PENDING, BLOCKED, NOT RUN
 
-- B10B-001: Production signup page availability - PENDING
+- B10B-001: Production signup page availability - PASS
 - B10B-002: Approved account registration - NOT RUN
 - B10B-003: Verification email receipt - NOT RUN
 - B10B-004: Verification redirect destination - NOT RUN
@@ -92,6 +92,12 @@ Recommended record template:
 | Check ID | Date/Time (UTC) | Environment | Operator Action | Expected Result | Actual Result | Status | Sanitized Evidence Ref | Notes | Defect Ref |
 |---|---|---|---|---|---|---|---|---|---|
 | B10B-XXX | YYYY-MM-DDTHH:MM:SSZ | production | <action> | <expected> | <actual> | NOT RUN | <ref> | <notes> | <defect or N/A> |
+
+Executed evidence record:
+
+| Check ID | Date/Time (UTC) | Environment | Operator Action | Expected Result | Actual Result | Status | Sanitized Evidence Ref | Notes | Defect Ref |
+|---|---|---|---|---|---|---|---|---|---|
+| B10B-001 | 2026-07-19T15:54:57Z | production | Open fresh production app page and switch auth mode to Create Account without submit | Signup/trial registration page loads, no server error, form visible and usable, production context evident | Page loaded at public production app URL, no server error surface, Create Account form visible with required fields and action button; no submit performed | PASS | EV-B10B-001-20260719T155457Z (browser page 9c81f06e-4937-49a7-8997-8a61c13e0ad6 snapshots) | Public URL recorded only; no auth links, tokens, cookies, or PII captured | N/A |
 
 ## 6) Sanitization Controls
 
@@ -144,5 +150,5 @@ Current decision:
 
 ## 10) Live-Execution Safety Guard
 
-Until explicit operator approval is granted, all live validation checks remain NOT RUN.
-No production signup, authentication, database-write lifecycle action, Stripe flow action, deployment, or migration is authorized in this preparation phase.
+Only authorized live checks may run. All non-authorized checks remain NOT RUN.
+No production signup submission, authentication completion, database-write lifecycle action, Stripe flow action, deployment, or migration is authorized outside explicit operator approval scope.
