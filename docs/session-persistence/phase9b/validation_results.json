@@ -1,0 +1,158 @@
+{
+  "phase": "9B",
+  "subphase": "9B.6",
+  "date": "2026-07-18",
+  "repository": "/Users/josepereira/rs_clean",
+  "environment_boundary": {
+    "status": "PASS",
+    "app_env_runtime_command": "development",
+    "supabase_ref": "qkqexvlprzjqjtsarqbz",
+    "supabase_host": "qkqexvlprzjqjtsarqbz.supabase.co",
+    "stripe_mode": "test",
+    "streamlit_url": "http://localhost:8501",
+    "production_supabase_touched": false,
+    "production_stripe_touched": false,
+    "working_tree_unstaged": true
+  },
+  "authorized_account": {
+    "email_hash": "226df0acbdf4",
+    "user_id_prefix": "34037a2d",
+    "additional_accounts_created": 0
+  },
+  "root_cause": {
+    "status": "CONFIRMED",
+    "summary": "Logout revocation depended on saas_app_session_id in Streamlit state, but fallback restoration paths could leave that ID unavailable while still restoring authenticated UI.",
+    "call_chain": [
+      "render_saas_core_dashboard -> Logout button -> supabase_logout -> clear_authenticated_session -> _revoke_current_app_session -> _resolve_current_app_session_id -> SessionStore.revoke_session"
+    ]
+  },
+  "remediation": {
+    "status": "IMPLEMENTED",
+    "file": "pages/SaaS_Core.py",
+    "changes": [
+      "Resolve durable session id from session state, auth cache, or signed cookie lookup",
+      "Revoke durable session before clearing cookie and auth state",
+      "Store app_session_id in auth cache after durable session creation",
+      "Restore app_session_id during fallback rehydrate when possible",
+      "Return sanitized diagnostic when revocation cannot be confirmed"
+    ]
+  },
+  "lifecycle": [
+    {
+      "step": 1,
+      "name": "baseline",
+      "status": "PASS",
+      "session_counts": {
+        "total_rows": 7,
+        "active_rows": 0,
+        "revoked_rows": 7
+      },
+      "baseline_reset_reason": "PHASE9B6_FINAL_BASELINE_RESET"
+    },
+    {
+      "step": 2,
+      "name": "login",
+      "status": "PASS",
+      "evidence": "Final live sequence created exactly one durable session row (fd49f72b)."
+    },
+    {
+      "step": 3,
+      "name": "refresh",
+      "status": "PASS",
+      "evidence": "No additional row created; final sequence total rows rose from 7 to 8 across login+refresh+logout combined."
+    },
+    {
+      "step": 4,
+      "name": "logout",
+      "status": "PASS",
+      "session_counts": {
+        "total_rows": 8,
+        "active_rows": 0,
+        "revoked_rows": 8
+      },
+      "logout_row": {
+        "session_id_prefix": "fd49f72b",
+        "created_at": "2026-07-19T01:44:54.079411+00:00",
+        "revoked_at": "2026-07-19T01:45:16.199673+00:00",
+        "revocation_reason": "USER_LOGOUT"
+      }
+    },
+    {
+      "step": 5,
+      "name": "refresh_after_logout",
+      "status": "PASS",
+      "evidence": "Secure Access remained displayed and active session count stayed zero."
+    },
+    {
+      "step": 6,
+      "name": "restart_after_logout",
+      "status": "PASS",
+      "evidence": "User confirmed Secure Access after browser reopen and active session count remained zero."
+    },
+    {
+      "step": 7,
+      "name": "login_again",
+      "status": "PASS",
+      "session_counts": {
+        "total_rows": 9,
+        "active_rows": 1,
+        "revoked_rows": 8
+      },
+      "active_session_id_prefix": "3a344a6f"
+    },
+    {
+      "step": 8,
+      "name": "password_recovery",
+      "status": "PASS",
+      "user_confirmation": {
+        "recovery_complete": true,
+        "old_password_failed": true,
+        "new_password_succeeded": true
+      },
+      "session_counts": {
+        "total_rows": 11,
+        "active_rows": 1,
+        "revoked_rows": 10
+      },
+      "final_active_session_id_prefix": "a83572cf"
+    },
+    {
+      "step": 9,
+      "name": "manage_plan",
+      "status": "PASS",
+      "user_confirmation": "portal opened"
+    }
+  ],
+  "provisioning_invariants": {
+    "status": "PASS",
+    "profile_count": 1,
+    "workspace_count": 1,
+    "subscription_count": 1,
+    "duplicate_provisioning_detected": false,
+    "trial_start": "2026-07-18T23:47:36.258703+00:00",
+    "trial_end": "2026-08-17T23:47:36.258703+00:00"
+  },
+  "automated_verification": {
+    "py_compile": {
+      "result": "PASS"
+    },
+    "pytest": {
+      "result": "87 passed, 1 warning"
+    }
+  },
+  "defects": [
+    {
+      "id": "P9B-001",
+      "status": "REMEDIATED"
+    },
+    {
+      "id": "P9B-002",
+      "status": "RESOLVED"
+    },
+    {
+      "id": "P9B-002B",
+      "status": "RESOLVED"
+    }
+  ],
+  "final_decision": "READY_FOR_PHASE_9B_COMMIT_REVIEW"
+}

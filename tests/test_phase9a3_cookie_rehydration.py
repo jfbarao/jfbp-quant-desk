@@ -140,6 +140,7 @@ class _FakeSessionStore:
         self.refresh = {}
         self.user_sessions = {}
         self.counter = 0
+        self.revoke_calls = []
 
     def create_session(self, data):
         self.counter += 1
@@ -192,6 +193,7 @@ class _FakeSessionStore:
             if row.id == session_id and row.revoked_at is None:
                 row.revoked_at = now or datetime.now(timezone.utc)
                 row.revocation_reason = reason
+                self.revoke_calls.append({"session_id": session_id, "reason": reason})
                 return 1
         return 0
 
@@ -203,6 +205,19 @@ class _FakeSessionStore:
                 row.revocation_reason = reason
                 count += 1
         return count
+
+    def active_sessions_for_user(self, user_id, now=None):
+        current = now or datetime.now(timezone.utc)
+        active = []
+        for _handle, row in self.user_sessions.get(user_id, []):
+            if row.revoked_at is not None:
+                continue
+            if row.idle_expires_at <= current:
+                continue
+            if row.absolute_expires_at <= current:
+                continue
+            active.append(row)
+        return active
 
 
 @pytest.fixture(autouse=True)
@@ -392,6 +407,63 @@ def test_rehydrate_from_cookie_with_fresh_client(monkeypatch):
     assert saas.st.session_state.get(saas.COOKIE_READINESS_ATTEMPTS_KEY) == 0
 
 
+def test_login_again_supersedes_same_browser_active_session(monkeypatch):
+    store = _FakeSessionStore()
+    client = _FakeSupabaseClient(user_id="u-supersede")
+
+    monkeypatch.setattr(saas, "_session_store", lambda: store)
+    monkeypatch.setattr(saas, "get_supabase_client", lambda: client)
+    monkeypatch.setattr(saas, "ensure_user_workspace_records", lambda *_a, **_k: (True, "ok"))
+    monkeypatch.setattr(saas, "_profile_row_for_auth_user", lambda *_a, **_k: {})
+    monkeypatch.setattr(saas, "_save_login_metadata", lambda *_a, **_k: (True, "ok", {}, None))
+
+    saas.initialize_session(client.auth._user, client.auth._session)
+    first_app_session_id = str(saas.st.session_state.get("saas_app_session_id") or "")
+
+    # Simulate explicit login again for the same browser/device.
+    saas.initialize_session(client.auth._user, client.auth._session)
+    second_app_session_id = str(saas.st.session_state.get("saas_app_session_id") or "")
+
+    assert first_app_session_id
+    assert second_app_session_id
+    assert first_app_session_id != second_app_session_id
+
+    rows = [row for _handle, row in store.user_sessions.get("u-supersede", [])]
+    active = [row for row in rows if row.revoked_at is None]
+    revoked = [row for row in rows if row.revoked_at is not None]
+
+    assert len(rows) == 2
+    assert len(active) == 1
+    assert len(revoked) == 1
+    assert revoked[0].revocation_reason == "SESSION_SUPERSEDED"
+
+
+def test_logout_then_login_again_keeps_exactly_one_active(monkeypatch):
+    store = _FakeSessionStore()
+    client = _FakeSupabaseClient(user_id="u-logout-login")
+
+    monkeypatch.setattr(saas, "_session_store", lambda: store)
+    monkeypatch.setattr(saas, "get_supabase_client", lambda: client)
+    monkeypatch.setattr(saas, "ensure_user_workspace_records", lambda *_a, **_k: (True, "ok"))
+    monkeypatch.setattr(saas, "_profile_row_for_auth_user", lambda *_a, **_k: {})
+    monkeypatch.setattr(saas, "_save_login_metadata", lambda *_a, **_k: (True, "ok", {}, None))
+
+    saas.initialize_session(client.auth._user, client.auth._session)
+    rows = [row for _handle, row in store.user_sessions.get("u-logout-login", [])]
+    assert len([row for row in rows if row.revoked_at is None]) == 1
+
+    ok, _message = saas.supabase_logout()
+    assert ok is True
+    rows = [row for _handle, row in store.user_sessions.get("u-logout-login", [])]
+    assert len([row for row in rows if row.revoked_at is None]) == 0
+    assert len([row for row in rows if row.revocation_reason == "USER_LOGOUT"]) == 1
+
+    saas.initialize_session(client.auth._user, client.auth._session)
+    rows = [row for _handle, row in store.user_sessions.get("u-logout-login", [])]
+    assert len(rows) == 2
+    assert len([row for row in rows if row.revoked_at is None]) == 1
+
+
 def test_malformed_cookie_clears_safely(monkeypatch):
     store = _FakeSessionStore()
     monkeypatch.setattr(saas, "_session_store", lambda: store)
@@ -518,6 +590,156 @@ def test_logout_revokes_current_session_and_clears_cookie(monkeypatch):
         if row.id == sid and row.revoked_at is not None:
             revoked_count += 1
     assert revoked_count == 1
+    assert store.revoke_calls[-1]["reason"] == "USER_LOGOUT"
+
+
+def test_logout_resolves_current_session_from_cookie_when_state_id_missing(monkeypatch):
+    store = _FakeSessionStore()
+    client = _FakeSupabaseClient(user_id="u-cookie-logout")
+    monkeypatch.setattr(saas, "_session_store", lambda: store)
+    monkeypatch.setattr(saas, "get_supabase_client", lambda: client)
+    monkeypatch.setattr(saas, "ensure_user_workspace_records", lambda *_a, **_k: (True, "ok"))
+    monkeypatch.setattr(saas, "_profile_row_for_auth_user", lambda *_a, **_k: {})
+    monkeypatch.setattr(saas, "_save_login_metadata", lambda *_a, **_k: (True, "ok", {}, None))
+
+    saas.initialize_session(client.auth._user, client.auth._session)
+    sid = str(saas.st.session_state.get("saas_app_session_id") or "")
+    assert sid
+
+    # Simulate authenticated fallback state with cookie still present but no tracked durable id.
+    saas.st.session_state["saas_app_session_id"] = ""
+
+    ok, message = saas.supabase_logout()
+
+    assert ok is True
+    assert message == "Logged out."
+    revoked = [row for row in store.rows.values() if row.id == sid and row.revoked_at is not None]
+    assert len(revoked) == 1
+    assert revoked[0].revocation_reason == "USER_LOGOUT"
+
+
+def test_refresh_after_logout_does_not_restore_or_create_session(monkeypatch):
+    store = _FakeSessionStore()
+    client = _FakeSupabaseClient(user_id="u-refresh-after-logout")
+    monkeypatch.setattr(saas, "_session_store", lambda: store)
+    monkeypatch.setattr(saas, "get_supabase_client", lambda: client)
+    monkeypatch.setattr(saas, "ensure_user_workspace_records", lambda *_a, **_k: (True, "ok"))
+    monkeypatch.setattr(saas, "_profile_row_for_auth_user", lambda *_a, **_k: {})
+    monkeypatch.setattr(saas, "_save_login_metadata", lambda *_a, **_k: (True, "ok", {}, None))
+
+    saas.initialize_session(client.auth._user, client.auth._session)
+    session_count_before_logout = store.counter
+
+    ok, _message = saas.supabase_logout()
+    assert ok is True
+
+    saas.st.session_state["saas_logged_in"] = False
+    saas.st.session_state["saas_user"] = None
+    first_result = saas._rehydrate_authenticated_session()
+    if first_result is None:
+        assert saas._rehydrate_authenticated_session() is False
+    else:
+        assert first_result is False
+    assert store.counter == session_count_before_logout
+    assert len(store.active_sessions_for_user("u-refresh-after-logout")) == 0
+
+
+def test_browser_restart_after_logout_cannot_rehydrate_revoked_session(monkeypatch):
+    store = _FakeSessionStore()
+    client1 = _FakeSupabaseClient(user_id="u-restart-after-logout")
+    monkeypatch.setattr(saas, "_session_store", lambda: store)
+    monkeypatch.setattr(saas, "get_supabase_client", lambda: client1)
+    monkeypatch.setattr(saas, "ensure_user_workspace_records", lambda *_a, **_k: (True, "ok"))
+    monkeypatch.setattr(saas, "_profile_row_for_auth_user", lambda *_a, **_k: {})
+    monkeypatch.setattr(saas, "_save_login_metadata", lambda *_a, **_k: (True, "ok", {}, None))
+
+    saas.initialize_session(client1.auth._user, client1.auth._session)
+    session_count_before_logout = store.counter
+
+    ok, _message = saas.supabase_logout()
+    assert ok is True
+
+    saas.st.session_state.clear()
+    saas.st.session_state["saas_logged_in"] = False
+    saas.st.session_state["saas_user"] = None
+    saas.st.session_state["saas_selected_plan"] = saas.PLAN_MARKET_PULSE
+
+    client2 = _FakeSupabaseClient(user_id="u-restart-after-logout")
+    monkeypatch.setattr(saas, "get_supabase_client", lambda: client2)
+
+    first_result = saas._rehydrate_authenticated_session()
+    if first_result is None:
+        assert saas._rehydrate_authenticated_session() is False
+    else:
+        assert first_result is False
+    assert store.counter == session_count_before_logout
+    assert len(store.active_sessions_for_user("u-restart-after-logout")) == 0
+
+
+def test_auth_cache_stores_and_resolves_session_id_for_logout(monkeypatch):
+    store = _FakeSessionStore()
+    client1 = _FakeSupabaseClient(user_id="u-cache-logout")
+    monkeypatch.setattr(saas, "_session_store", lambda: store)
+    monkeypatch.setattr(saas, "get_supabase_client", lambda: client1)
+    monkeypatch.setattr(saas, "ensure_user_workspace_records", lambda *_a, **_k: (True, "ok"))
+    monkeypatch.setattr(saas, "_profile_row_for_auth_user", lambda *_a, **_k: {})
+    monkeypatch.setattr(saas, "_save_login_metadata", lambda *_a, **_k: (True, "ok", {}, None))
+
+    saas.initialize_session(client1.auth._user, client1.auth._session)
+    sid = str(saas.st.session_state.get("saas_app_session_id") or "")
+    assert sid
+
+    cache_key = saas._browser_auth_cache_key()
+    saas._auth_session_cache()[cache_key] = {
+        "access_token": "cached-access",
+        "refresh_token": "cached-refresh",
+        "expires_at": None,
+        "app_session_id": sid,
+    }
+
+    saas.st.session_state["saas_app_session_id"] = ""
+    monkeypatch.setattr(saas, "_read_session_cookie_result", lambda: saas.CookieReadResult(saas.COOKIE_READINESS_ABSENT, ""))
+
+    resolved_sid, source = saas._resolve_current_app_session_id(store)
+    assert resolved_sid == sid
+    assert source == "auth_cache"
+
+    ok, _message = saas.supabase_logout()
+    assert ok is True
+    revoked = [row for row in store.rows.values() if row.id == sid and row.revoked_at is not None]
+    assert len(revoked) == 1
+    assert revoked[0].revocation_reason == "USER_LOGOUT"
+
+
+def test_logout_does_not_revoke_other_browser_session(monkeypatch):
+    store = _FakeSessionStore()
+    client = _FakeSupabaseClient(user_id="u-browser-isolation")
+    monkeypatch.setattr(saas, "_session_store", lambda: store)
+    monkeypatch.setattr(saas, "get_supabase_client", lambda: client)
+    monkeypatch.setattr(saas, "ensure_user_workspace_records", lambda *_a, **_k: (True, "ok"))
+    monkeypatch.setattr(saas, "_profile_row_for_auth_user", lambda *_a, **_k: {})
+    monkeypatch.setattr(saas, "_save_login_metadata", lambda *_a, **_k: (True, "ok", {}, None))
+
+    saas.initialize_session(client.auth._user, client.auth._session)
+    current_sid = str(saas.st.session_state.get("saas_app_session_id") or "")
+
+    other = store.create_session(
+        saas.SessionCreationInput(
+            user_id="u-browser-isolation",
+            remember_me=False,
+            user_agent="ua-test",
+            client_metadata={"browser_fingerprint": "other-browser"},
+            refresh_material="refresh-other",
+        )
+    )
+
+    ok, _message = saas.supabase_logout()
+    assert ok is True
+
+    current_rows = [row for row in store.rows.values() if row.id == current_sid]
+    other_rows = [row for row in store.rows.values() if row.id == other.record.id]
+    assert current_rows and current_rows[0].revoked_at is not None
+    assert other_rows and other_rows[0].revoked_at is None
 
 
 def test_logout_all_revokes_all_user_sessions(monkeypatch):

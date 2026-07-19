@@ -660,6 +660,10 @@ def _cache_authenticated_session(session: Any) -> None:
     if not payload.get("access_token"):
         return
 
+    app_session_id = str(st.session_state.get("saas_app_session_id", "") or "").strip()
+    if app_session_id:
+        payload["app_session_id"] = app_session_id
+
     key = _browser_auth_cache_key()
     if not key:
         return
@@ -840,6 +844,14 @@ def _rehydrate_authenticated_session() -> bool | None:
         selected_plan=st.session_state.get("saas_selected_plan"),
     )
     st.session_state["saas_logged_in"] = True
+    cached_app_session_id = str(session_payload.get("app_session_id", "") or "").strip()
+    if cached_app_session_id:
+        st.session_state["saas_app_session_id"] = cached_app_session_id
+    if store is not None:
+        resolved_session_id, _resolved_source = _resolve_current_app_session_id(store)
+        if resolved_session_id:
+            st.session_state["saas_app_session_id"] = resolved_session_id
+            _cache_authenticated_session(session_payload)
     _mark_cookie_readiness_present()
     return True
 
@@ -1715,7 +1727,20 @@ def _bridge_fragment_auth_callback_to_query() -> None:
                 parentWin.history.replaceState({}, '', nextUrl);
 
                 if (changed) {
-                    parentWin.location.reload();
+                    // In Streamlit's sandboxed component runtime, top-level
+                    // navigation APIs (reload/assign/replace) can be blocked.
+                    // Emit URL-change events so the host runtime can observe
+                    // updated query params and trigger a rerun safely.
+                    try {
+                        parentWin.dispatchEvent(new PopStateEvent('popstate'));
+                    } catch (_popErr) {
+                        // Ignore event dispatch errors.
+                    }
+                    try {
+                        parentWin.dispatchEvent(new Event('hashchange'));
+                    } catch (_hashErr) {
+                        // Ignore event dispatch errors.
+                    }
                 }
             } catch (_err) {
                 // Never raise client-side callback bridge errors into the app.
@@ -1723,13 +1748,6 @@ def _bridge_fragment_auth_callback_to_query() -> None:
         })();
         </script>
     """
-
-    try:
-        if hasattr(st, "html"):
-            st.html(bridge_html)
-            return
-    except Exception:
-        pass
 
     try:
         st.components.v1.html(bridge_html, height=0)
@@ -2620,6 +2638,122 @@ def authenticate_user(auth_response: Any) -> tuple[Any, Any, str]:
     return user, session, access_token
 
 
+def _revoke_superseded_browser_sessions(store: Any, user_id: str, browser_fingerprint: str) -> int:
+    """Revoke active durable sessions that should be superseded for this browser.
+
+    Invariant target: one active durable session per browser/device.
+    """
+    uid = str(user_id or "").strip()
+    if store is None or not uid:
+        return 0
+
+    current_session_id = str(st.session_state.get("saas_app_session_id", "") or "").strip()
+    fp = str(browser_fingerprint or "").strip()
+
+    try:
+        active_sessions = store.active_sessions_for_user(uid)
+    except Exception:
+        return 0
+
+    revoked = 0
+    for record in active_sessions:
+        sid = str(getattr(record, "id", "") or "").strip()
+        if not sid:
+            continue
+
+        metadata = getattr(record, "client_metadata", {})
+        record_fp = ""
+        if isinstance(metadata, dict):
+            record_fp = str(metadata.get("browser_fingerprint", "") or "").strip()
+
+        should_revoke = bool(fp and record_fp and record_fp == fp)
+        if current_session_id and sid == current_session_id:
+            should_revoke = True
+
+        if not should_revoke:
+            continue
+
+        try:
+            revoked += int(store.revoke_session(sid, reason="SESSION_SUPERSEDED"))
+        except Exception:
+            continue
+
+    return revoked
+
+
+def _resolve_current_app_session_id(store: Any) -> tuple[str, str]:
+    current_session_id = str(st.session_state.get("saas_app_session_id", "") or "").strip()
+    if current_session_id:
+        return current_session_id, "session_state"
+
+    key = _browser_auth_cache_key()
+    if key:
+        cached_payload = _auth_session_cache().get(key, {})
+        cached_session_id = str(cached_payload.get("app_session_id", "") or "").strip() if isinstance(cached_payload, dict) else ""
+        if cached_session_id:
+            st.session_state["saas_app_session_id"] = cached_session_id
+            return cached_session_id, "auth_cache"
+
+    if store is None:
+        return "", "store_unavailable"
+
+    cookie_result = _read_session_cookie_result()
+    cookie_value = str(cookie_result.value or "").strip()
+    if not cookie_value:
+        return "", f"cookie_{cookie_result.state or 'absent'}"
+
+    try:
+        raw_handle = _unsign_session_handle(cookie_value)
+    except Exception:
+        _clear_session_cookie()
+        _mark_cookie_readiness_absent()
+        return "", "cookie_invalid"
+
+    try:
+        lookup = store.get_session_by_handle(raw_handle)
+    except Exception:
+        return "", "lookup_failed"
+
+    if lookup.record is None:
+        status_name = str(getattr(lookup, "status", "missing") or "missing").lower()
+        if lookup.status in {
+            SessionLookupStatus.MISSING,
+            SessionLookupStatus.REVOKED,
+            SessionLookupStatus.IDLE_EXPIRED,
+            SessionLookupStatus.ABSOLUTE_EXPIRED,
+            SessionLookupStatus.MALFORMED,
+        }:
+            _clear_session_cookie()
+            _mark_cookie_readiness_absent()
+        return "", f"lookup_{status_name}"
+
+    resolved_session_id = str(getattr(lookup.record, "id", "") or "").strip()
+    if resolved_session_id:
+        st.session_state["saas_app_session_id"] = resolved_session_id
+        return resolved_session_id, "cookie_lookup"
+
+    return "", "lookup_missing_id"
+
+
+def _revoke_current_app_session(reason: str = "USER_LOGOUT") -> tuple[bool, str]:
+    store = _session_store()
+    if store is None:
+        return False, "session_store_unavailable"
+
+    session_id, source = _resolve_current_app_session_id(store)
+    if not session_id:
+        _clear_session_cookie()
+        _mark_cookie_readiness_absent()
+        return False, f"session_unresolved:{source}"
+
+    try:
+        revoked_count = int(store.revoke_session(session_id, reason=reason))
+    except Exception:
+        return False, f"revoke_failed:{source}"
+
+    return revoked_count > 0, source
+
+
 def initialize_session(user: Any, session: Any, selected_plan: str | None = None) -> Any:
     new_user_id = _auth_user_id(user)
     old_user = st.session_state.get("saas_user")
@@ -2636,7 +2770,6 @@ def initialize_session(user: Any, session: Any, selected_plan: str | None = None
     st.session_state["saas_auth_session"] = session_payload
     st.session_state["saas_user"] = build_saas_user_from_auth(user, selected_plan=selected_plan)
     st.session_state["saas_logged_in"] = True
-    _cache_authenticated_session(session_payload)
 
     # Phase 9A.3 durable app session integration (primary persistence).
     store = _session_store()
@@ -2644,6 +2777,8 @@ def initialize_session(user: Any, session: Any, selected_plan: str | None = None
     user_id = _auth_user_id(user)
     cookie_write_ok = False
     if store is not None and user_id and refresh_material:
+        browser_fingerprint = _browser_auth_cache_key()
+        _revoke_superseded_browser_sessions(store, user_id, browser_fingerprint)
         remember_me = bool(st.session_state.get("saas_remember_me", False))
         created = store.create_session(
             SessionCreationInput(
@@ -2651,13 +2786,15 @@ def initialize_session(user: Any, session: Any, selected_plan: str | None = None
                 remember_me=remember_me,
                 user_agent=_user_agent(_request_headers()),
                 client_metadata={
-                    "browser_fingerprint": _browser_auth_cache_key(),
+                    "browser_fingerprint": browser_fingerprint,
                 },
                 refresh_material=refresh_material,
             )
         )
         st.session_state["saas_app_session_id"] = created.record.id
         cookie_write_ok = _set_session_cookie(created.raw_handle, remember_me=remember_me)
+
+    _cache_authenticated_session(session_payload)
 
     _clear_cookie_readiness_state()
 
@@ -2821,15 +2958,11 @@ def set_authenticated_session(auth_response: Any, selected_plan: str | None = No
         return False
 
 
-def clear_authenticated_session() -> None:
-    app_session_id = str(st.session_state.get("saas_app_session_id", "") or "").strip()
-    if app_session_id:
-        store = _session_store()
-        if store is not None:
-            try:
-                store.revoke_session(app_session_id, reason="USER_LOGOUT")
-            except Exception:
-                pass
+def clear_authenticated_session(*, revoke_current: bool = True, reason: str = "USER_LOGOUT") -> tuple[bool, str]:
+    revoke_ok = True
+    revoke_detail = "not_attempted"
+    if revoke_current:
+        revoke_ok, revoke_detail = _revoke_current_app_session(reason=reason)
 
     _clear_cached_authenticated_session()
     _clear_session_cookie()
@@ -2845,6 +2978,7 @@ def clear_authenticated_session() -> None:
     st.session_state["saas_auth_debug"] = {}
     st.session_state["saas_metadata_debug_message"] = ""
     st.session_state["saas_provisioning_repair_attempts"] = {}
+    return revoke_ok, revoke_detail
 
 
 # =========================================================
@@ -2971,6 +3105,8 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
 
 
 def supabase_logout() -> tuple[bool, str]:
+    revoke_ok, revoke_detail = clear_authenticated_session(revoke_current=True, reason="USER_LOGOUT")
+
     client = get_supabase_client()
     try:
         if client is not None:
@@ -2978,8 +3114,12 @@ def supabase_logout() -> tuple[bool, str]:
     except Exception:
         pass
 
-    clear_authenticated_session()
-    return True, "Logged out."
+    if revoke_ok:
+        return True, "Logged out."
+
+    diagnostic = f"Logged out locally. Durable session revocation could not be confirmed ({revoke_detail})."
+    st.session_state["saas_auth_last_message"] = diagnostic
+    return False, diagnostic
 
 
 def supabase_logout_all() -> tuple[bool, str]:
@@ -2994,7 +3134,7 @@ def supabase_logout_all() -> tuple[bool, str]:
             except Exception:
                 pass
 
-    clear_authenticated_session()
+    clear_authenticated_session(revoke_current=False)
     return True, "Logged out from all sessions."
 
 

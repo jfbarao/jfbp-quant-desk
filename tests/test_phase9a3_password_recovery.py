@@ -320,6 +320,64 @@ def test_non_recovery_callback_ignores_recovery_type(monkeypatch):
     assert message == ""
 
 
+def test_non_recovery_callback_replay_is_single_consumption(monkeypatch):
+    client = _FakeRecoveryClient()
+    params = {
+        "type": "signup",
+        "access_token": "access-123",
+        "refresh_token": "refresh-123",
+    }
+    set_calls = {"count": 0}
+
+    monkeypatch.setattr(
+        saas,
+        "_query_param_value",
+        lambda name: str(params.get(name, "") or ""),
+    )
+    monkeypatch.setattr(
+        saas,
+        "_has_auth_callback_params",
+        lambda: bool(params.get("access_token") or params.get("refresh_token") or params.get("code") or params.get("token_hash") or params.get("token")),
+    )
+    monkeypatch.setattr(saas, "_recovery_flow_type", lambda: "signup")
+    monkeypatch.setattr(
+        saas,
+        "set_authenticated_session",
+        lambda _response: set_calls.__setitem__("count", set_calls["count"] + 1) or True,
+    )
+
+    def _clear_once() -> None:
+        params.clear()
+
+    monkeypatch.setattr(saas, "_clear_auth_callback_query_params", _clear_once)
+
+    consumed1, ok1, _msg1 = saas._establish_non_recovery_session_from_query(client)
+    consumed2, ok2, _msg2 = saas._establish_non_recovery_session_from_query(client)
+
+    assert consumed1 is True
+    assert ok1 is True
+    assert consumed2 is False
+    assert ok2 is False
+    assert set_calls["count"] == 1
+
+
+def test_password_recovery_update_does_not_create_durable_session(monkeypatch):
+    client = _FakeRecoveryClient()
+    guard = {"called": False}
+
+    def _session_store_guard(*_args, **_kwargs):
+        guard["called"] = True
+        raise AssertionError("session store should not be used by password update")
+
+    monkeypatch.setattr(saas, "_session_store", _session_store_guard)
+
+    ok, message = saas._complete_password_recovery(client, "new-password-123")
+
+    assert ok is True
+    assert "updated successfully" in message.lower()
+    assert guard["called"] is False
+
+
 def test_non_recovery_callback_rejects_incomplete_token_pair(monkeypatch):
     client = _FakeRecoveryClient()
 
@@ -340,3 +398,23 @@ def test_non_recovery_callback_rejects_incomplete_token_pair(monkeypatch):
     assert consumed is True
     assert ok is False
     assert "both access and refresh" in message.lower()
+
+
+def test_bridge_fragment_callback_uses_components_and_avoids_reload(monkeypatch):
+    captured = {"html": ""}
+
+    monkeypatch.setattr(
+        saas.st.components.v1,
+        "html",
+        lambda html, height=0: captured.__setitem__("html", html),
+        raising=False,
+    )
+
+    saas._bridge_fragment_auth_callback_to_query()
+
+    script = captured["html"]
+    assert script
+    assert "history.replaceState" in script
+    assert "dispatchEvent(new PopStateEvent('popstate'))" in script
+    assert "dispatchEvent(new Event('hashchange'))" in script
+    assert "location.reload" not in script
