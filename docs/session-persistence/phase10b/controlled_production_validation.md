@@ -52,9 +52,11 @@ Governance rule:
 Status legend: PASS, FAIL, PENDING, BLOCKED, NOT RUN
 
 - B10B-001: Production signup page availability - PASS
-- B10B-002: Approved account registration - NOT RUN
-- B10B-003: Verification email receipt - NOT RUN
-- B10B-004: Verification redirect destination - NOT RUN
+- B10B-002: Approved account registration - PASS
+- B10B-003A: Account confirmation completion provenance - PASS
+- B10B-003B: Verification redirect destination (original attempt) - FAIL (Severity: HIGH)
+- B10B-003C: Verification redirect destination (corrected configuration retest) - NOT RUN
+- B10B-004: Verification redirect destination acceptance gate - BLOCKED (awaiting clean retest lifecycle)
 - B10B-005: First login - NOT RUN
 - B10B-006: user_profiles record creation - NOT RUN
 - B10B-007: workspaces record creation - NOT RUN
@@ -98,6 +100,10 @@ Executed evidence record:
 | Check ID | Date/Time (UTC) | Environment | Operator Action | Expected Result | Actual Result | Status | Sanitized Evidence Ref | Notes | Defect Ref |
 |---|---|---|---|---|---|---|---|---|---|
 | B10B-001 | 2026-07-19T15:54:57Z | production | Open fresh production app page and switch auth mode to Create Account without submit | Signup/trial registration page loads, no server error, form visible and usable, production context evident | Page loaded at public production app URL, no server error surface, Create Account form visible with required fields and action button; no submit performed | PASS | EV-B10B-001-20260719T155457Z (browser page 9c81f06e-4937-49a7-8997-8a61c13e0ad6 snapshots) | Public URL recorded only; no auth links, tokens, cookies, or PII captured | N/A |
+| B10B-002 | 2026-07-19T16:08:26Z | production | Submit one Create Account request using the single operator-approved inbox (masked) and stop immediately after registration outcome | One account registration request completes successfully or returns clear account-exists/validation error; no second attempt is made | Single submission completed and success confirmation displayed; account created; verification email indicated as sent; no second registration attempt made | PASS | EV-B10B-002-20260719T160826Z (browser page 9c81f06e-4937-49a7-8997-8a61c13e0ad6 post-submit snapshot) | Inbox identity masked in evidence; no password, tokens, cookies, or auth links recorded; flow stopped after registration outcome | N/A |
+| B10B-003A | 2026-07-19T17:03:59Z | production | Read-only reconciliation of approved account confirmation evidence (Supabase Overview, Raw JSON, and Auth Logs) | Confirmation provenance can be established from immutable auth evidence | `confirmed_at` is populated and `/verify` auth event completed with `auth_event.action=user_signedup` for the approved account; account confirmation completed | PASS | EV-B10B-003A-20260719T170359Z (Supabase user Overview/Raw JSON + Auth Log detail `d1910af7-945c-434c-a88e-3d4c819e68da`) | Confirmation timestamp evidence: `2026-07-19T16:08:59Z`; `confirmation_sent_at`: `2026-07-19T16:08:41Z`; evidence indicates confirmation completed in original lifecycle | N/A |
+| B10B-003B | 2026-07-19T16:19:55Z | production | Observe verification-link browser destination behavior from original run evidence | Verification should land on Streamlit auth-capable callback destination | Original run evidence showed landing on marketing homepage; callback surface not reached in that observed attempt | FAIL | EV-B10B-003B-20260719T161955Z (operator-observed redirect outcome + sanitized browser destination evidence) | Severity HIGH for redirect destination quality. Keep defect open until clean retest on a fresh unconfirmed lifecycle. | DEF-B10B-003-VERIFY-REDIRECT |
+| B10B-003C | 2026-07-19T17:06:10Z | production | Corrected redirect configuration retest for signup confirmation | Fresh confirmation lifecycle should be executed once and destination validated | NOT RUN | EV-B10B-003C-20260719T170610Z | Existing approved account is already confirmed; Supabase does not provide signup-confirmation resend for confirmed user, so clean retest lifecycle is unavailable in current account state. | DEF-B10B-003-VERIFY-REDIRECT |
 
 ## 6) Sanitization Controls
 
@@ -152,3 +158,27 @@ Current decision:
 
 Only authorized live checks may run. All non-authorized checks remain NOT RUN.
 No production signup submission, authentication completion, database-write lifecycle action, Stripe flow action, deployment, or migration is authorized outside explicit operator approval scope.
+
+## 11) Investigation Summary (B10B-003 Reconciliation)
+
+Incident:
+- Original validation recorded redirect-to-marketing behavior.
+- Read-only Supabase reconciliation now confirms account confirmation completion occurred in the original lifecycle.
+
+Findings:
+- Approved account (`jfb***+cap***@icloud.com`) has populated `confirmed_at` in Supabase user record.
+- Raw JSON evidence shows:
+	- `confirmation_sent_at = 2026-07-19 16:08:41.429396+00`
+	- `confirmed_at = 2026-07-19 16:08:59.683741+00`
+- Auth log detail for `/verify` (`log=d1910af7-945c-434c-a88e-3d4c819e68da`) shows status `303` and `auth_event.action=user_signedup` at `2026-07-19T16:08:59Z`, confirming verification completion in original lifecycle.
+- The same log record includes `referer=https://jfbpquantdesk.com`, supporting the redirect-destination defect classification for marketing-host landing behavior.
+
+Classification:
+- B10B-003A Account confirmation completion: PASS (proven by immutable Supabase auth evidence).
+- B10B-003B Verification redirect destination: FAIL/HIGH (original run landed on marketing host).
+- B10B-003C Corrected redirect retest: NOT RUN (no fresh unconfirmed lifecycle available for approved account).
+
+Operator action required for clean redirect retest:
+1. Provide a fresh, explicitly approved unconfirmed test-account lifecycle (new approved inbox or an equivalent controlled method that yields a new signup confirmation email).
+2. Execute one clean B10B-003C retest on corrected configuration and capture destination evidence.
+3. Keep downstream checks blocked until B10B-003C is completed.
