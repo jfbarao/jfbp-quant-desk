@@ -166,6 +166,27 @@ def validate_runtime_config(
     if env == "production" and stripe_mode != "live":
         raise EnvironmentValidationError("Production requires Stripe live mode.")
 
+    session_encryption_key = str(config.get("SESSION_ENCRYPTION_KEY", "")).strip()
+    cookie_signing_key = str(config.get("SESSION_COOKIE_SIGNING_KEY", "")).strip()
+    if not session_encryption_key:
+        raise EnvironmentValidationError("SESSION_ENCRYPTION_KEY is required.")
+    if not cookie_signing_key:
+        raise EnvironmentValidationError("SESSION_COOKIE_SIGNING_KEY is required.")
+    if len(session_encryption_key) < 32:
+        raise EnvironmentValidationError("SESSION_ENCRYPTION_KEY is too short (min 32 characters).")
+    if len(cookie_signing_key) < 32:
+        raise EnvironmentValidationError("SESSION_COOKIE_SIGNING_KEY is too short (min 32 characters).")
+
+    billing_portal_url = str(config.get("STRIPE_BILLING_PORTAL_URL", "")).strip()
+    if env == "production" and not billing_portal_url:
+        raise EnvironmentValidationError("STRIPE_BILLING_PORTAL_URL is required in production.")
+    if env == "development" and billing_portal_url:
+        raise EnvironmentValidationError("Development must not configure STRIPE_BILLING_PORTAL_URL.")
+    if billing_portal_url:
+        billing_portal_host = _host_from_url(billing_portal_url)
+        if not billing_portal_host:
+            raise EnvironmentValidationError("STRIPE_BILLING_PORTAL_URL is invalid.")
+
     stripe_secret_key = str(config.get("STRIPE_SECRET_KEY", "")).strip()
     if stripe_secret_key:
         if stripe_mode == "test" and not stripe_secret_key.startswith("sk_test_"):
@@ -209,8 +230,11 @@ def build_runtime_config_from_secrets() -> Dict[str, str]:
         "SUPABASE_ANON_KEY": _secret_value("SUPABASE_ANON_KEY", ""),
         "SUPABASE_SERVICE_ROLE_KEY": _secret_value("SUPABASE_SERVICE_ROLE_KEY", ""),
         "SUPABASE_EMAIL_REDIRECT_TO": _secret_value("SUPABASE_EMAIL_REDIRECT_TO", ""),
+        "SESSION_ENCRYPTION_KEY": _secret_value("SESSION_ENCRYPTION_KEY", ""),
+        "SESSION_COOKIE_SIGNING_KEY": _secret_value("SESSION_COOKIE_SIGNING_KEY", ""),
         "STRIPE_MODE": _secret_value("STRIPE_MODE", ""),
         "STRIPE_SECRET_KEY": _secret_value("STRIPE_SECRET_KEY", ""),
+        "STRIPE_BILLING_PORTAL_URL": _secret_value("STRIPE_BILLING_PORTAL_URL", ""),
         "STRIPE_SUCCESS_URL": _secret_value("STRIPE_SUCCESS_URL", ""),
         "STRIPE_CANCEL_URL": _secret_value("STRIPE_CANCEL_URL", ""),
     }

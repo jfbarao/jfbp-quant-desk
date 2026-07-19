@@ -15,7 +15,11 @@ from email.message import EmailMessage
 import streamlit as st
 
 from core.bootstrap import init_core
-from core.environment_validation import EnvironmentValidationError, validate_runtime_environment
+from core.environment_validation import (
+    EnvironmentValidationError,
+    build_runtime_config_from_secrets,
+    validate_runtime_environment,
+)
 from core.ui_utils import scroll_to_top
 
 from pages.Navigation_Guide import run_page as navigation_guide_page
@@ -1149,6 +1153,18 @@ def run_protected_page(page_key: str, runner) -> None:
 
     runner()
 
+
+def _manage_plan_url() -> str:
+    """Return production billing portal URL from secrets, fail-closed elsewhere."""
+    runtime_config = build_runtime_config_from_secrets()
+    env = str(runtime_config.get("APP_ENV", "") or "").strip().lower()
+    portal_url = str(st.secrets.get("STRIPE_BILLING_PORTAL_URL", "") or "").strip()
+
+    if env != "production":
+        return ""
+
+    return portal_url
+
 # =========================================================
 # APP ROUTER
 # =========================================================
@@ -1255,11 +1271,15 @@ def app():
             unsafe_allow_html=True,
         )
 
-        st.sidebar.link_button(
-            "💳 Manage Plan",
-            "https://billing.stripe.com/p/login/3cIcN63Kpe2GcELaKp7IY00",
-            use_container_width=True,
-        )
+        manage_plan_url = _manage_plan_url()
+        if manage_plan_url:
+            st.sidebar.link_button(
+                "💳 Manage Plan",
+                manage_plan_url,
+                use_container_width=True,
+            )
+        else:
+            st.sidebar.caption("Manage Plan is unavailable in this environment.")
 
         _render_sidebar_profile_card(current_user)
 

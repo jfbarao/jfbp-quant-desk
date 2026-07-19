@@ -1384,7 +1384,7 @@ def _reset_auth_debug() -> None:
 
 def _service_role_rest_config() -> tuple[str, str]:
     url = _secret_value("SUPABASE_URL").rstrip("/")
-    key = _secret_value("SUPABASE_SERVICE_ROLE_KEY") or _secret_value("SUPABASE_ANON_KEY")
+    key = _secret_value("SUPABASE_SERVICE_ROLE_KEY")
     return url, key
 
 

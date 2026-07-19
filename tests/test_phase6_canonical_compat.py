@@ -409,8 +409,11 @@ def test_valid_development_configuration():
         "SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyZWYiOiJxa3FleHZscHJ6anFqdHNhcnFieiIsInJvbGUiOiJhbm9uIn0.signature",
         "SUPABASE_SERVICE_ROLE_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyZWYiOiJxa3FleHZscHJ6anFqdHNhcnFieiIsInJvbGUiOiJzZXJ2aWNlX3JvbGUifQ.signature",
         "SUPABASE_EMAIL_REDIRECT_TO": "http://localhost:8501",
+        "SESSION_ENCRYPTION_KEY": "A" * 48,
+        "SESSION_COOKIE_SIGNING_KEY": "B" * 48,
         "STRIPE_MODE": "test",
         "STRIPE_SECRET_KEY": "sk_test_example",
+        "STRIPE_BILLING_PORTAL_URL": "",
     }
 
     result = envv.validate_runtime_config(cfg)
@@ -427,8 +430,11 @@ def test_valid_production_configuration():
         "SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyZWYiOiJ6cXp1amVzdWZxdWlmcnRxbmFuYiIsInJvbGUiOiJhbm9uIn0.signature",
         "SUPABASE_SERVICE_ROLE_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyZWYiOiJ6cXp1amVzdWZxdWlmcnRxbmFuYiIsInJvbGUiOiJzZXJ2aWNlX3JvbGUifQ.signature",
         "SUPABASE_EMAIL_REDIRECT_TO": "https://jfbpquantdesk.com",
+        "SESSION_ENCRYPTION_KEY": "A" * 48,
+        "SESSION_COOKIE_SIGNING_KEY": "B" * 48,
         "STRIPE_MODE": "live",
         "STRIPE_SECRET_KEY": "sk_live_example",
+        "STRIPE_BILLING_PORTAL_URL": "https://billing.stripe.com/p/login/example",
     }
 
     result = envv.validate_runtime_config(cfg)
@@ -445,7 +451,10 @@ def test_development_with_production_supabase_ref_fails():
         "SUPABASE_ANON_KEY": "x",
         "SUPABASE_SERVICE_ROLE_KEY": "y",
         "SUPABASE_EMAIL_REDIRECT_TO": "http://localhost:8501",
+        "SESSION_ENCRYPTION_KEY": "A" * 48,
+        "SESSION_COOKIE_SIGNING_KEY": "B" * 48,
         "STRIPE_MODE": "test",
+        "STRIPE_BILLING_PORTAL_URL": "",
     }
 
     raised = False
@@ -463,7 +472,10 @@ def test_production_with_development_supabase_ref_fails():
         "SUPABASE_ANON_KEY": "x",
         "SUPABASE_SERVICE_ROLE_KEY": "y",
         "SUPABASE_EMAIL_REDIRECT_TO": "https://jfbpquantdesk.com",
+        "SESSION_ENCRYPTION_KEY": "A" * 48,
+        "SESSION_COOKIE_SIGNING_KEY": "B" * 48,
         "STRIPE_MODE": "live",
+        "STRIPE_BILLING_PORTAL_URL": "https://billing.stripe.com/p/login/example",
     }
 
     raised = False
@@ -481,8 +493,11 @@ def test_development_with_stripe_live_mode_fails():
         "SUPABASE_ANON_KEY": "x",
         "SUPABASE_SERVICE_ROLE_KEY": "y",
         "SUPABASE_EMAIL_REDIRECT_TO": "http://localhost:8501",
+        "SESSION_ENCRYPTION_KEY": "A" * 48,
+        "SESSION_COOKIE_SIGNING_KEY": "B" * 48,
         "STRIPE_MODE": "live",
         "STRIPE_SECRET_KEY": "sk_live_example",
+        "STRIPE_BILLING_PORTAL_URL": "",
     }
 
     raised = False
@@ -500,8 +515,11 @@ def test_production_with_stripe_test_mode_fails():
         "SUPABASE_ANON_KEY": "x",
         "SUPABASE_SERVICE_ROLE_KEY": "y",
         "SUPABASE_EMAIL_REDIRECT_TO": "https://jfbpquantdesk.com",
+        "SESSION_ENCRYPTION_KEY": "A" * 48,
+        "SESSION_COOKIE_SIGNING_KEY": "B" * 48,
         "STRIPE_MODE": "test",
         "STRIPE_SECRET_KEY": "sk_test_example",
+        "STRIPE_BILLING_PORTAL_URL": "https://billing.stripe.com/p/login/example",
     }
 
     raised = False
@@ -519,7 +537,10 @@ def test_mismatched_redirect_host_fails():
         "SUPABASE_ANON_KEY": "x",
         "SUPABASE_SERVICE_ROLE_KEY": "y",
         "SUPABASE_EMAIL_REDIRECT_TO": "http://localhost:8501",
+        "SESSION_ENCRYPTION_KEY": "A" * 48,
+        "SESSION_COOKIE_SIGNING_KEY": "B" * 48,
         "STRIPE_MODE": "live",
+        "STRIPE_BILLING_PORTAL_URL": "https://billing.stripe.com/p/login/example",
     }
 
     raised = False

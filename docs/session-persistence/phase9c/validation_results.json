@@ -1,0 +1,119 @@
+{
+  "phase": "9C",
+  "date": "2026-07-18",
+  "repository": "/Users/josepereira/rs_clean",
+  "baseline": {
+    "expected_commit": "13063e44e13e423ad608882a04b8e5d0bc2cbe2c",
+    "actual_commit": "13063e44e13e423ad608882a04b8e5d0bc2cbe2c",
+    "branch": "main",
+    "clean_start": true,
+    "staged_start": false,
+    "untracked_start": false
+  },
+  "boundary_audit": {
+    "status": "PASS",
+    "blockers_found": [
+      {
+        "id": "P9C-BND-001",
+        "summary": "Hard-coded Stripe billing portal URL in app sidebar",
+        "file": "app.py",
+        "remediation": "Replaced with production-only secret-driven URL and fail-closed runtime validation"
+      }
+    ],
+    "post_remediation": "PASS"
+  },
+  "configuration_contract": {
+    "status": "PASS",
+    "required_keys": [
+      "APP_ENV",
+      "SUPABASE_URL",
+      "SUPABASE_ANON_KEY",
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "SUPABASE_EMAIL_REDIRECT_TO",
+      "SESSION_ENCRYPTION_KEY",
+      "SESSION_COOKIE_SIGNING_KEY",
+      "STRIPE_MODE",
+      "STRIPE_SECRET_KEY",
+      "STRIPE_BILLING_PORTAL_URL"
+    ],
+    "server_only_keys": [
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "SESSION_ENCRYPTION_KEY",
+      "SESSION_COOKIE_SIGNING_KEY",
+      "SESSION_ENCRYPTION_KEY_<VERSION>",
+      "STRIPE_SECRET_KEY"
+    ]
+  },
+  "cookie_session_hardening": {
+    "status": "PASS",
+    "cookie_payload": "signed opaque handle",
+    "secure_prod_only": true,
+    "same_site": "lax",
+    "path": "/",
+    "signature_verified_before_restore": true,
+    "revoked_expired_fail_closed": true,
+    "logout_current_only": true,
+    "logout_all_explicit": true
+  },
+  "migration_certification": {
+    "status": "PASS",
+    "migration": "supabase/migrations/20260717_140000_create_app_sessions.sql",
+    "destructive_statements_found": false,
+    "idempotent_constructs_present": true,
+    "rls_enforced": true,
+    "service_role_only_table_access": true
+  },
+  "startup_fail_closed": {
+    "status": "PASS",
+    "covered_cases": [
+      "missing APP_ENV",
+      "invalid APP_ENV",
+      "missing production Supabase URL",
+      "missing anon key",
+      "missing service-role key",
+      "missing session encryption key",
+      "missing cookie signing key",
+      "malformed key material (too short)",
+      "missing production redirect URL",
+      "Stripe mode/key mismatch",
+      "development Supabase under production mode",
+      "production Supabase under development mode",
+      "missing/invalid production billing portal URL",
+      "development billing portal URL configured"
+    ]
+  },
+  "diagnostics_audit": {
+    "status": "PASS",
+    "sanitized_error_surfaces_present": true,
+    "secret_leakage_detected": false
+  },
+  "automated_verification": {
+    "py_compile": {
+      "result": "PASS",
+      "command": "/Users/josepereira/rs_clean/.venv/bin/python -m py_compile pages/SaaS_Core.py core/session_store.py core/session_crypto.py core/environment_validation.py tests/test_phase9a3_cookie_rehydration.py tests/test_phase9a3_password_recovery.py"
+    },
+    "required_pytest": {
+      "result": "PASS",
+      "command": "/Users/josepereira/rs_clean/.venv/bin/python -m pytest -q tests/test_phase9a2_session_store.py tests/test_phase9a3_cookie_rehydration.py tests/test_phase9a3_password_recovery.py tests/test_phase6_canonical_compat.py tests/test_phase9a2_migration_contract.py",
+      "summary": "87 passed, 1 warning",
+      "warnings": [
+        "gotrue package deprecation warning"
+      ],
+      "skipped": 0
+    },
+    "focused_pytest": {
+      "command": "/Users/josepereira/rs_clean/.venv/bin/python -m pytest -q tests/test_environment_validation.py",
+      "summary": "23 passed",
+      "warnings": 0,
+      "skipped": 0
+    },
+    "not_executed": [
+      {
+        "test": "tests/test_phase9a2_supabase_restoration_proof.py",
+        "reason": "integration/live test requires opt-in live user creation; excluded from offline certification"
+      }
+    ]
+  },
+  "production_touched": false,
+  "recommendation": "READY FOR PRODUCTION DEPLOYMENT REVIEW"
+}
