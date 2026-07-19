@@ -9,6 +9,8 @@ from __future__ import annotations
 import base64
 import hmac
 import hashlib
+import json
+import logging
 import os
 import smtplib
 import time
@@ -216,6 +218,10 @@ COOKIE_READINESS_PRESENT = "COOKIE_PRESENT"
 COOKIE_READINESS_STATE_KEY = "saas_cookie_readiness_state"
 COOKIE_READINESS_ATTEMPTS_KEY = "saas_cookie_readiness_attempts"
 
+PHASE10B_REDIRECT_DIAGNOSTIC_PREFIX = "PHASE10B_REDIRECT_DIAGNOSTIC"
+
+logger = logging.getLogger(__name__)
+
 
 # =========================================================
 # DATA MODELS
@@ -285,6 +291,119 @@ def _secret_value(name: str, default: str = "") -> str:
         value = os.environ.get(name, default)
 
     return str(value or default).strip()
+
+
+def _classify_redirect_value(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return "EMPTY"
+
+    try:
+        parsed = urlparse(raw)
+    except Exception:
+        return "EMPTY"
+
+    host = str(parsed.hostname or "").strip().lower()
+    if not host:
+        return "EMPTY"
+    if host == "www.jfbpquantdesk.com":
+        return "MARKETING_HOST_WWW"
+    if host == "jfbpquantdesk.com":
+        return "MARKETING_HOST_NON_WWW"
+    if host == "streamlit.app" or host.endswith(".streamlit.app"):
+        return "STREAMLIT_HOST"
+    if str(parsed.scheme or "").strip().lower() == "https":
+        return "OTHER_HTTPS_HOST"
+    return "EMPTY"
+
+
+def _phase10b_redirect_diagnostic_enabled() -> bool:
+    flag = str(_secret_value("PHASE10B_REDIRECT_DIAGNOSTIC", "") or "").strip().lower()
+    return flag in {"1", "true", "yes", "on"}
+
+
+def _runtime_commit_hash() -> str:
+    candidate_keys = (
+        "STREAMLIT_GIT_COMMIT",
+        "STREAMLIT_GIT_HASH",
+        "GIT_COMMIT",
+        "COMMIT_SHA",
+        "SOURCE_COMMIT",
+        "SOURCE_VERSION",
+        "RENDER_GIT_COMMIT",
+    )
+    for key in candidate_keys:
+        value = str(os.environ.get(key, "") or "").strip()
+        if not value:
+            continue
+        compact = value.lower()
+        if 7 <= len(compact) <= 64 and all(ch in "0123456789abcdef" for ch in compact):
+            return compact
+        return "NON_HEX"
+    return "UNAVAILABLE"
+
+
+def _runtime_app_hostname() -> str:
+    candidate_keys = (
+        "STREAMLIT_APP_URL",
+        "APP_URL",
+        "SITE_URL",
+        "HOSTNAME",
+        "HOST",
+    )
+    for key in candidate_keys:
+        value = str(os.environ.get(key, "") or "").strip()
+        if not value:
+            continue
+        parsed = urlparse(value)
+        host = str(parsed.hostname or "").strip().lower()
+        if host:
+            return host
+        if "/" not in value and ":" not in value and " " not in value:
+            return value.lower()
+    return "UNAVAILABLE"
+
+
+def _log_phase10b_redirect_diagnostic(event: str, payload: Dict[str, Any]) -> None:
+    if not _phase10b_redirect_diagnostic_enabled():
+        return
+    safe_payload = {
+        "event": str(event or "").strip() or "UNKNOWN",
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        **payload,
+    }
+    logger.info("%s %s", PHASE10B_REDIRECT_DIAGNOSTIC_PREFIX, json.dumps(safe_payload, sort_keys=True))
+
+
+def _resolve_secret_value_with_source(name: str, default: str = "") -> Dict[str, Any]:
+    secret_exists = False
+    secret_value = ""
+    try:
+        secret_exists = name in st.secrets
+        secret_value = str(st.secrets.get(name, "") or "")
+    except Exception:
+        secret_exists = False
+        secret_value = ""
+
+    env_exists = name in os.environ
+    env_value = str(os.environ.get(name, "") or "")
+
+    selected_value = str(default or "")
+    selected_source = "FALLBACK"
+
+    if secret_value.strip():
+        selected_value = secret_value
+        selected_source = "ST_SECRETS"
+    elif env_value.strip():
+        selected_value = env_value
+        selected_source = "ENVIRONMENT"
+
+    return {
+        "value": str(selected_value or "").strip(),
+        "selected_source": selected_source,
+        "secret_exists": bool(secret_exists),
+        "environment_exists": bool(env_exists),
+    }
 
 
 def _secret_status(name: str) -> str:
@@ -1597,12 +1716,52 @@ def _auth_response_user(auth_response: Any) -> Any:
 
 def _signup_email_redirect_to() -> str:
     """Return explicit signup confirmation redirect URL from environment config."""
-    explicit = str(_secret_value("SUPABASE_EMAIL_REDIRECT_TO", "") or "").strip()
+    resolved = _resolve_secret_value_with_source("SUPABASE_EMAIL_REDIRECT_TO", "")
+    explicit = str(resolved.get("value", "") or "").strip()
+    selected_source = str(resolved.get("selected_source", "FALLBACK") or "FALLBACK")
+    secret_exists = bool(resolved.get("secret_exists", False))
+    environment_exists = bool(resolved.get("environment_exists", False))
+
     if explicit:
+        selected_classification = _classify_redirect_value(explicit)
+        st.session_state["_phase10b_signup_redirect_meta"] = {
+            "selected_source": selected_source,
+            "email_redirect_to_classification": selected_classification,
+            "redirect_to_classification": selected_classification,
+        }
+        _log_phase10b_redirect_diagnostic(
+            "_signup_email_redirect_to",
+            {
+                "secret_exists": secret_exists,
+                "environment_exists": environment_exists,
+                "selected_source": selected_source,
+                "selected_classification": selected_classification,
+                "commit_hash": _runtime_commit_hash(),
+                "app_hostname": _runtime_app_hostname(),
+            },
+        )
         return explicit
 
     runtime_config = build_runtime_config_from_secrets()
-    return default_signup_redirect_for_env(runtime_config.get("APP_ENV", "development"))
+    fallback_value = default_signup_redirect_for_env(runtime_config.get("APP_ENV", "development"))
+    fallback_classification = _classify_redirect_value(fallback_value)
+    st.session_state["_phase10b_signup_redirect_meta"] = {
+        "selected_source": "FALLBACK",
+        "email_redirect_to_classification": fallback_classification,
+        "redirect_to_classification": fallback_classification,
+    }
+    _log_phase10b_redirect_diagnostic(
+        "_signup_email_redirect_to",
+        {
+            "secret_exists": secret_exists,
+            "environment_exists": environment_exists,
+            "selected_source": "FALLBACK",
+            "selected_classification": fallback_classification,
+            "commit_hash": _runtime_commit_hash(),
+            "app_hostname": _runtime_app_hostname(),
+        },
+    )
+    return fallback_value
 
 
 def _password_reset_redirect_to() -> str:
@@ -3046,6 +3205,18 @@ def supabase_sign_up(email: str, password: str, full_name: str, plan: str) -> tu
         if email_redirect_to:
             signup_options["redirect_to"] = email_redirect_to
             signup_options["email_redirect_to"] = email_redirect_to
+
+        redirect_meta = st.session_state.get("_phase10b_signup_redirect_meta", {})
+        _log_phase10b_redirect_diagnostic(
+            "supabase_sign_up_pre_call",
+            {
+                "selected_source": str(redirect_meta.get("selected_source", "FALLBACK") or "FALLBACK"),
+                "email_redirect_to_classification": _classify_redirect_value(email_redirect_to),
+                "redirect_to_classification": _classify_redirect_value(str(signup_options.get("redirect_to", "") or "")),
+                "commit_hash": _runtime_commit_hash(),
+                "app_hostname": _runtime_app_hostname(),
+            },
+        )
 
         response = client.auth.sign_up(
             {
