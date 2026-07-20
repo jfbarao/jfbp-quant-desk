@@ -157,6 +157,8 @@ try:
         restore_active_page,
         clear_active_page_cache,
         is_admin_user,
+        _production_auth_trace_run_start,
+        _production_auth_trace,
     )
 except Exception as saas_import_error:
     _saas_import_error = saas_import_error
@@ -209,6 +211,12 @@ except Exception as saas_import_error:
         return default_page
 
     def clear_active_page_cache():
+        return None
+
+    def _production_auth_trace_run_start():
+        return None
+
+    def _production_auth_trace(*_args, **_kwargs):
         return None
 
 
@@ -1136,8 +1144,20 @@ def enforce_app_login() -> bool:
     """Stop the app before sidebar/page rendering unless a real user is logged in."""
     init_saas_state()
     if get_current_user() is not None:
+        _production_auth_trace(
+            "AUTH_ROUTE_DECISION",
+            function="enforce_app_login",
+            next_control_flow="continue_authenticated_render",
+            reason="authenticated_user_present",
+        )
         return True
 
+    _production_auth_trace(
+        "AUTH_ROUTE_DECISION",
+        function="enforce_app_login",
+        next_control_flow="render_front_door_then_stop",
+        reason="no_authenticated_user",
+    )
     render_front_door()
     st.stop()
     return False
@@ -1151,6 +1171,13 @@ def run_protected_page(page_key: str, runner) -> None:
     if access_name in ADMIN_ONLY_PAGES:
         admin_allowed, _admin_reason = admin_access_allowed(current_user)
         if not admin_allowed:
+            _production_auth_trace(
+                "AUTH_ROUTE_DECISION",
+                function="run_protected_page",
+                next_control_flow="redirect_opportunity_center",
+                reason="admin_access_denied",
+                page_key=page_key,
+            )
             st.error("Administrator access is required.")
             st.session_state["jfbp_main_navigation"] = "Opportunity Center"
             remember_active_page("Opportunity Center")
@@ -1158,8 +1185,22 @@ def run_protected_page(page_key: str, runner) -> None:
 
     if access_name not in ALWAYS_ALLOW_AFTER_LOGIN:
         if not require_page_access(access_name):
+            _production_auth_trace(
+                "AUTH_ROUTE_DECISION",
+                function="run_protected_page",
+                next_control_flow="return_access_denied",
+                reason="page_access_denied",
+                page_key=page_key,
+            )
             return
 
+    _production_auth_trace(
+        "AUTH_ROUTE_DECISION",
+        function="run_protected_page",
+        next_control_flow="run_page",
+        reason="page_access_allowed",
+        page_key=page_key,
+    )
     runner()
 
 
@@ -1194,9 +1235,16 @@ def _manage_plan_url() -> str:
 # =========================================================
 
 def app():
+    _production_auth_trace_run_start()
     try:
         validate_runtime_environment()
     except EnvironmentValidationError as exc:
+        _production_auth_trace(
+            "AUTH_ROUTE_DECISION",
+            function="app",
+            next_control_flow="st.stop",
+            reason="environment_validation_failed",
+        )
         st.error("Configuration boundary check failed. Fix APP_ENV/Supabase/Stripe/redirect settings.")
         st.caption(str(exc))
         st.stop()
