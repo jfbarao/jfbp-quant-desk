@@ -148,6 +148,7 @@ try:
         init_saas_state,
         get_current_user,
         admin_access_allowed,
+        production_auth_trace,
         get_supabase_client,
         inject_saas_css,
         render_auth_panel,
@@ -176,6 +177,9 @@ except Exception as saas_import_error:
 
     def admin_access_allowed(user=None):
         return False, "saas_unavailable"
+
+    def production_auth_trace(stage: str, source_function: str, *, exc=None, **metadata):
+        return None
 
     def get_supabase_client():
         return None
@@ -1135,7 +1139,14 @@ def render_front_door() -> None:
 def enforce_app_login() -> bool:
     """Stop the app before sidebar/page rendering unless a real user is logged in."""
     init_saas_state()
-    if get_current_user() is not None:
+    current_user = get_current_user()
+    if current_user is not None:
+        production_auth_trace(
+            "AUTHENTICATED_BRANCH_ENTERED",
+            "enforce_app_login",
+            user_present=True,
+            session_present=bool(st.session_state.get("saas_auth_session")),
+        )
         return True
 
     render_front_door()

@@ -15,6 +15,7 @@ import os
 import smtplib
 import re
 import time
+import uuid
 from urllib.parse import urlparse
 from types import SimpleNamespace
 
@@ -226,10 +227,62 @@ COOKIE_READINESS_ATTEMPTS_KEY = "saas_cookie_readiness_attempts"
 
 PHASE10B_REDIRECT_DIAGNOSTIC_PREFIX = "PHASE10B_REDIRECT_DIAGNOSTIC"
 PHASE10B_REDIRECT_DIAGNOSTIC_REACHABLE = "PHASE10B_REDIRECT_DIAGNOSTIC_REACHABLE"
+PRODUCTION_AUTH_TRACE_PREFIX = "PRODUCTION_AUTH_TRACE"
 
 logger = logging.getLogger(__name__)
 
 _PHASE10B_REACHABILITY_EMITTED = False
+
+
+def _trace_exception_fields(exc: Exception | None) -> Dict[str, str]:
+    if exc is None:
+        return {
+            "exception_class": "",
+            "exception_message": "",
+        }
+
+    message = " ".join(str(exc).split())[:240]
+    return {
+        "exception_class": exc.__class__.__name__,
+        "exception_message": message,
+    }
+
+
+def _trace_value(value: Any) -> Any:
+    if isinstance(value, (bool, int, float)) or value is None:
+        return value
+    if isinstance(value, str):
+        return " ".join(value.split())[:240]
+    return str(type(value).__name__)
+
+
+def _new_auth_attempt_id() -> str:
+    attempt_id = uuid.uuid4().hex
+    st.session_state["saas_auth_attempt_id"] = attempt_id
+    st.session_state["saas_auth_attempt_started_at"] = datetime.now(timezone.utc).isoformat()
+    return attempt_id
+
+
+def _current_auth_attempt_id() -> str:
+    return str(st.session_state.get("saas_auth_attempt_id", "") or "").strip()
+
+
+def production_auth_trace(stage: str, source_function: str, *, exc: Exception | None = None, **metadata: Any) -> None:
+    payload: Dict[str, Any] = {
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "stage": str(stage or "UNKNOWN"),
+        "source_function": str(source_function or "UNKNOWN"),
+        "attempt_id": _current_auth_attempt_id(),
+    }
+
+    payload.update(_trace_exception_fields(exc))
+
+    safe_metadata = {str(key): _trace_value(value) for key, value in metadata.items()}
+    payload.update(safe_metadata)
+
+    line = f"{PRODUCTION_AUTH_TRACE_PREFIX} {json.dumps(payload, sort_keys=True)}"
+    print(line, flush=True)
+    logger.info("%s", line)
 
 
 # =========================================================
@@ -3389,6 +3442,14 @@ def set_authenticated_session(auth_response: Any, selected_plan: str | None = No
             return False
 
         if not access_token:
+            production_auth_trace(
+                "DURABLE_SESSION_CREATE_FAILED",
+                "set_authenticated_session",
+                user_present=bool(user),
+                session_present=bool(session),
+                access_token_present=False,
+                reason="missing_access_token",
+            )
             clear_stripe_checkout_state()
             st.session_state["saas_logged_in"] = False
             st.session_state["saas_user"] = None
@@ -3413,7 +3474,21 @@ def set_authenticated_session(auth_response: Any, selected_plan: str | None = No
             )
             return False
 
+        production_auth_trace(
+            "DURABLE_SESSION_CREATE_START",
+            "set_authenticated_session",
+            user_present=bool(user),
+            session_present=bool(session),
+            access_token_present=bool(access_token),
+        )
         client = initialize_session(user, session, selected_plan=selected_plan)
+        production_auth_trace(
+            "DURABLE_SESSION_CREATE_SUCCESS",
+            "set_authenticated_session",
+            user_present=bool(user),
+            session_present=bool(session),
+            client_present=bool(client),
+        )
         if not _enforce_identity_binding_contract(
             "post_login",
             login_user=user,
@@ -3441,6 +3516,12 @@ def set_authenticated_session(auth_response: Any, selected_plan: str | None = No
             _record_metadata_debug(False, profile_error)
             st.session_state["saas_metadata_debug_message"] = f"✗ Metadata write failed:\n{profile_error}"
 
+        production_auth_trace(
+            "SESSION_STATE_WRITE_START",
+            "set_authenticated_session",
+            user_present=bool(user),
+            session_present=bool(session),
+        )
         finalize_login(
             user=user,
             selected_plan=selected_plan,
@@ -3448,9 +3529,16 @@ def set_authenticated_session(auth_response: Any, selected_plan: str | None = No
             onboarding_message=onboarding_message,
         )
         st.session_state["saas_rehydrate_blocked"] = False
+        production_auth_trace(
+            "SESSION_STATE_WRITE_SUCCESS",
+            "set_authenticated_session",
+            user_present=bool(st.session_state.get("saas_user")),
+            session_present=bool(st.session_state.get("saas_auth_session")),
+        )
         return True
 
     except Exception as exc:
+        production_auth_trace("DURABLE_SESSION_CREATE_FAILED", "set_authenticated_session", exc=exc)
         st.session_state["saas_auth_last_message"] = f"Session setup failed: {exc}"
         return False
 
@@ -3584,8 +3672,14 @@ def supabase_sign_up(email: str, password: str, full_name: str, plan: str) -> tu
 
 
 def supabase_login(email: str, password: str) -> tuple[bool, str]:
+    production_auth_trace("LOGIN_BRANCH_ENTERED", "supabase_login")
     ready, message = supabase_ready()
     if not ready:
+        production_auth_trace(
+            "SUPABASE_LOGIN_REJECTED",
+            "supabase_login",
+            reason="supabase_not_ready",
+        )
         return False, message
 
     client = get_supabase_client()
@@ -3594,7 +3688,13 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
 
     # Explicit password-login attempts must not inherit previously restored identity.
     st.session_state["saas_rehydrate_blocked"] = True
-    clear_authenticated_session(revoke_current=True, reason="LOGIN_ATTEMPT_RESET")
+    production_auth_trace("PRE_LOGIN_SESSION_CLEAR_START", "supabase_login")
+    try:
+        clear_authenticated_session(revoke_current=True, reason="LOGIN_ATTEMPT_RESET")
+        production_auth_trace("PRE_LOGIN_SESSION_CLEAR_SUCCESS", "supabase_login")
+    except Exception as exc:
+        production_auth_trace("PRE_LOGIN_SESSION_CLEAR_FAILED", "supabase_login", exc=exc)
+        raise
     try:
         if client is not None:
             client.auth.sign_out()
@@ -3602,6 +3702,7 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
         pass
 
     try:
+        production_auth_trace("SUPABASE_LOGIN_CALL_START", "supabase_login")
         response = client.auth.sign_in_with_password(
             {
                 "email": clean_email,
@@ -3612,17 +3713,33 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
         diag_user = _auth_response_user(response)
         diag_session = _auth_response_session(response)
         diag_access, diag_refresh = _get_session_tokens(diag_session)
+        production_auth_trace(
+            "AUTH_TOKENS_PRESENT",
+            "supabase_login",
+            user_present=bool(diag_user),
+            session_present=bool(diag_session),
+            access_token_present=bool(diag_access),
+            refresh_token_present=bool(diag_refresh),
+        )
         if set_authenticated_session(response):
+            production_auth_trace("SUPABASE_LOGIN_SUCCESS", "supabase_login")
             onboarding_message = st.session_state.get("saas_auth_last_message", "")
             if st.session_state.get("saas_onboarding_ready", False):
                 return True, "Login successful. " + onboarding_message
             return True, "Login successful. " + onboarding_message
 
+        production_auth_trace(
+            "SUPABASE_LOGIN_REJECTED",
+            "supabase_login",
+            reason="set_authenticated_session_returned_false",
+        )
         clear_authenticated_session(revoke_current=False, reason="LOGIN_FAILED")
         st.session_state["saas_rehydrate_blocked"] = True
         return False, "Login failed. No authenticated user session returned."
 
     except Exception as exc:
+        production_auth_trace("SUPABASE_LOGIN_EXCEPTION", "supabase_login", exc=exc)
+        production_auth_trace("SUPABASE_LOGIN_REJECTED", "supabase_login", exc=exc)
         clear_authenticated_session(revoke_current=False, reason="LOGIN_FAILED")
         st.session_state["saas_rehydrate_blocked"] = True
         return False, f"Login failed: {exc}"
@@ -4190,6 +4307,7 @@ def render_auth_panel() -> None:
         st.markdown('<div class="saas-auth-shell">', unsafe_allow_html=True)
         st.subheader("🔐 Secure Access")
         st.caption("Sign in to JFBP Quant Desk to access your workspace and tools.")
+        production_auth_trace("SECURE_ACCESS_RENDERED", "render_auth_panel")
         render_auth_status()
 
         callback_client = get_supabase_client()
@@ -4214,6 +4332,7 @@ def render_auth_panel() -> None:
 
         st.markdown('<div class="saas-auth-form">', unsafe_allow_html=True)
         if mode == "Login":
+            production_auth_trace("LOGIN_FORM_RENDERED", "render_auth_panel")
             with st.form("saas_login_form"):
                 email = st.text_input("Email", value="")
                 password = st.text_input("Password", type="password")
@@ -4221,10 +4340,14 @@ def render_auth_panel() -> None:
                 submitted = st.form_submit_button("Login", use_container_width=True)
 
             if submitted:
+                _new_auth_attempt_id()
+                production_auth_trace("LOGIN_FORM_SUBMITTED", "render_auth_panel")
+                production_auth_trace("LOGIN_BRANCH_ENTERED", "render_auth_panel")
                 st.session_state["saas_remember_me"] = bool(remember_me)
                 ok, message = supabase_login(email=email, password=password)
                 if ok:
                     st.success(message)
+                    production_auth_trace("RERUN_REQUESTED", "render_auth_panel", reason="login_success")
                     st.rerun()
                 else:
                     st.error(message)
