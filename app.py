@@ -147,6 +147,7 @@ try:
         run_page as saas_core_page,
         init_saas_state,
         get_current_user,
+        admin_access_allowed,
         get_supabase_client,
         inject_saas_css,
         render_auth_panel,
@@ -172,6 +173,9 @@ except Exception as saas_import_error:
 
     def get_current_user():
         return None
+
+    def admin_access_allowed(user=None):
+        return False, "saas_unavailable"
 
     def get_supabase_client():
         return None
@@ -959,7 +963,8 @@ def workflow_sidebar_navigation() -> str:
         current = "Opportunity Center"
         st.session_state["jfbp_main_navigation"] = current
 
-    if current in admin_pages and not is_admin_user(current_user):
+    current_admin_allowed, _admin_reason = admin_access_allowed(current_user)
+    if current in admin_pages and not current_admin_allowed:
         current = "Opportunity Center"
         st.session_state["jfbp_main_navigation"] = current
 
@@ -1048,7 +1053,7 @@ def workflow_sidebar_navigation() -> str:
     ]
 
     for group in groups:
-        if group["title"] == "🔐 Admin" and not is_admin_user(current_user):
+        if group["title"] == "🔐 Admin" and not current_admin_allowed:
             continue
 
         page_keys = [page_key for _, page_key in group["items"]]
@@ -1143,9 +1148,13 @@ def run_protected_page(page_key: str, runner) -> None:
     access_name = ACCESS_NAME_BY_PAGE.get(page_key, page_key)
     current_user = get_current_user()
 
-    if access_name in ADMIN_ONLY_PAGES and not is_admin_user(current_user):
-        st.error("Admin access required.")
-        return
+    if access_name in ADMIN_ONLY_PAGES:
+        admin_allowed, _admin_reason = admin_access_allowed(current_user)
+        if not admin_allowed:
+            st.error("Administrator access is required.")
+            st.session_state["jfbp_main_navigation"] = "Opportunity Center"
+            remember_active_page("Opportunity Center")
+            return
 
     if access_name not in ALWAYS_ALLOW_AFTER_LOGIN:
         if not require_page_access(access_name):
@@ -1153,6 +1162,21 @@ def run_protected_page(page_key: str, runner) -> None:
 
     runner()
 
+
+def _manage_plan_url() -> str:
+    """Return production billing portal URL from secrets, fail-closed elsewhere."""
+    runtime_config = build_runtime_config_from_secrets()
+    env = str(runtime_config.get("APP_ENV", "") or "").strip().lower()
+    portal_url = str(st.secrets.get("STRIPE_BILLING_PORTAL_URL", "") or "").strip()
+
+    if env != "production":
+        return ""
+
+    return portal_url
+
+# =========================================================
+# APP ROUTER
+# =========================================================
 
 def _manage_plan_url() -> str:
     """Return production billing portal URL from secrets, fail-closed elsewhere."""
@@ -1198,139 +1222,37 @@ def app():
 
     page = workflow_sidebar_navigation()
 
-    # Global navigation hook: only bump when the routed page actually changes.
-    _bump_navigation_counter(page)
-    url_marker_changed = _apply_navigation_url_marker()
-    if url_marker_changed:
-        st.rerun()
-
-    if bool(st.session_state.get("jfbp_needs_hard_nav_reset", False)):
-        st.session_state["jfbp_needs_hard_nav_reset"] = False
-        st.session_state["jfbp_nav_reset_return_target"] = "run_app.py"
-        st.session_state["jfbp_nav_reset_return_candidates"] = [
-            "run_app.py",
-            "app.py",
-        ]
-        try:
-            st.switch_page("pages/Nav_Reset.py")
-        except Exception:
-            pass
-
-    nav_counter = int(st.session_state.get("jfbp_navigation_counter", 0) or 0)
-
-    # UI infrastructure: first pass reset before module render.
-    try:
-        scroll_to_top(nav_counter * 2)
-    except Exception:
-        pass
-
-    st.markdown(
-        """
-        <style>
-        /* Force deployed-safe scorecard typography for both legacy and new class variants. */
-        .pf-decision-card .pf-label,
-        .opportunity-scorecard .scorecard-heading {
-            font-size: 14px !important;
-            line-height: 1.2 !important;
-            font-weight: 800 !important;
-        }
-        .pf-decision-card .pf-value,
-        .opportunity-scorecard .scorecard-role-value,
-        .opportunity-scorecard .scorecard-allocation-value {
-            font-size: 20px !important;
-            line-height: 1.2 !important;
-            font-weight: 800 !important;
-        }
-        .pf-decision-card .pf-review-value,
-        .opportunity-scorecard .scorecard-review-value {
-            font-size: 16px !important;
-            line-height: 1.2 !important;
-            font-weight: 800 !important;
-        }
-        .pf-decision-card .pf-sub,
-        .opportunity-scorecard .scorecard-description {
-            font-size: 14px !important;
-            line-height: 1.32 !important;
-        }
-        .pf-decision-card,
-        .opportunity-scorecard,
-        .opportunity-scorecard * {
-            word-break: normal !important;
-            overflow-wrap: normal !important;
-            hyphens: none !important;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
     current_user = get_current_user()
     if current_user is not None:
-        st.sidebar.markdown(
-            '<div class="jfbp-sidebar-footer">',
-            unsafe_allow_html=True,
-        )
-
-        manage_plan_url = _manage_plan_url()
-        if manage_plan_url:
-            st.sidebar.link_button(
-                "💳 Manage Plan",
-                manage_plan_url,
-                use_container_width=True,
-            )
-        else:
-            st.sidebar.caption("Manage Plan is unavailable in this environment.")
-
         _render_sidebar_profile_card(current_user)
 
-        st.session_state.setdefault("sidebar_show_change_password", False)
-        st.sidebar.markdown("**👤 Account**")
+        with st.sidebar:
+            if st.button("🔒 Logout", width="stretch"):
+                ok, message = supabase_logout()
+                if ok:
+                    clear_active_page_cache()
+                    st.success(message)
+                    st.rerun()
+                st.error(message)
 
-        if st.sidebar.button(
-            "🔑 Change Password",
-            key="sidebar_change_password_btn",
-            use_container_width=True,
-        ):
-            st.session_state["sidebar_show_change_password"] = not bool(
-                st.session_state.get("sidebar_show_change_password", False)
-            )
+            if is_admin_user(current_user):
+                diagnostics_expanded = bool(st.session_state.get("show_founder_diagnostics", False))
+                with st.expander("🛠 Founder Diagnostics", expanded=diagnostics_expanded):
+                    show_diagnostics = st.toggle(
+                        "Enable diagnostics panel",
+                        value=diagnostics_expanded,
+                        key="show_founder_diagnostics",
+                    )
+                    if show_diagnostics:
+                        _render_founder_diagnostics(current_user)
+            else:
+                st.session_state["show_founder_diagnostics"] = False
 
-        if st.sidebar.button("🚪 Logout", key="sidebar_saas_logout", use_container_width=True):
-            supabase_logout()
-            clear_active_page_cache()
-            st.rerun()
+            legacy_feedback_widget = globals().get("render_founder_feedback_widget")
+            if callable(legacy_feedback_widget):
+                legacy_feedback_widget(current_user, page)
 
-        if st.session_state.get("sidebar_show_change_password", False):
-            with st.sidebar.form("sidebar_change_password_form", clear_on_submit=True):
-                new_password = st.text_input("New Password", type="password")
-                confirm_password = st.text_input("Confirm New Password", type="password")
-                update_password = st.form_submit_button("Update Password", use_container_width=True)
-
-            if update_password:
-                new_password = str(new_password or "")
-                confirm_password = str(confirm_password or "")
-
-                if not new_password.strip():
-                    st.sidebar.warning("New password cannot be empty.")
-                elif len(new_password) < 8:
-                    st.sidebar.warning("New password must be at least 8 characters.")
-                elif new_password != confirm_password:
-                    st.sidebar.warning("New password and confirm password must match.")
-                else:
-                    ok, detail = _update_logged_in_password(new_password)
-                    if ok:
-                        st.sidebar.success("✅ Password updated successfully.")
-                        st.session_state["sidebar_show_change_password"] = False
-                    else:
-                        if is_admin_user(current_user):
-                            st.sidebar.error(
-                                "Password could not be updated. Please try again.\n"
-                                f"{detail}"
-                            )
-                        else:
-                            st.sidebar.error("Password could not be updated. Please try again.")
-
-        st.sidebar.markdown("</div>", unsafe_allow_html=True)
+        remember_active_page(page)
 
     if page == "🧭 Navigation Guide":
         run_protected_page(page, navigation_guide_page)
@@ -1411,10 +1333,9 @@ def app():
         run_protected_page(page, admin_control_center_page)
 
     else:
-        empty_page("Unknown Page")
+        empty_page("Unknown Page", f"No page found for: {page}")
 
     render_founder_feedback_footer(page)
-
     remember_active_page(page)
 
 

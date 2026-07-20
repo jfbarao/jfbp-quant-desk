@@ -469,6 +469,15 @@ def _cookie_manager():
     return manager
 
 
+def _session_cookie_name() -> str:
+    env = str(build_runtime_config_from_secrets().get("APP_ENV", "") or "").strip().lower()
+    if env in {"production", "prod", "live"}:
+        return f"{SESSION_COOKIE_NAME}_prod"
+    if env in {"development", "dev", "local"}:
+        return f"{SESSION_COOKIE_NAME}_dev"
+    return f"{SESSION_COOKIE_NAME}_unknown"
+
+
 def _clear_cookie_readiness_state() -> None:
     st.session_state.pop(COOKIE_READINESS_STATE_KEY, None)
     st.session_state.pop(COOKIE_READINESS_ATTEMPTS_KEY, None)
@@ -494,8 +503,11 @@ def _read_session_cookie_result() -> CookieReadResult:
     if manager is None:
         return CookieReadResult(COOKIE_READINESS_ABSENT, "")
 
+    scoped_cookie_name = _session_cookie_name()
     try:
-        raw = str(manager.get(SESSION_COOKIE_NAME) or "").strip()
+        raw = str(manager.get(scoped_cookie_name) or "").strip()
+        if not raw:
+            raw = str(manager.get(SESSION_COOKIE_NAME) or "").strip()
     except Exception:
         raw = ""
 
@@ -564,14 +576,20 @@ def _set_session_cookie(raw_handle: str, remember_me: bool = False) -> bool:
 
     try:
         signed_value = _sign_session_handle(raw_handle)
+        scoped_cookie_name = _session_cookie_name()
         manager.set(
-            SESSION_COOKIE_NAME,
+            scoped_cookie_name,
             signed_value,
             expires_at=expires_at,
             secure=secure_flag,
             same_site=same_site_value,
             path=path_value,
         )
+        if scoped_cookie_name != SESSION_COOKIE_NAME:
+            try:
+                manager.delete(SESSION_COOKIE_NAME)
+            except Exception:
+                pass
         return True
     except Exception as exc:
         return False
@@ -582,7 +600,12 @@ def _read_session_cookie() -> str:
     if manager is None:
         return ""
 
+    scoped_cookie_name = _session_cookie_name()
     try:
+        raw = manager.get(scoped_cookie_name)
+        value = str(raw or "").strip()
+        if value:
+            return value
         raw = manager.get(SESSION_COOKIE_NAME)
         return str(raw or "").strip()
     except Exception as exc:
@@ -593,6 +616,11 @@ def _clear_session_cookie() -> None:
     manager = _cookie_manager()
     if manager is None:
         return
+
+    try:
+        manager.delete(_session_cookie_name())
+    except Exception:
+        pass
 
     try:
         manager.delete(SESSION_COOKIE_NAME)
@@ -626,10 +654,66 @@ def is_admin_email(email: str) -> bool:
     return str(email or "").strip().lower() in _admin_email_set()
 
 
+def _normalized_role_value(value: Any) -> str:
+    return str(value or "").strip().upper()
+
+
+def _auth_app_metadata(auth_user: Any) -> Dict[str, Any]:
+    if isinstance(auth_user, dict):
+        raw = auth_user.get("app_metadata")
+        return raw if isinstance(raw, dict) else {}
+    raw = getattr(auth_user, "app_metadata", None)
+    return raw if isinstance(raw, dict) else {}
+
+
+def _authoritative_role_from_auth_user(auth_user: Any) -> str:
+    app_meta = _auth_app_metadata(auth_user)
+    # Canonical admin role source is auth.app_metadata.role only.
+    return _normalized_role_value(app_meta.get("role"))
+
+
+def _current_authenticated_identity() -> tuple[str, str]:
+    client = get_supabase_client()
+    if client is None:
+        return "", ""
+
+    try:
+        current_auth_user = _auth_response_user(client.auth.get_user())
+    except Exception:
+        current_auth_user = None
+
+    if current_auth_user is None:
+        return "", ""
+
+    return _auth_user_id(current_auth_user), _auth_user_email(current_auth_user)
+
+
+def admin_access_allowed(user: "SaaSUser | None" = None) -> tuple[bool, str]:
+    current_user = user or get_current_user()
+    if current_user is None:
+        return False, "no_authenticated_user"
+
+    role_value = _normalized_role_value(getattr(current_user, "role", ""))
+    if role_value != "ADMIN":
+        return False, "role_not_admin"
+
+    current_auth_user_id, current_auth_email = _current_authenticated_identity()
+    expected_user_id = str(getattr(current_user, "user_id", "") or "").strip()
+    expected_email = str(getattr(current_user, "email", "") or "").strip().lower()
+
+    if not current_auth_user_id or not expected_user_id:
+        return False, "missing_authenticated_identity"
+    if current_auth_user_id != expected_user_id:
+        return False, "authenticated_identity_mismatch"
+    if current_auth_email and expected_email and current_auth_email != expected_email:
+        return False, "authenticated_email_mismatch"
+
+    return True, "ok"
+
+
 def is_admin_user(user: "SaaSUser | None") -> bool:
-    if user is None:
-        return False
-    return str(getattr(user, "role", "user") or "user").upper() == "ADMIN" or is_admin_email(user.email)
+    allowed, _reason = admin_access_allowed(user)
+    return allowed
 
 def init_saas_state() -> None:
     _emit_phase10b_reachability_marker_once()
@@ -648,6 +732,8 @@ def init_saas_state() -> None:
     st.session_state.setdefault("saas_trial_protection", {})
     st.session_state.setdefault("saas_provisioning_repair_attempts", {})
     st.session_state.setdefault("saas_app_session_id", "")
+    st.session_state.setdefault("saas_identity_bound_user_id", "")
+    st.session_state.setdefault("saas_rehydrate_blocked", False)
     st.session_state.setdefault("saas_remember_me", False)
     if not st.session_state.get("saas_logged_in", False):
         rehydrate_result = _rehydrate_authenticated_session()
@@ -878,6 +964,9 @@ def clear_active_page_cache() -> None:
 
 
 def _rehydrate_authenticated_session() -> bool | None:
+    if bool(st.session_state.get("saas_rehydrate_blocked", False)):
+        return False
+
     if st.session_state.get("saas_logged_in", False) and isinstance(
         st.session_state.get("saas_user"),
         SaaSUser,
@@ -919,14 +1008,6 @@ def _rehydrate_authenticated_session() -> bool | None:
                         session = _auth_response_session(restored)
                         auth_user = _auth_response_user(restored)
 
-                        if session is None:
-                            try:
-                                auth_user = _auth_response_user(client.auth.get_user())
-                                session = client.auth.get_session()
-                            except Exception:
-                                auth_user = None
-                                session = None
-
                         if session is not None and auth_user is not None:
                             session_payload = _session_cache_payload(session)
                             st.session_state["saas_auth_session"] = session_payload
@@ -937,6 +1018,14 @@ def _rehydrate_authenticated_session() -> bool | None:
                             st.session_state["saas_logged_in"] = True
                             st.session_state["saas_app_session_id"] = lookup.record.id
                             _cache_authenticated_session(session_payload)
+                            if not _enforce_identity_binding_contract(
+                                "rehydrate_durable",
+                                login_user=auth_user,
+                                login_session=session,
+                                expected_durable_user_id=str(getattr(lookup.record, "user_id", "") or "").strip(),
+                                client=client,
+                            ):
+                                return False
                             _mark_cookie_readiness_present()
                             return True
 
@@ -1003,7 +1092,141 @@ def _rehydrate_authenticated_session() -> bool | None:
         if resolved_session_id:
             st.session_state["saas_app_session_id"] = resolved_session_id
             _cache_authenticated_session(session_payload)
+    if not _enforce_identity_binding_contract(
+        "rehydrate_cache",
+        login_user=auth_user,
+        login_session=session_payload,
+        client=client,
+    ):
+        return False
     _mark_cookie_readiness_present()
+    return True
+
+
+def _jwt_claims(access_token: str) -> Dict[str, Any]:
+    token = str(access_token or "").strip()
+    if not token or token.count(".") < 2:
+        return {}
+
+    try:
+        payload_b64 = token.split(".")[1]
+        payload_b64 += "=" * ((4 - len(payload_b64) % 4) % 4)
+        decoded = base64.urlsafe_b64decode(payload_b64.encode("utf-8"))
+        payload = json.loads(decoded.decode("utf-8"))
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _safe_auth_user_via_get_user(client: Any, access_token: str = "") -> Any:
+    if client is None:
+        return None
+
+    token = str(access_token or "").strip()
+    try:
+        if token:
+            try:
+                return _auth_response_user(client.auth.get_user(token))
+            except TypeError:
+                return _auth_response_user(client.auth.get_user(jwt=token))
+        return _auth_response_user(client.auth.get_user())
+    except Exception:
+        return None
+
+
+def _durable_session_owner_user_id(store: Any, session_id: str) -> str:
+    sid = str(session_id or "").strip()
+    if not sid or store is None:
+        return ""
+
+    try:
+        row = store._select_single_by_id(sid)  # type: ignore[attr-defined]
+    except Exception:
+        return ""
+
+    if isinstance(row, dict):
+        return str(row.get("user_id", "") or "").strip()
+    return str(getattr(row, "user_id", "") or "").strip()
+
+
+def _identity_mismatch_fail_closed(reason: str) -> bool:
+    clear_authenticated_session(revoke_current=True, reason="IDENTITY_MISMATCH")
+    st.session_state["saas_identity_bound_user_id"] = ""
+    st.session_state["saas_auth_last_message"] = "Your session could not be verified. Please sign in again."
+    _set_auth_debug("identity_mismatch", {"reason": str(reason or "unknown")})
+    return False
+
+
+def _enforce_identity_binding_contract(
+    context: str,
+    *,
+    login_user: Any = None,
+    login_session: Any = None,
+    expected_durable_user_id: str = "",
+    client: Any = None,
+) -> bool:
+    client_obj = client if client is not None else get_supabase_client()
+    if client_obj is None:
+        return _identity_mismatch_fail_closed(f"{context}:missing_client")
+
+    access_token, _refresh_token = _get_session_tokens(login_session)
+    if not access_token:
+        access_token, _ = _get_session_tokens(st.session_state.get("saas_auth_session"))
+
+    auth_user = _safe_auth_user_via_get_user(client_obj, access_token)
+    auth_user_id = _auth_user_id(auth_user)
+    auth_email = _auth_user_email(auth_user)
+    if not auth_user_id:
+        return _identity_mismatch_fail_closed(f"{context}:missing_authenticated_user")
+
+    login_user_id = _auth_user_id(login_user)
+    if login_user_id and login_user_id != auth_user_id:
+        return _identity_mismatch_fail_closed(f"{context}:login_user_mismatch")
+
+    token_claims = _jwt_claims(access_token)
+    token_sub = str(token_claims.get("sub", "") or "").strip()
+    token_email = str(token_claims.get("email", "") or "").strip().lower()
+    if token_sub and token_sub != auth_user_id:
+        return _identity_mismatch_fail_closed(f"{context}:token_subject_mismatch")
+    if token_email and auth_email and token_email != auth_email:
+        return _identity_mismatch_fail_closed(f"{context}:token_email_mismatch")
+
+    state_user = get_current_user()
+    state_user_id = str(getattr(state_user, "user_id", "") or "").strip() if state_user is not None else ""
+    state_user_email = str(getattr(state_user, "email", "") or "").strip().lower() if state_user is not None else ""
+    if state_user_id and state_user_id != auth_user_id:
+        return _identity_mismatch_fail_closed(f"{context}:state_user_mismatch")
+    if state_user_email and auth_email and state_user_email != auth_email:
+        return _identity_mismatch_fail_closed(f"{context}:state_email_mismatch")
+
+    store = _session_store()
+    durable_owner_user_id = str(expected_durable_user_id or "").strip()
+    if not durable_owner_user_id:
+        durable_session_id = str(st.session_state.get("saas_app_session_id", "") or "").strip()
+        durable_owner_user_id = _durable_session_owner_user_id(store, durable_session_id)
+    if durable_owner_user_id and durable_owner_user_id != auth_user_id:
+        return _identity_mismatch_fail_closed(f"{context}:durable_owner_mismatch")
+
+    profile_row = _profile_row_for_auth_user(client_obj, auth_user_id, "")
+    profile_user_id = str(profile_row.get("user_id", "") or "").strip() if isinstance(profile_row, dict) else ""
+    if profile_user_id and profile_user_id != auth_user_id:
+        return _identity_mismatch_fail_closed(f"{context}:profile_owner_mismatch")
+
+    workspace_user_id = ""
+    try:
+        workspace_rows = _verified_user_row(client_obj, "workspaces", auth_user_id)
+        if workspace_rows and isinstance(workspace_rows[0], dict):
+            workspace_user_id = str(workspace_rows[0].get("user_id", "") or "").strip()
+    except Exception:
+        workspace_user_id = ""
+    if workspace_user_id and workspace_user_id != auth_user_id:
+        return _identity_mismatch_fail_closed(f"{context}:workspace_owner_mismatch")
+
+    bound_user_id = str(st.session_state.get("saas_identity_bound_user_id", "") or "").strip()
+    if bound_user_id and bound_user_id != auth_user_id:
+        st.session_state["saas_admin_override"] = False
+
+    st.session_state["saas_identity_bound_user_id"] = auth_user_id
     return True
 
 
@@ -2409,18 +2632,6 @@ def _profile_row_for_auth_user(client: Any, user_id: str, email: str) -> dict:
             rows = _response_data(response)
             if rows:
                 return rows[0] if isinstance(rows[0], dict) else {}
-
-        if email:
-            response = (
-                client.table("user_profiles")
-                .select("*")
-                .eq("email", email.strip().lower())
-                .limit(1)
-                .execute()
-            )
-            rows = _response_data(response)
-            if rows:
-                return rows[0] if isinstance(rows[0], dict) else {}
     except Exception:
         return {}
 
@@ -2830,7 +3041,7 @@ def build_saas_user_from_auth(auth_user: Any, selected_plan: str | None = None) 
         or meta.get("name")
         or "JFBP User"
     )
-    role = str(profile.get("role") or meta.get("role") or "user").strip().lower()
+    role = _authoritative_role_from_auth_user(auth_user).lower() or "user"
     plan = (
         subscription_row.get("plan")
         or profile.get("plan")
@@ -2861,9 +3072,7 @@ def build_saas_user_from_auth(auth_user: Any, selected_plan: str | None = None) 
     ).strip().upper()
     provisioning_required = not bool(raw_trial_start and raw_trial_end) and subscription_status != ACCOUNT_ACTIVE
 
-    # Founder/Admin pass: the captain must never be blocked by trials, plan
-    # limits, or Stripe while the SaaS engine is under construction.
-    if is_admin_email(email) or role == "admin":
+    if role == "admin":
         role = "admin"
         plan = PLAN_ELITE
         account_status = ACCOUNT_ACTIVE
@@ -3035,7 +3244,11 @@ def initialize_session(user: Any, session: Any, selected_plan: str | None = None
     old_user = st.session_state.get("saas_user")
     old_user_id = str(getattr(old_user, "user_id", "") or "")
     if old_user_id and old_user_id != new_user_id:
+        _revoke_current_app_session(reason="IDENTITY_SWITCH")
+        _clear_cached_authenticated_session()
+        _clear_session_cookie()
         clear_stripe_checkout_state()
+        st.session_state["saas_admin_override"] = False
 
     client = get_supabase_client()
     session_applied = False
@@ -3201,6 +3414,13 @@ def set_authenticated_session(auth_response: Any, selected_plan: str | None = No
             return False
 
         client = initialize_session(user, session, selected_plan=selected_plan)
+        if not _enforce_identity_binding_contract(
+            "post_login",
+            login_user=user,
+            login_session=session,
+            client=client,
+        ):
+            return False
         onboarding_ok, onboarding_message, refreshed_profile = ensure_user_profile(
             user=user,
             selected_plan=selected_plan,
@@ -3227,6 +3447,7 @@ def set_authenticated_session(auth_response: Any, selected_plan: str | None = No
             onboarding_ok=onboarding_ok,
             onboarding_message=onboarding_message,
         )
+        st.session_state["saas_rehydrate_blocked"] = False
         return True
 
     except Exception as exc:
@@ -3249,6 +3470,8 @@ def clear_authenticated_session(*, revoke_current: bool = True, reason: str = "U
     st.session_state["saas_user"] = None
     st.session_state["saas_auth_session"] = None
     st.session_state["saas_app_session_id"] = ""
+    st.session_state["saas_identity_bound_user_id"] = ""
+    st.session_state["saas_admin_override"] = False
     st.session_state["saas_onboarding_ready"] = False
     st.session_state["saas_onboarding_debug"] = {}
     st.session_state["saas_auth_debug"] = {}
@@ -3369,6 +3592,15 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
     clean_email = str(email or "").strip().lower()
     password_value = password if isinstance(password, str) else str(password or "")
 
+    # Explicit password-login attempts must not inherit previously restored identity.
+    st.session_state["saas_rehydrate_blocked"] = True
+    clear_authenticated_session(revoke_current=True, reason="LOGIN_ATTEMPT_RESET")
+    try:
+        if client is not None:
+            client.auth.sign_out()
+    except Exception:
+        pass
+
     try:
         response = client.auth.sign_in_with_password(
             {
@@ -3386,9 +3618,13 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
                 return True, "Login successful. " + onboarding_message
             return True, "Login successful. " + onboarding_message
 
+        clear_authenticated_session(revoke_current=False, reason="LOGIN_FAILED")
+        st.session_state["saas_rehydrate_blocked"] = True
         return False, "Login failed. No authenticated user session returned."
 
     except Exception as exc:
+        clear_authenticated_session(revoke_current=False, reason="LOGIN_FAILED")
+        st.session_state["saas_rehydrate_blocked"] = True
         return False, f"Login failed: {exc}"
 
 
@@ -3619,9 +3855,6 @@ def is_account_open(user: SaaSUser) -> bool:
 
 def can_access_page(user: SaaSUser, page_name: str) -> bool:
     if is_admin_user(user):
-        return True
-
-    if st.session_state.get("saas_admin_override", False):
         return True
 
     if not is_account_open(user):

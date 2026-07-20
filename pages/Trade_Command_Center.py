@@ -265,27 +265,14 @@ def _ensure_widget_default(key: str, default: Any) -> Any:
 
 
 def _is_admin_user() -> bool:
-    if bool(st.session_state.get("saas_admin_override", False)):
-        return True
-
     try:
-        from pages.SaaS_Core import get_current_user, is_admin_user as saas_is_admin_user
+        from pages.SaaS_Core import get_current_user, admin_access_allowed
 
         current_user = get_current_user()
-        if saas_is_admin_user(current_user):
-            return True
+        allowed, _reason = admin_access_allowed(current_user)
+        return bool(allowed)
     except Exception:
-        pass
-
-    fallback_user = st.session_state.get("saas_user") or st.session_state.get("user") or st.session_state.get("current_user")
-    if fallback_user is None:
         return False
-
-    if isinstance(fallback_user, dict):
-        role = str(fallback_user.get("role") or "").strip().upper()
-    else:
-        role = str(getattr(fallback_user, "role", "") or "").strip().upper()
-    return role == "ADMIN"
 
 
 def _developer_mode_enabled() -> bool:

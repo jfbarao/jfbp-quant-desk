@@ -64,6 +64,7 @@ try:
         auth_user_created_at,
         canonical_trial_window,
         get_current_user,
+        admin_access_allowed,
         is_admin_email,
         is_admin_user,
         trial_dates_consistent,
@@ -92,6 +93,9 @@ except Exception:  # pragma: no cover
 
     def get_current_user():
         return None
+
+    def admin_access_allowed(user: Any = None) -> Tuple[bool, str]:
+        return False, "saas_unavailable"
 
     def auth_user_created_at(auth_user: Any) -> Optional[datetime]:
         value = auth_user.get("created_at") if isinstance(auth_user, dict) else getattr(auth_user, "created_at", None)
@@ -423,6 +427,14 @@ def _canonical_log(message: str) -> None:
     print(message)
 
 
+def _require_admin_authorization() -> Tuple[bool, str]:
+    current_user = get_current_user()
+    try:
+        return admin_access_allowed(current_user)
+    except Exception:
+        return False, "authorization_check_failed"
+
+
 def _admin_rest_config() -> Tuple[str, str, str]:
     url = _secret_value("SUPABASE_URL")
     service_key = _secret_value("SUPABASE_SERVICE_ROLE_KEY")
@@ -558,6 +570,10 @@ def _rest_select(
     order_expr: str = "created_at.desc",
     extra_params: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
+    allowed, reason = _require_admin_authorization()
+    if not allowed:
+        raise PermissionError(f"Administrator access is required ({reason}).")
+
     url, key, _ = _admin_rest_config()
     if not url or not key:
         return []
@@ -580,6 +596,10 @@ def _rest_select(
 
 
 def _rest_insert(table_name: str, payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    allowed, reason = _require_admin_authorization()
+    if not allowed:
+        raise PermissionError(f"Administrator access is required ({reason}).")
+
     url, key, _ = _admin_rest_config()
     if not url or not key:
         return []
@@ -597,6 +617,10 @@ def _rest_insert(table_name: str, payload: Dict[str, Any]) -> List[Dict[str, Any
 
 
 def _rest_patch_by_user_id(table_name: str, user_id: str, payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    allowed, reason = _require_admin_authorization()
+    if not allowed:
+        raise PermissionError(f"Administrator access is required ({reason}).")
+
     url, key, _ = _admin_rest_config()
     if not url or not key:
         return []
@@ -629,6 +653,10 @@ def _rest_select_first_available(
 
 
 def _auth_recovery_email(email: str) -> Tuple[bool, str]:
+    allowed, reason = _require_admin_authorization()
+    if not allowed:
+        return False, f"Administrator access is required ({reason})."
+
     url, key, _ = _admin_rest_config()
     if not url or not key:
         return False, "Supabase auth recovery is unavailable."
@@ -1076,7 +1104,7 @@ def _build_customer_record(
     if not status:
         status = "REGISTERED" if not has_profile and not has_subscription else ACCOUNT_TRIAL
 
-    role = str(profile.get("role") or "admin" if is_admin_email(email) else "user").lower()
+    role = str(profile.get("role") or "user").strip().lower()
     app_meta = auth_user.get("app_metadata") if isinstance(auth_user.get("app_metadata"), dict) else {}
     user_meta = auth_user.get("user_metadata") if isinstance(auth_user.get("user_metadata"), dict) else {}
 
@@ -1282,7 +1310,7 @@ def _build_customer_record(
         "Trial Ends Raw": trial_end,
         "Trial": _days_until(trial_end),
         "Renewal Date": _fmt_date(renewal),
-        "Role": "Admin" if role == "admin" or is_admin_email(email) else "User",
+        "Role": "Admin" if role == "admin" else "User",
         "Stripe Customer ID": str(sub.get("stripe_customer_id") or profile.get("stripe_customer_id") or "—"),
         "Stripe Customer": str(sub.get("stripe_customer_id") or profile.get("stripe_customer_id") or "—"),
         "Stripe Subscription": str(sub.get("stripe_subscription_id") or profile.get("stripe_subscription_id") or "—"),
@@ -1502,6 +1530,10 @@ def merge_customer_rows(
 # =========================================================
 
 def update_customer_plan_status(user_id: str, plan: str, status: str) -> Tuple[bool, str]:
+    allowed, reason = _require_admin_authorization()
+    if not allowed:
+        return False, f"Administrator access is required ({reason})."
+
     if not user_id:
         return False, "Missing user_id for selected customer."
 
@@ -1540,6 +1572,10 @@ def update_customer_plan_status(user_id: str, plan: str, status: str) -> Tuple[b
 
 
 def update_customer_trial_controls(user_id: str, payload: Dict[str, Any]) -> Tuple[bool, str]:
+    allowed, reason = _require_admin_authorization()
+    if not allowed:
+        return False, f"Administrator access is required ({reason})."
+
     if not user_id:
         return False, "Missing user_id for selected customer."
 
@@ -1563,6 +1599,10 @@ def update_customer_trial_controls(user_id: str, payload: Dict[str, Any]) -> Tup
 
 
 def update_customer_profile_fields(user_id: str, payload: Dict[str, Any]) -> Tuple[bool, str]:
+    allowed, reason = _require_admin_authorization()
+    if not allowed:
+        return False, f"Administrator access is required ({reason})."
+
     if not user_id:
         return False, "Missing user_id for selected customer."
 
@@ -1619,6 +1659,10 @@ def _rest_first_row(table_name: str, user_id: str = "", email: str = "") -> Dict
 
 
 def apply_repair_provisioning(customer_row: Dict[str, Any], reason: str = "") -> Tuple[bool, str]:
+    allowed, auth_reason = _require_admin_authorization()
+    if not allowed:
+        return False, f"Administrator access is required ({auth_reason})."
+
     customer_row = customer_row or {}
     user_id = str(customer_row.get("User ID") or customer_row.get("UID") or "").strip()
     email = _clean_email(customer_row.get("Email"))
@@ -1779,6 +1823,10 @@ def apply_repair_provisioning(customer_row: Dict[str, Any], reason: str = "") ->
 
 
 def apply_subscription_action(customer_row: Dict[str, Any], action: str, target_plan: str, reason: str = "") -> Tuple[bool, str]:
+    allowed, auth_reason = _require_admin_authorization()
+    if not allowed:
+        return False, f"Administrator access is required ({auth_reason})."
+
     customer_row = customer_row or {}
     user_id = str(customer_row.get("User ID") or "")
     old_value = {"plan": customer_row.get("Plan Key"), "status": customer_row.get("Status Key")}
@@ -1798,6 +1846,10 @@ def apply_subscription_action(customer_row: Dict[str, Any], action: str, target_
 
 
 def apply_trial_action(customer_row: Dict[str, Any], action: str, days: int, reason: str = "") -> Tuple[bool, str]:
+    allowed, auth_reason = _require_admin_authorization()
+    if not allowed:
+        return False, f"Administrator access is required ({auth_reason})."
+
     customer_row = customer_row or {}
     user_id = str(customer_row.get("User ID") or "")
     now = _utc_now()
@@ -1833,6 +1885,10 @@ def apply_trial_action(customer_row: Dict[str, Any], action: str, days: int, rea
 
 
 def apply_repair_trial(customer_row: Dict[str, Any], reason: str = "") -> Tuple[bool, str]:
+    allowed, auth_reason = _require_admin_authorization()
+    if not allowed:
+        return False, f"Administrator access is required ({auth_reason})."
+
     customer_row = customer_row or {}
     user_id = str(customer_row.get("User ID") or "").strip()
     if not user_id:
@@ -1882,6 +1938,10 @@ def apply_repair_trial(customer_row: Dict[str, Any], reason: str = "") -> Tuple[
 
 
 def apply_rebuild_trial_dates(customer_row: Dict[str, Any], reason: str = "") -> Tuple[bool, str]:
+    allowed, auth_reason = _require_admin_authorization()
+    if not allowed:
+        return False, f"Administrator access is required ({auth_reason})."
+
     customer_row = customer_row or {}
     user_id = str(customer_row.get("User ID") or customer_row.get("UID") or "").strip()
     email = _clean_email(customer_row.get("Email"))
@@ -1924,6 +1984,10 @@ def apply_rebuild_trial_dates(customer_row: Dict[str, Any], reason: str = "") ->
 
 
 def apply_account_action(customer_row: Dict[str, Any], action: str, reason: str = "") -> Tuple[bool, str]:
+    allowed, auth_reason = _require_admin_authorization()
+    if not allowed:
+        return False, f"Administrator access is required ({auth_reason})."
+
     customer_row = customer_row or {}
     user_id = str(customer_row.get("User ID") or "")
     email = str(customer_row.get("Email") or "")
@@ -2060,13 +2124,14 @@ def render_hero() -> None:
 
 def render_admin_gate() -> bool:
     user = get_current_user()
-    if is_admin_user(user):
+    allowed, _reason = _require_admin_authorization()
+    if allowed:
         return True
 
     st.markdown(
         """
         <div class="admin-lock">
-            Admin access required. Please sign in with an authorized founder/admin account.
+            Administrator access is required.
         </div>
         """,
         unsafe_allow_html=True,
