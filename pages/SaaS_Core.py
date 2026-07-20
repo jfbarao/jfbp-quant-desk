@@ -3867,7 +3867,15 @@ def supabase_reset_password(email: str) -> tuple[bool, str, Dict[str, Any]]:
 
 def get_current_user() -> SaaSUser | None:
     user = st.session_state.get("saas_user")
-    return user if isinstance(user, SaaSUser) else None
+    if isinstance(user, SaaSUser):
+        production_auth_trace(
+            "AUTHENTICATED_BRANCH_ENTERED",
+            "get_current_user",
+            user_present=True,
+            session_present=bool(st.session_state.get("saas_auth_session")),
+        )
+        return user
+    return None
 
 
 def trial_days_remaining(user: SaaSUser) -> int:
