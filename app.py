@@ -157,7 +157,6 @@ try:
         restore_active_page,
         clear_active_page_cache,
         is_admin_user,
-        _production_auth_trace_run_start,
         _production_auth_trace,
     )
 except Exception as saas_import_error:
@@ -211,9 +210,6 @@ except Exception as saas_import_error:
         return default_page
 
     def clear_active_page_cache():
-        return None
-
-    def _production_auth_trace_run_start():
         return None
 
     def _production_auth_trace(*_args, **_kwargs):
@@ -1235,7 +1231,12 @@ def _manage_plan_url() -> str:
 # =========================================================
 
 def app():
-    _production_auth_trace_run_start()
+    _production_auth_trace(
+        "RUN_START",
+        function="app",
+        next_control_flow="continue",
+        reason="script_run_begin",
+    )
     try:
         validate_runtime_environment()
     except EnvironmentValidationError as exc:
