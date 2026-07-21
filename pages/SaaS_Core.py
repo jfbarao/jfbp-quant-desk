@@ -319,6 +319,86 @@ def production_auth_trace(stage: str, source_function: str, *, exc: Exception | 
     logger.info("%s", line)
 
 
+def _state_presence_type(value: Any) -> str:
+    if value is None:
+        return "none"
+    return type(value).__name__
+
+
+def _auth_state_snapshot() -> Dict[str, Any]:
+    return {
+        "login_in_progress": bool(st.session_state.get("saas_login_in_progress", False)),
+        "authenticated": bool(st.session_state.get("saas_logged_in", False)),
+        "cookie_readiness_state": str(st.session_state.get(COOKIE_READINESS_STATE_KEY, "") or ""),
+        "access_action": str(st.session_state.get("saas_access_action", "") or ""),
+        "selected_page": str(st.session_state.get("jfbp_main_navigation", "") or ""),
+    }
+
+
+def _trace_auth_state_write(key: str, new_value: Any, source_function: str) -> None:
+    had_previous = key in st.session_state
+    previous_value = st.session_state.get(key)
+    production_auth_trace(
+        "AUTH_STATE_WRITE",
+        source_function,
+        state_key=str(key or ""),
+        previous_present=bool(had_previous),
+        previous_type=_state_presence_type(previous_value),
+        new_present=bool(new_value is not None),
+        new_type=_state_presence_type(new_value),
+        thread_ident=_current_thread_ident(),
+        script_run_context_id=_current_script_run_context_id(),
+        login_in_progress=bool(st.session_state.get("saas_login_in_progress", False)),
+    )
+    st.session_state[key] = new_value
+
+
+def _trace_explicit_streamlit_rerun(*, call_site_id: str, source_function: str, reason: str) -> None:
+    production_auth_trace(
+        "EXPLICIT_STREAMLIT_RERUN_REQUESTED",
+        source_function,
+        call_site_id=str(call_site_id or ""),
+        reason=str(reason or ""),
+        thread_ident=_current_thread_ident(),
+        script_run_context_id=_current_script_run_context_id(),
+        login_in_progress=bool(st.session_state.get("saas_login_in_progress", False)),
+    )
+
+
+def _request_streamlit_rerun(*, call_site_id: str, source_function: str, reason: str) -> None:
+    _trace_explicit_streamlit_rerun(
+        call_site_id=call_site_id,
+        source_function=source_function,
+        reason=reason,
+    )
+    st.rerun()
+
+
+def _trace_component_call(
+    stage: str,
+    *,
+    source_function: str,
+    component_type: str,
+    operation: str,
+    elapsed_ms: int | None = None,
+    object_id: str = "",
+    value_present: bool | None = None,
+) -> None:
+    metadata: Dict[str, Any] = {
+        "component_type": str(component_type or ""),
+        "operation": str(operation or ""),
+        "object_id": str(object_id or ""),
+        "thread_ident": _current_thread_ident(),
+        "script_run_context_id": _current_script_run_context_id(),
+        "login_in_progress": bool(st.session_state.get("saas_login_in_progress", False)),
+    }
+    if elapsed_ms is not None:
+        metadata["elapsed_ms"] = int(elapsed_ms)
+    if value_present is not None:
+        metadata["value_present"] = bool(value_present)
+    production_auth_trace(stage, source_function, **metadata)
+
+
 def _safe_supabase_project_ref(url: str) -> str:
     host = str(urlparse(str(url or "").strip()).hostname or "").strip().lower()
     if not host:
@@ -630,9 +710,38 @@ def _cookie_manager():
         return None
     manager = st.session_state.get("_saas_cookie_manager")
     if manager is not None:
+        _trace_component_call(
+            "COOKIE_MANAGER_INSTANCE_OBSERVED",
+            source_function="_cookie_manager",
+            component_type="cookie_manager",
+            operation="reuse",
+            object_id=f"{id(manager)}",
+        )
         return manager
+    started = time.perf_counter()
+    _trace_component_call(
+        "COMPONENT_CALL_ENTER",
+        source_function="_cookie_manager",
+        component_type="cookie_manager",
+        operation="construct",
+    )
     manager = stx.CookieManager()
+    _trace_component_call(
+        "COMPONENT_CALL_RETURNED",
+        source_function="_cookie_manager",
+        component_type="cookie_manager",
+        operation="construct",
+        elapsed_ms=int((time.perf_counter() - started) * 1000),
+        object_id=f"{id(manager)}",
+    )
     st.session_state["_saas_cookie_manager"] = manager
+    _trace_component_call(
+        "COOKIE_MANAGER_INSTANCE_OBSERVED",
+        source_function="_cookie_manager",
+        component_type="cookie_manager",
+        operation="create",
+        object_id=f"{id(manager)}",
+    )
     return manager
 
 
@@ -671,12 +780,41 @@ def _read_session_cookie_result() -> CookieReadResult:
         return CookieReadResult(COOKIE_READINESS_ABSENT, "")
 
     scoped_cookie_name = _session_cookie_name()
+    started = time.perf_counter()
+    _trace_component_call(
+        "COMPONENT_CALL_ENTER",
+        source_function="_read_session_cookie_result",
+        component_type="cookie_manager",
+        operation="get",
+        object_id=f"{id(manager)}",
+    )
     try:
         raw = str(manager.get(scoped_cookie_name) or "").strip()
         if not raw:
             raw = str(manager.get(SESSION_COOKIE_NAME) or "").strip()
     except Exception:
         raw = ""
+    _trace_component_call(
+        "COMPONENT_CALL_RETURNED",
+        source_function="_read_session_cookie_result",
+        component_type="cookie_manager",
+        operation="get",
+        elapsed_ms=int((time.perf_counter() - started) * 1000),
+        object_id=f"{id(manager)}",
+        value_present=bool(raw),
+    )
+
+    previous_presence = bool(st.session_state.get("_saas_cookie_presence_observed", False))
+    if previous_presence != bool(raw):
+        _trace_component_call(
+            "COMPONENT_VALUE_CHANGED",
+            source_function="_read_session_cookie_result",
+            component_type="cookie_manager",
+            operation="get",
+            object_id=f"{id(manager)}",
+            value_present=bool(raw),
+        )
+    st.session_state["_saas_cookie_presence_observed"] = bool(raw)
 
     if raw:
         _mark_cookie_readiness_present()
@@ -744,6 +882,14 @@ def _set_session_cookie(raw_handle: str, remember_me: bool = False) -> bool:
     try:
         signed_value = _sign_session_handle(raw_handle)
         scoped_cookie_name = _session_cookie_name()
+        set_started = time.perf_counter()
+        _trace_component_call(
+            "COMPONENT_CALL_ENTER",
+            source_function="_set_session_cookie",
+            component_type="cookie_manager",
+            operation="set",
+            object_id=f"{id(manager)}",
+        )
         manager.set(
             scoped_cookie_name,
             signed_value,
@@ -752,9 +898,35 @@ def _set_session_cookie(raw_handle: str, remember_me: bool = False) -> bool:
             same_site=same_site_value,
             path=path_value,
         )
+        _trace_component_call(
+            "COMPONENT_CALL_RETURNED",
+            source_function="_set_session_cookie",
+            component_type="cookie_manager",
+            operation="set",
+            elapsed_ms=int((time.perf_counter() - set_started) * 1000),
+            object_id=f"{id(manager)}",
+            value_present=True,
+        )
         if scoped_cookie_name != SESSION_COOKIE_NAME:
             try:
+                delete_started = time.perf_counter()
+                _trace_component_call(
+                    "COMPONENT_CALL_ENTER",
+                    source_function="_set_session_cookie",
+                    component_type="cookie_manager",
+                    operation="delete",
+                    object_id=f"{id(manager)}",
+                )
                 manager.delete(SESSION_COOKIE_NAME)
+                _trace_component_call(
+                    "COMPONENT_CALL_RETURNED",
+                    source_function="_set_session_cookie",
+                    component_type="cookie_manager",
+                    operation="delete",
+                    elapsed_ms=int((time.perf_counter() - delete_started) * 1000),
+                    object_id=f"{id(manager)}",
+                    value_present=False,
+                )
             except Exception:
                 pass
         return True
@@ -785,12 +957,46 @@ def _clear_session_cookie() -> None:
         return
 
     try:
+        delete_started = time.perf_counter()
+        _trace_component_call(
+            "COMPONENT_CALL_ENTER",
+            source_function="_clear_session_cookie",
+            component_type="cookie_manager",
+            operation="delete",
+            object_id=f"{id(manager)}",
+        )
         manager.delete(_session_cookie_name())
+        _trace_component_call(
+            "COMPONENT_CALL_RETURNED",
+            source_function="_clear_session_cookie",
+            component_type="cookie_manager",
+            operation="delete",
+            elapsed_ms=int((time.perf_counter() - delete_started) * 1000),
+            object_id=f"{id(manager)}",
+            value_present=False,
+        )
     except Exception:
         pass
 
     try:
+        delete_started = time.perf_counter()
+        _trace_component_call(
+            "COMPONENT_CALL_ENTER",
+            source_function="_clear_session_cookie",
+            component_type="cookie_manager",
+            operation="delete",
+            object_id=f"{id(manager)}",
+        )
         manager.delete(SESSION_COOKIE_NAME)
+        _trace_component_call(
+            "COMPONENT_CALL_RETURNED",
+            source_function="_clear_session_cookie",
+            component_type="cookie_manager",
+            operation="delete",
+            elapsed_ms=int((time.perf_counter() - delete_started) * 1000),
+            object_id=f"{id(manager)}",
+            value_present=False,
+        )
     except Exception:
         pass
 
@@ -883,6 +1089,14 @@ def is_admin_user(user: "SaaSUser | None") -> bool:
     return allowed
 
 def init_saas_state() -> None:
+    script_started = time.perf_counter()
+    production_auth_trace(
+        "SCRIPT_EXECUTION_ENTER",
+        "init_saas_state",
+        thread_ident=_current_thread_ident(),
+        script_run_context_id=_current_script_run_context_id(),
+        **_auth_state_snapshot(),
+    )
     _emit_phase10b_reachability_marker_once()
     _project_boundary_trace(
         "APPLICATION_STARTUP_CONFIGURATION",
@@ -908,10 +1122,35 @@ def init_saas_state() -> None:
     st.session_state.setdefault("saas_rehydrate_blocked", False)
     st.session_state.setdefault("saas_login_in_progress", False)
     st.session_state.setdefault("saas_remember_me", False)
+    production_auth_trace(
+        "SCRIPT_EXECUTION_AUTH_STATE_SNAPSHOT",
+        "init_saas_state",
+        thread_ident=_current_thread_ident(),
+        script_run_context_id=_current_script_run_context_id(),
+        **_auth_state_snapshot(),
+    )
     if not st.session_state.get("saas_logged_in", False):
         rehydrate_result = _rehydrate_authenticated_session()
         if rehydrate_result is None:
+            production_auth_trace(
+                "SCRIPT_EXECUTION_EXIT_NORMAL",
+                "init_saas_state",
+                elapsed_ms=int((time.perf_counter() - script_started) * 1000),
+                return_path="rehydrate_pending",
+                thread_ident=_current_thread_ident(),
+                script_run_context_id=_current_script_run_context_id(),
+                **_auth_state_snapshot(),
+            )
             return
+    production_auth_trace(
+        "SCRIPT_EXECUTION_EXIT_NORMAL",
+        "init_saas_state",
+        elapsed_ms=int((time.perf_counter() - script_started) * 1000),
+        return_path="complete",
+        thread_ident=_current_thread_ident(),
+        script_run_context_id=_current_script_run_context_id(),
+        **_auth_state_snapshot(),
+    )
 
 
 @st.cache_resource(show_spinner=False)
@@ -1159,7 +1398,11 @@ def _rehydrate_authenticated_session() -> bool | None:
             )
             return False
         try:
-            st.rerun()
+            _request_streamlit_rerun(
+                call_site_id="rehydrate_cookie_not_ready",
+                source_function="_rehydrate_authenticated_session",
+                reason="cookie_readiness_not_ready",
+            )
         except Exception:
             pass
         return None
@@ -2330,7 +2573,18 @@ def _clear_recovery_query_params() -> None:
     try:
         for name in RECOVERY_QUERY_PARAM_NAMES:
             try:
+                existed = bool(_query_param_value(name))
                 del st.query_params[name]
+                production_auth_trace(
+                    "AUTH_QUERY_PARAM_WRITE",
+                    "_clear_recovery_query_params",
+                    query_param=str(name),
+                    operation="delete",
+                    previous_present=bool(existed),
+                    thread_ident=_current_thread_ident(),
+                    script_run_context_id=_current_script_run_context_id(),
+                    login_in_progress=bool(st.session_state.get("saas_login_in_progress", False)),
+                )
             except Exception:
                 pass
     except Exception:
@@ -2434,7 +2688,21 @@ def _bridge_fragment_auth_callback_to_query() -> None:
     """
 
     try:
+        started = time.perf_counter()
+        _trace_component_call(
+            "COMPONENT_CALL_ENTER",
+            source_function="_bridge_fragment_auth_callback_to_query",
+            component_type="components.v1.html",
+            operation="render",
+        )
         st.components.v1.html(bridge_html, height=0)
+        _trace_component_call(
+            "COMPONENT_CALL_RETURNED",
+            source_function="_bridge_fragment_auth_callback_to_query",
+            component_type="components.v1.html",
+            operation="render",
+            elapsed_ms=int((time.perf_counter() - started) * 1000),
+        )
     except Exception:
         return
 
@@ -3617,9 +3885,13 @@ def persist_login_metadata(client: Any, user: Any, profile_row: Dict[str, Any], 
     _record_metadata_debug(login_ok, login_message, login_metadata)
 
     if login_ok:
-        st.session_state["saas_metadata_debug_message"] = "✓ Metadata write successful"
+        _trace_auth_state_write("saas_metadata_debug_message", "✓ Metadata write successful", "persist_login_metadata")
     else:
-        st.session_state["saas_metadata_debug_message"] = f"✗ Metadata write failed:\n{login_message}"
+        _trace_auth_state_write(
+            "saas_metadata_debug_message",
+            f"✗ Metadata write failed:\n{login_message}",
+            "persist_login_metadata",
+        )
 
     _set_auth_debug(
         "persist_login_metadata",
@@ -3634,9 +3906,9 @@ def persist_login_metadata(client: Any, user: Any, profile_row: Dict[str, Any], 
 
 
 def finalize_login(user: Any, selected_plan: str | None, onboarding_ok: bool, onboarding_message: str) -> None:
-    st.session_state["saas_user"] = build_saas_user_from_auth(user, selected_plan=selected_plan)
-    st.session_state["saas_auth_last_message"] = onboarding_message
-    st.session_state["saas_onboarding_ready"] = onboarding_ok
+    _trace_auth_state_write("saas_user", build_saas_user_from_auth(user, selected_plan=selected_plan), "finalize_login")
+    _trace_auth_state_write("saas_auth_last_message", onboarding_message, "finalize_login")
+    _trace_auth_state_write("saas_onboarding_ready", onboarding_ok, "finalize_login")
     _set_auth_debug(
         "finalize_login",
         {
@@ -3670,20 +3942,20 @@ def set_authenticated_session(auth_response: Any, selected_plan: str | None = No
                 reason="missing_access_token",
             )
             clear_stripe_checkout_state()
-            st.session_state["saas_logged_in"] = False
-            st.session_state["saas_user"] = None
-            st.session_state["saas_auth_session"] = None
-            st.session_state["saas_onboarding_ready"] = False
-            st.session_state["saas_auth_last_message"] = (
+            _trace_auth_state_write("saas_logged_in", False, "set_authenticated_session")
+            _trace_auth_state_write("saas_user", None, "set_authenticated_session")
+            _trace_auth_state_write("saas_auth_session", None, "set_authenticated_session")
+            _trace_auth_state_write("saas_onboarding_ready", False, "set_authenticated_session")
+            _trace_auth_state_write("saas_auth_last_message", (
                 "Account exists, but Supabase has not returned an authenticated session yet. "
                 "Please verify the email if required, then log in."
-            )
-            st.session_state["saas_onboarding_debug"] = {
+            ), "set_authenticated_session")
+            _trace_auth_state_write("saas_onboarding_debug", {
                 "user_id": _auth_user_id(user),
                 "email": _auth_user_email(user),
                 "session_applied_to_client": False,
                 "error": "no_session_returned_by_supabase",
-            }
+            }, "set_authenticated_session")
             _set_auth_debug(
                 "missing_session",
                 {
@@ -3747,7 +4019,7 @@ def set_authenticated_session(auth_response: Any, selected_plan: str | None = No
             onboarding_ok=onboarding_ok,
             onboarding_message=onboarding_message,
         )
-        st.session_state["saas_rehydrate_blocked"] = False
+        _trace_auth_state_write("saas_rehydrate_blocked", False, "set_authenticated_session")
         production_auth_trace(
             "SESSION_STATE_WRITE_SUCCESS",
             "set_authenticated_session",
@@ -3758,7 +4030,7 @@ def set_authenticated_session(auth_response: Any, selected_plan: str | None = No
 
     except Exception as exc:
         production_auth_trace("DURABLE_SESSION_CREATE_FAILED", "set_authenticated_session", exc=exc)
-        st.session_state["saas_auth_last_message"] = f"Session setup failed: {exc}"
+        _trace_auth_state_write("saas_auth_last_message", f"Session setup failed: {exc}", "set_authenticated_session")
         return False
 
 
@@ -3782,17 +4054,17 @@ def clear_authenticated_session(*, revoke_current: bool = True, reason: str = "U
         _clear_cookie_readiness_state()
     clear_active_page_cache()
     clear_stripe_checkout_state()
-    st.session_state["saas_logged_in"] = False
-    st.session_state["saas_user"] = None
-    st.session_state["saas_auth_session"] = None
-    st.session_state["saas_app_session_id"] = ""
-    st.session_state["saas_identity_bound_user_id"] = ""
-    st.session_state["saas_admin_override"] = False
-    st.session_state["saas_onboarding_ready"] = False
-    st.session_state["saas_onboarding_debug"] = {}
-    st.session_state["saas_auth_debug"] = {}
-    st.session_state["saas_metadata_debug_message"] = ""
-    st.session_state["saas_provisioning_repair_attempts"] = {}
+    _trace_auth_state_write("saas_logged_in", False, "clear_authenticated_session")
+    _trace_auth_state_write("saas_user", None, "clear_authenticated_session")
+    _trace_auth_state_write("saas_auth_session", None, "clear_authenticated_session")
+    _trace_auth_state_write("saas_app_session_id", "", "clear_authenticated_session")
+    _trace_auth_state_write("saas_identity_bound_user_id", "", "clear_authenticated_session")
+    _trace_auth_state_write("saas_admin_override", False, "clear_authenticated_session")
+    _trace_auth_state_write("saas_onboarding_ready", False, "clear_authenticated_session")
+    _trace_auth_state_write("saas_onboarding_debug", {}, "clear_authenticated_session")
+    _trace_auth_state_write("saas_auth_debug", {}, "clear_authenticated_session")
+    _trace_auth_state_write("saas_metadata_debug_message", "", "clear_authenticated_session")
+    _trace_auth_state_write("saas_provisioning_repair_attempts", {}, "clear_authenticated_session")
     return revoke_ok, revoke_detail
 
 
@@ -4146,8 +4418,8 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
     password_value = password if isinstance(password, str) else str(password or "")
 
     # Explicit password-login attempts must not inherit previously restored identity.
-    st.session_state["saas_rehydrate_blocked"] = True
-    st.session_state["saas_login_in_progress"] = True
+    _trace_auth_state_write("saas_rehydrate_blocked", True, "supabase_login")
+    _trace_auth_state_write("saas_login_in_progress", True, "supabase_login")
     production_auth_trace("LOGIN_IN_PROGRESS_SET", "supabase_login")
     production_auth_trace("PRE_LOGIN_SESSION_CLEAR_START", "supabase_login")
     try:
@@ -4289,7 +4561,7 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
             reason="set_authenticated_session_returned_false",
         )
         clear_authenticated_session(revoke_current=False, reason="LOGIN_FAILED")
-        st.session_state["saas_rehydrate_blocked"] = True
+        _trace_auth_state_write("saas_rehydrate_blocked", True, "supabase_login")
         production_auth_trace(
             "SUPABASE_LOGIN_RETURN",
             "supabase_login",
@@ -4302,7 +4574,7 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
         production_auth_trace("SUPABASE_LOGIN_EXCEPTION", "supabase_login", exc=exc)
         production_auth_trace("SUPABASE_LOGIN_REJECTED", "supabase_login", exc=exc)
         clear_authenticated_session(revoke_current=False, reason="LOGIN_FAILED")
-        st.session_state["saas_rehydrate_blocked"] = True
+        _trace_auth_state_write("saas_rehydrate_blocked", True, "supabase_login")
         production_auth_trace(
             "SUPABASE_LOGIN_RETURN",
             "supabase_login",
@@ -4312,7 +4584,7 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
         )
         return False, f"Login failed: {exc}"
     finally:
-        st.session_state["saas_login_in_progress"] = False
+        _trace_auth_state_write("saas_login_in_progress", False, "supabase_login")
         production_auth_trace("LOGIN_IN_PROGRESS_CLEARED", "supabase_login")
 
 
@@ -4828,7 +5100,11 @@ def render_account_locked(user: SaaSUser) -> None:
             repaired, message = _auto_repair_provisioning(user, trigger="render_account_locked")
             if repaired:
                 st.success(message)
-                st.rerun()
+                _request_streamlit_rerun(
+                    call_site_id="account_locked_provisioning_repaired",
+                    source_function="render_account_locked",
+                    reason="provisioning_repaired",
+                )
             else:
                 st.error(message)
 
@@ -4921,7 +5197,11 @@ def render_auth_panel() -> None:
         if callback_consumed:
             if callback_ok:
                 st.success(callback_message)
-                st.rerun()
+                _request_streamlit_rerun(
+                    call_site_id="auth_callback_session_established",
+                    source_function="render_auth_panel",
+                    reason="auth_callback_consumed",
+                )
             else:
                 st.error(callback_message)
 
@@ -4930,7 +5210,14 @@ def render_auth_panel() -> None:
             st.warning(trial_warning_message)
 
         recovery_mode_active = bool(st.session_state.get("saas_recovery_session_active", False))
+        production_auth_trace("AUTH_MODE_WIDGET_RENDERED", "render_auth_panel")
         mode = st.radio("Choose access action", ["Login", "Create Account", "Reset Password"], horizontal=True)
+        production_auth_trace(
+            "AUTH_MODE_WIDGET_RETURNED",
+            "render_auth_panel",
+            selected_mode=str(mode or ""),
+            login_in_progress=bool(st.session_state.get("saas_login_in_progress", False)),
+        )
         if _is_recovery_callback() or recovery_mode_active:
             mode = "Reset Password"
 
@@ -4944,9 +5231,12 @@ def render_auth_panel() -> None:
                 script_run_context_id=_current_script_run_context_id(),
             )
             with st.form("saas_login_form"):
+                production_auth_trace("LOGIN_EMAIL_WIDGET_RENDERED", "render_auth_panel")
                 email = st.text_input("Email", value="")
+                production_auth_trace("LOGIN_PASSWORD_WIDGET_RENDERED", "render_auth_panel")
                 password = st.text_input("Password", type="password")
                 remember_me = st.checkbox("Remember Me", value=False)
+                production_auth_trace("LOGIN_SUBMIT_WIDGET_RENDERED", "render_auth_panel")
                 submitted = st.form_submit_button("Login", use_container_width=True)
             production_auth_trace(
                 "LOGIN_SUBMIT_WIDGET_RETURNED",
@@ -4979,12 +5269,16 @@ def render_auth_panel() -> None:
                 )
                 production_auth_trace("LOGIN_FORM_SUBMITTED", "render_auth_panel")
                 production_auth_trace("LOGIN_BRANCH_ENTERED", "render_auth_panel")
-                st.session_state["saas_remember_me"] = bool(remember_me)
+                _trace_auth_state_write("saas_remember_me", bool(remember_me), "render_auth_panel")
                 ok, message = supabase_login(email=email, password=password)
                 if ok:
                     st.success(message)
                     production_auth_trace("RERUN_REQUESTED", "render_auth_panel", reason="login_success")
-                    st.rerun()
+                    _request_streamlit_rerun(
+                        call_site_id="login_success",
+                        source_function="render_auth_panel",
+                        reason="login_success",
+                    )
                 else:
                     st.error(message)
             else:
@@ -5024,7 +5318,7 @@ def render_auth_panel() -> None:
                 )
 
             if submitted and not signup_processing:
-                st.session_state["saas_signup_processing"] = True
+                _trace_auth_state_write("saas_signup_processing", True, "render_auth_panel")
                 try:
                     valid, validation_message = _validate_signup_inputs(
                         email=email,
@@ -5051,11 +5345,15 @@ def render_auth_panel() -> None:
                                 "If it's still missing, use **Reset Password** or contact **[support@jfbpquantdesk.com](mailto:support@jfbpquantdesk.com)**."
                             )
                             if st.session_state.get("saas_logged_in", False):
-                                st.rerun()
+                                _request_streamlit_rerun(
+                                    call_site_id="signup_authenticated_session_present",
+                                    source_function="render_auth_panel",
+                                    reason="signup_authenticated",
+                                )
                         else:
                             st.error(message)
                 finally:
-                    st.session_state["saas_signup_processing"] = False
+                    _trace_auth_state_write("saas_signup_processing", False, "render_auth_panel")
 
         else:
             if _is_recovery_callback() or recovery_mode_active:
@@ -5067,7 +5365,7 @@ def render_auth_panel() -> None:
                 if _is_recovery_callback():
                     recovery_error_code, recovery_error_message = _recovery_error_summary()
                     if recovery_error_code:
-                        st.session_state["saas_recovery_session_active"] = False
+                        _trace_auth_state_write("saas_recovery_session_active", False, "render_auth_panel")
                         _clear_recovery_query_params()
                         st.error(recovery_error_message)
                         st.info("Use Reset Password once to request a fresh link.")
@@ -5077,9 +5375,9 @@ def render_auth_panel() -> None:
 
                     recovery_ready, recovery_message = _establish_recovery_session_from_query(recovery_client)
                     if recovery_ready:
-                        st.session_state["saas_recovery_session_active"] = True
+                        _trace_auth_state_write("saas_recovery_session_active", True, "render_auth_panel")
                     else:
-                        st.session_state["saas_recovery_session_active"] = False
+                        _trace_auth_state_write("saas_recovery_session_active", False, "render_auth_panel")
                     _clear_recovery_query_params()
                 else:
                     recovery_ready = _has_active_recovery_session(recovery_client)
@@ -5111,14 +5409,14 @@ def render_auth_panel() -> None:
                                 new_password,
                             )
                             if updated:
-                                st.session_state["saas_recovery_session_active"] = False
+                                _trace_auth_state_write("saas_recovery_session_active", False, "render_auth_panel")
                                 _clear_recovery_query_params()
                                 st.success(update_message)
                                 st.info("Password recovery complete. Return to Login and sign in with your new password.")
                             else:
                                 st.error(update_message)
                 else:
-                    st.session_state["saas_recovery_session_active"] = False
+                    _trace_auth_state_write("saas_recovery_session_active", False, "render_auth_panel")
                     st.error(f"Recovery session unavailable: {recovery_message}")
 
             cooldown_remaining = _reset_password_cooldown_remaining()
@@ -5149,13 +5447,21 @@ def render_auth_panel() -> None:
                             next_level, cooldown_seconds = _reset_password_backoff_seconds_for_next_429()
                             _set_reset_password_cooldown(next_level, cooldown_seconds)
                             st.warning(f"{RESET_PASSWORD_RATE_LIMIT_MESSAGE} ({_format_mmss(cooldown_seconds)})")
-                            st.rerun()
+                            _request_streamlit_rerun(
+                                call_site_id="reset_password_rate_limited",
+                                source_function="render_auth_panel",
+                                reason="reset_password_rate_limit",
+                            )
                         else:
                             st.error(message)
 
             if cooldown_remaining > 0:
                 time.sleep(1)
-                st.rerun()
+                _request_streamlit_rerun(
+                    call_site_id="reset_password_cooldown_tick",
+                    source_function="render_auth_panel",
+                    reason="reset_password_cooldown_tick",
+                )
         st.markdown('</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -5236,7 +5542,11 @@ def render_saas_core_dashboard() -> None:
         if st.button("Logout", use_container_width=True):
             ok, message = supabase_logout()
             st.success(message)
-            st.rerun()
+            _request_streamlit_rerun(
+                call_site_id="dashboard_logout",
+                source_function="render_saas_core_dashboard",
+                reason="logout_success",
+            )
 
     st.divider()
     tabs = st.tabs(["Permissions", "Access Tests", "Auth Session", "Next Wiring"])
