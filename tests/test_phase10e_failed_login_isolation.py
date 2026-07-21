@@ -64,6 +64,15 @@ def _install_ready_and_client(monkeypatch, client):
     monkeypatch.setattr(saas, "supabase_ready", lambda: (True, "ready"))
     monkeypatch.setattr(saas, "get_supabase_client", lambda: client)
 
+    def _mock_rest_login(*, email: str, password: str, thread_ident: int, script_run_context_id: str):
+        if client.auth._fail:
+            raise RuntimeError("Invalid login credentials")
+        user = SimpleNamespace(id=client.auth._user_id, email=client.auth._email, user_metadata={})
+        session = SimpleNamespace(access_token="access-token", refresh_token="refresh-token", expires_at=0, user=user)
+        return SimpleNamespace(user=user, session=session)
+
+    monkeypatch.setattr(saas, "_supabase_rest_password_login", _mock_rest_login)
+
 
 def test_existing_admin_session_failed_ordinary_login_results_logged_out(monkeypatch):
     saas.st.session_state.clear()
