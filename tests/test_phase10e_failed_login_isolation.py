@@ -398,3 +398,55 @@ def test_rehydrate_block_scoped_to_current_session_state(monkeypatch):
     saas.st.session_state.clear()
     saas.init_saas_state()
     assert saas.st.session_state.get("saas_rehydrate_blocked") is False
+
+
+def test_login_in_progress_clears_after_failed_login(monkeypatch):
+    saas.st.session_state.clear()
+    saas.st.session_state["saas_logged_in"] = True
+    saas.st.session_state["saas_user"] = _seed_admin_identity()
+
+    _install_clear_stub(monkeypatch)
+    _install_ready_and_client(monkeypatch, _FakeClient(fail=True))
+
+    ok, _message = saas.supabase_login("captain51@example.com", "wrong")
+
+    assert ok is False
+    assert saas.st.session_state.get("saas_login_in_progress") is False
+
+
+def test_login_in_progress_clears_after_successful_login(monkeypatch):
+    saas.st.session_state.clear()
+    saas.st.session_state["saas_logged_in"] = True
+    saas.st.session_state["saas_user"] = _seed_admin_identity()
+
+    _install_clear_stub(monkeypatch)
+    _install_ready_and_client(
+        monkeypatch,
+        _FakeClient(user_id="captain51-user-id", email="captain51@example.com", fail=False),
+    )
+
+    def _set_session(auth_response):
+        user = auth_response.user
+        saas.st.session_state["saas_logged_in"] = True
+        saas.st.session_state["saas_user"] = saas.SaaSUser(
+            user_id=user.id,
+            email=user.email,
+            full_name="captain51",
+            plan=saas.PLAN_ELITE,
+            account_status=saas.ACCOUNT_ACTIVE,
+            trial_start=datetime.now(timezone.utc),
+            trial_end=datetime.now(timezone.utc) + timedelta(days=30),
+            created_at=datetime.now(timezone.utc),
+            role="user",
+        )
+        saas.st.session_state["saas_rehydrate_blocked"] = False
+        saas.st.session_state["saas_auth_last_message"] = "ok"
+        saas.st.session_state["saas_onboarding_ready"] = True
+        return True
+
+    monkeypatch.setattr(saas, "set_authenticated_session", _set_session)
+
+    ok, _message = saas.supabase_login("captain51@example.com", "correct")
+
+    assert ok is True
+    assert saas.st.session_state.get("saas_login_in_progress") is False

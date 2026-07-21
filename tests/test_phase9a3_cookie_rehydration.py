@@ -337,6 +337,37 @@ def test_cookie_readiness_bounded_when_cookie_absent(monkeypatch):
     assert saas.st.session_state.get(saas.COOKIE_READINESS_ATTEMPTS_KEY) == 0
 
 
+def test_cookie_not_ready_rerun_suppressed_during_login_in_progress(monkeypatch):
+    store = _FakeSessionStore()
+    monkeypatch.setattr(saas, "_session_store", lambda: store)
+    monkeypatch.setattr(
+        saas,
+        "_read_session_cookie_result",
+        lambda: saas.CookieReadResult(saas.COOKIE_READINESS_NOT_READY, ""),
+    )
+
+    reruns = []
+    monkeypatch.setattr(saas.st, "rerun", lambda: reruns.append(True))
+
+    saas.st.session_state["saas_logged_in"] = False
+    saas.st.session_state["saas_user"] = None
+    saas.st.session_state["saas_login_in_progress"] = True
+
+    result = saas._rehydrate_authenticated_session()
+
+    assert result is False
+    assert not reruns
+
+
+def test_login_attempt_reset_defers_cookie_readiness_clear(monkeypatch):
+    saas.st.session_state[saas.COOKIE_READINESS_STATE_KEY] = saas.COOKIE_READINESS_PRESENT
+    saas.st.session_state["saas_login_in_progress"] = True
+
+    saas.clear_authenticated_session(revoke_current=False, reason="LOGIN_ATTEMPT_RESET")
+
+    assert saas.st.session_state.get(saas.COOKIE_READINESS_STATE_KEY) == saas.COOKIE_READINESS_PRESENT
+
+
 def test_present_cookie_still_verifies_signature(monkeypatch):
     store = _FakeSessionStore()
     client = _FakeSupabaseClient(user_id="u-signature")

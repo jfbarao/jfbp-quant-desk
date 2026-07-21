@@ -906,6 +906,7 @@ def init_saas_state() -> None:
     st.session_state.setdefault("saas_app_session_id", "")
     st.session_state.setdefault("saas_identity_bound_user_id", "")
     st.session_state.setdefault("saas_rehydrate_blocked", False)
+    st.session_state.setdefault("saas_login_in_progress", False)
     st.session_state.setdefault("saas_remember_me", False)
     if not st.session_state.get("saas_logged_in", False):
         rehydrate_result = _rehydrate_authenticated_session()
@@ -1150,6 +1151,13 @@ def _rehydrate_authenticated_session() -> bool | None:
     store = _session_store()
     cookie_result = _read_session_cookie_result()
     if cookie_result.state == COOKIE_READINESS_NOT_READY:
+        if bool(st.session_state.get("saas_login_in_progress", False)):
+            production_auth_trace(
+                "COOKIE_NOT_READY_RERUN_SUPPRESSED",
+                "_rehydrate_authenticated_session",
+                reason="login_in_progress",
+            )
+            return False
         try:
             st.rerun()
         except Exception:
@@ -3762,7 +3770,16 @@ def clear_authenticated_session(*, revoke_current: bool = True, reason: str = "U
 
     _clear_cached_authenticated_session()
     _clear_session_cookie()
-    _clear_cookie_readiness_state()
+    should_clear_cookie_readiness = True
+    if reason == "LOGIN_ATTEMPT_RESET" and bool(st.session_state.get("saas_login_in_progress", False)):
+        should_clear_cookie_readiness = False
+        production_auth_trace(
+            "COOKIE_READINESS_CLEAR_DEFERRED",
+            "clear_authenticated_session",
+            reason=reason,
+        )
+    if should_clear_cookie_readiness:
+        _clear_cookie_readiness_state()
     clear_active_page_cache()
     clear_stripe_checkout_state()
     st.session_state["saas_logged_in"] = False
@@ -4130,6 +4147,8 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
 
     # Explicit password-login attempts must not inherit previously restored identity.
     st.session_state["saas_rehydrate_blocked"] = True
+    st.session_state["saas_login_in_progress"] = True
+    production_auth_trace("LOGIN_IN_PROGRESS_SET", "supabase_login")
     production_auth_trace("PRE_LOGIN_SESSION_CLEAR_START", "supabase_login")
     try:
         clear_authenticated_session(revoke_current=True, reason="LOGIN_ATTEMPT_RESET")
@@ -4292,6 +4311,9 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
             return_path="exception",
         )
         return False, f"Login failed: {exc}"
+    finally:
+        st.session_state["saas_login_in_progress"] = False
+        production_auth_trace("LOGIN_IN_PROGRESS_CLEARED", "supabase_login")
 
 
 def supabase_logout() -> tuple[bool, str]:
