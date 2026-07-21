@@ -3892,7 +3892,7 @@ def _supabase_rest_password_login(
     url = str(_secret_value("SUPABASE_URL", "") or "").strip().rstrip("/")
     key = str(_secret_value("SUPABASE_ANON_KEY", "") or "").strip()
     endpoint = f"{url}/auth/v1/token"
-    timeout = httpx.Timeout(10.0, connect=5.0)
+    timeout = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=10.0)
 
     elapsed_ms = 0
     started = time.perf_counter()
@@ -3909,20 +3909,64 @@ def _supabase_rest_password_login(
     )
 
     try:
-        response = httpx.post(
-            endpoint,
-            params={"grant_type": "password"},
-            headers={
-                "apikey": key,
-                "Authorization": f"Bearer {key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "email": email,
-                "password": password,
-            },
-            timeout=timeout,
+        production_auth_trace(
+            "SUPABASE_REST_LOGIN_HTTPX_ARGS_EVALUATION_START",
+            "_supabase_rest_password_login",
+            elapsed_ms=int((time.perf_counter() - started) * 1000),
+            thread_ident=thread_ident,
+            script_run_context_id=script_run_context_id,
         )
+        request_params = {"grant_type": "password"}
+        request_headers = {
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        }
+        request_json = {
+            "email": email,
+            "password": password,
+        }
+        production_auth_trace(
+            "SUPABASE_REST_LOGIN_HTTPX_POST_ENTER",
+            "_supabase_rest_password_login",
+            elapsed_ms=int((time.perf_counter() - started) * 1000),
+            thread_ident=thread_ident,
+            script_run_context_id=script_run_context_id,
+        )
+        try:
+            response = httpx.post(
+                endpoint,
+                params=request_params,
+                headers=request_headers,
+                json=request_json,
+                timeout=timeout,
+            )
+            production_auth_trace(
+                "SUPABASE_REST_LOGIN_HTTPX_POST_RETURNED",
+                "_supabase_rest_password_login",
+                elapsed_ms=int((time.perf_counter() - started) * 1000),
+                http_status=int(getattr(response, "status_code", 0) or 0),
+                thread_ident=thread_ident,
+                script_run_context_id=script_run_context_id,
+            )
+        except BaseException as exc:
+            production_auth_trace(
+                "SUPABASE_REST_LOGIN_BASE_EXCEPTION",
+                "_supabase_rest_password_login",
+                exc=exc,
+                elapsed_ms=int((time.perf_counter() - started) * 1000),
+                thread_ident=thread_ident,
+                script_run_context_id=script_run_context_id,
+            )
+            raise
+        finally:
+            production_auth_trace(
+                "SUPABASE_REST_LOGIN_TRANSPORT_FINALLY",
+                "_supabase_rest_password_login",
+                elapsed_ms=int((time.perf_counter() - started) * 1000),
+                thread_ident=thread_ident,
+                script_run_context_id=script_run_context_id,
+            )
         elapsed_ms = int((time.perf_counter() - started) * 1000)
 
         if response.status_code < 200 or response.status_code >= 300:
@@ -4036,6 +4080,16 @@ def _supabase_rest_password_login(
             )
             if isinstance(exc, httpx.TimeoutException):
                 raise RuntimeError("Authentication request timed out") from exc
+        raise
+    except BaseException as exc:
+        production_auth_trace(
+            "SUPABASE_REST_LOGIN_OUTER_BASE_EXCEPTION",
+            "_supabase_rest_password_login",
+            exc=exc,
+            elapsed_ms=elapsed_ms or int((time.perf_counter() - started) * 1000),
+            thread_ident=thread_ident,
+            script_run_context_id=script_run_context_id,
+        )
         raise
     finally:
         final_elapsed_ms = elapsed_ms or int((time.perf_counter() - started) * 1000)
