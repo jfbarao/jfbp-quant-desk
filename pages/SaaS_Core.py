@@ -14,6 +14,7 @@ import logging
 import os
 import smtplib
 import re
+import threading
 import time
 import uuid
 from urllib.parse import urlparse
@@ -59,6 +60,11 @@ try:
     import extra_streamlit_components as stx
 except Exception:  # pragma: no cover
     stx = None
+
+try:
+    from streamlit.runtime.scriptrunner import get_script_run_ctx
+except Exception:  # pragma: no cover
+    get_script_run_ctx = None
 
 
 # =========================================================
@@ -265,6 +271,33 @@ def _new_auth_attempt_id() -> str:
 
 def _current_auth_attempt_id() -> str:
     return str(st.session_state.get("saas_auth_attempt_id", "") or "").strip()
+
+
+def _current_thread_ident() -> int:
+    try:
+        ident = threading.get_ident()
+        return int(ident)
+    except Exception:
+        return -1
+
+
+def _current_script_run_context_id() -> str:
+    if get_script_run_ctx is None:
+        return ""
+
+    try:
+        ctx = get_script_run_ctx()
+    except Exception:
+        return ""
+
+    if ctx is None:
+        return ""
+
+    session_id = str(getattr(ctx, "session_id", "") or "").strip()
+    if session_id:
+        return session_id
+
+    return f"ctx_{id(ctx)}"
 
 
 def production_auth_trace(stage: str, source_function: str, *, exc: Exception | None = None, **metadata: Any) -> None:
@@ -3708,18 +3741,46 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
         pass
 
     try:
-        production_auth_trace("SUPABASE_LOGIN_CALL_START", "supabase_login")
-        response = client.auth.sign_in_with_password(
-            {
-                "email": clean_email,
-                "password": password_value,
-            }
-        )
+        call_thread_ident = _current_thread_ident()
+        call_script_ctx_id = _current_script_run_context_id()
         production_auth_trace(
-            "SUPABASE_LOGIN_CALL_RETURNED",
+            "SUPABASE_LOGIN_CALL_START",
             "supabase_login",
-            response_present=bool(response),
+            thread_ident=call_thread_ident,
+            script_run_context_id=call_script_ctx_id,
         )
+        try:
+            response = client.auth.sign_in_with_password(
+                {
+                    "email": clean_email,
+                    "password": password_value,
+                }
+            )
+            production_auth_trace(
+                "SUPABASE_LOGIN_CALL_RETURNED",
+                "supabase_login",
+                response_present=bool(response),
+                thread_ident=call_thread_ident,
+                script_run_context_id=call_script_ctx_id,
+            )
+        except Exception:
+            raise
+        except BaseException as exc:
+            production_auth_trace(
+                "SUPABASE_LOGIN_CALL_BASE_EXCEPTION",
+                "supabase_login",
+                exc=exc,
+                thread_ident=call_thread_ident,
+                script_run_context_id=call_script_ctx_id,
+            )
+            raise
+        finally:
+            production_auth_trace(
+                "SUPABASE_LOGIN_CALL_FINALLY",
+                "supabase_login",
+                thread_ident=call_thread_ident,
+                script_run_context_id=call_script_ctx_id,
+            )
 
         diag_user = _auth_response_user(response)
         diag_session = _auth_response_session(response)
@@ -4351,7 +4412,12 @@ def render_auth_panel() -> None:
         st.markdown('<div class="saas-auth-shell">', unsafe_allow_html=True)
         st.subheader("🔐 Secure Access")
         st.caption("Sign in to JFBP Quant Desk to access your workspace and tools.")
-        production_auth_trace("SECURE_ACCESS_RENDERED", "render_auth_panel")
+        production_auth_trace(
+            "SECURE_ACCESS_RENDERED",
+            "render_auth_panel",
+            thread_ident=_current_thread_ident(),
+            script_run_context_id=_current_script_run_context_id(),
+        )
         render_auth_status()
 
         callback_client = get_supabase_client()
