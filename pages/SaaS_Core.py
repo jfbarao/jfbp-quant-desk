@@ -3680,6 +3680,12 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
             "supabase_login",
             reason="supabase_not_ready",
         )
+        production_auth_trace(
+            "SUPABASE_LOGIN_RETURN",
+            "supabase_login",
+            return_ok=False,
+            return_path="not_ready",
+        )
         return False, message
 
     client = get_supabase_client()
@@ -3709,6 +3715,11 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
                 "password": password_value,
             }
         )
+        production_auth_trace(
+            "SUPABASE_LOGIN_CALL_RETURNED",
+            "supabase_login",
+            response_present=bool(response),
+        )
 
         diag_user = _auth_response_user(response)
         diag_session = _auth_response_session(response)
@@ -3725,7 +3736,19 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
             production_auth_trace("SUPABASE_LOGIN_SUCCESS", "supabase_login")
             onboarding_message = st.session_state.get("saas_auth_last_message", "")
             if st.session_state.get("saas_onboarding_ready", False):
+                production_auth_trace(
+                    "SUPABASE_LOGIN_RETURN",
+                    "supabase_login",
+                    return_ok=True,
+                    return_path="success_onboarding_ready",
+                )
                 return True, "Login successful. " + onboarding_message
+            production_auth_trace(
+                "SUPABASE_LOGIN_RETURN",
+                "supabase_login",
+                return_ok=True,
+                return_path="success_onboarding_not_ready",
+            )
             return True, "Login successful. " + onboarding_message
 
         production_auth_trace(
@@ -3735,6 +3758,12 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
         )
         clear_authenticated_session(revoke_current=False, reason="LOGIN_FAILED")
         st.session_state["saas_rehydrate_blocked"] = True
+        production_auth_trace(
+            "SUPABASE_LOGIN_RETURN",
+            "supabase_login",
+            return_ok=False,
+            return_path="authenticated_session_not_established",
+        )
         return False, "Login failed. No authenticated user session returned."
 
     except Exception as exc:
@@ -3742,6 +3771,13 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
         production_auth_trace("SUPABASE_LOGIN_REJECTED", "supabase_login", exc=exc)
         clear_authenticated_session(revoke_current=False, reason="LOGIN_FAILED")
         st.session_state["saas_rehydrate_blocked"] = True
+        production_auth_trace(
+            "SUPABASE_LOGIN_RETURN",
+            "supabase_login",
+            exc=exc,
+            return_ok=False,
+            return_path="exception",
+        )
         return False, f"Login failed: {exc}"
 
 
