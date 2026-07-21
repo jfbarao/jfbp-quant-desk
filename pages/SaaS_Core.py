@@ -3883,6 +3883,51 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
     except Exception as exc:
         production_auth_trace("PRE_LOGIN_SESSION_CLEAR_FAILED", "supabase_login", exc=exc)
         raise
+
+    call_thread_ident = _current_thread_ident()
+    call_script_ctx_id = _current_script_run_context_id()
+    production_auth_trace(
+        "POST_CLEAR_RETURNED_TO_CALLER",
+        "supabase_login",
+        thread_ident=call_thread_ident,
+        script_run_context_id=call_script_ctx_id,
+    )
+
+    production_auth_trace(
+        "LOGIN_CONFIG_RESOLUTION_START",
+        "supabase_login",
+        thread_ident=call_thread_ident,
+        script_run_context_id=call_script_ctx_id,
+    )
+    login_has_url = bool(str(_secret_value("SUPABASE_URL", "") or "").strip())
+    login_has_anon_key = bool(str(_secret_value("SUPABASE_ANON_KEY", "") or "").strip())
+    production_auth_trace(
+        "LOGIN_CONFIG_RESOLUTION_SUCCESS",
+        "supabase_login",
+        has_supabase_url=login_has_url,
+        has_supabase_anon_key=login_has_anon_key,
+        thread_ident=call_thread_ident,
+        script_run_context_id=call_script_ctx_id,
+    )
+
+    production_auth_trace(
+        "LOGIN_EMAIL_NORMALIZATION_START",
+        "supabase_login",
+        email_present=bool(str(clean_email or "").strip()),
+        thread_ident=call_thread_ident,
+        script_run_context_id=call_script_ctx_id,
+    )
+    clean_email = str(clean_email or "").strip().lower()
+    password_value = password_value if isinstance(password_value, str) else str(password_value or "")
+    production_auth_trace(
+        "LOGIN_EMAIL_NORMALIZATION_SUCCESS",
+        "supabase_login",
+        email_present=bool(clean_email),
+        password_present=bool(password_value),
+        thread_ident=call_thread_ident,
+        script_run_context_id=call_script_ctx_id,
+    )
+
     try:
         if client is not None:
             client.auth.sign_out()
@@ -3890,8 +3935,6 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
         pass
 
     try:
-        call_thread_ident = _current_thread_ident()
-        call_script_ctx_id = _current_script_run_context_id()
         production_auth_trace(
             "SUPABASE_LOGIN_CALL_START",
             "supabase_login",
@@ -3899,6 +3942,12 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
             script_run_context_id=call_script_ctx_id,
         )
         try:
+            production_auth_trace(
+                "REST_HELPER_INVOCATION_IMMINENT",
+                "supabase_login",
+                thread_ident=call_thread_ident,
+                script_run_context_id=call_script_ctx_id,
+            )
             response = _supabase_rest_password_login(
                 email=clean_email,
                 password=password_value,
