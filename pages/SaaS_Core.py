@@ -319,6 +319,86 @@ def production_auth_trace(stage: str, source_function: str, *, exc: Exception | 
     logger.info("%s", line)
 
 
+def _safe_supabase_project_ref(url: str) -> str:
+    host = str(urlparse(str(url or "").strip()).hostname or "").strip().lower()
+    if not host:
+        return ""
+    return host.split(".", 1)[0]
+
+
+def _current_app_env_safe() -> str:
+    try:
+        runtime_config = build_runtime_config_from_secrets()
+        return str(runtime_config.get("APP_ENV", "") or "").strip().lower()
+    except Exception:
+        return str(_secret_value("APP_ENV", "") or "").strip().lower()
+
+
+def _current_supabase_project_ref_safe() -> str:
+    return _safe_supabase_project_ref(_secret_value("SUPABASE_URL", ""))
+
+
+def _record_project_ref_observation(stage: str, project_ref: str, client_purpose: str) -> None:
+    attempt_id = _current_auth_attempt_id() or "no_attempt"
+
+    audit_state = st.session_state.get("saas_project_ref_audit")
+    if not isinstance(audit_state, dict):
+        audit_state = {}
+
+    attempt_state = audit_state.get(attempt_id)
+    if not isinstance(attempt_state, dict):
+        attempt_state = {}
+
+    canonical_ref = str(attempt_state.get("_canonical_project_ref", "") or "").strip()
+    observed_ref = str(project_ref or "").strip()
+
+    if observed_ref and not canonical_ref:
+        attempt_state["_canonical_project_ref"] = observed_ref
+        canonical_ref = observed_ref
+    elif observed_ref and canonical_ref and observed_ref != canonical_ref:
+        production_auth_trace(
+            "SUPABASE_PROJECT_REF_MISMATCH",
+            "_record_project_ref_observation",
+            expected_project_ref=canonical_ref,
+            observed_project_ref=observed_ref,
+            observed_stage=stage,
+            client_purpose=client_purpose,
+            thread_ident=_current_thread_ident(),
+            script_run_context_id=_current_script_run_context_id(),
+            APP_ENV=_current_app_env_safe(),
+        )
+
+    attempt_state[str(stage or "UNKNOWN_STAGE")] = observed_ref
+    audit_state[attempt_id] = attempt_state
+    st.session_state["saas_project_ref_audit"] = audit_state
+
+
+def _project_boundary_trace(
+    stage: str,
+    client_purpose: str,
+    *,
+    success: Optional[bool] = None,
+    exc: Exception | None = None,
+    started_at: Optional[float] = None,
+) -> None:
+    metadata: Dict[str, Any] = {
+        "APP_ENV": _current_app_env_safe(),
+        "supabase_project_ref": _current_supabase_project_ref_safe(),
+        "client_purpose": str(client_purpose or "unknown"),
+        "thread_ident": _current_thread_ident(),
+        "script_run_context_id": _current_script_run_context_id(),
+    }
+
+    if started_at is not None:
+        metadata["elapsed_ms"] = int((time.perf_counter() - started_at) * 1000)
+
+    if success is not None:
+        metadata["success"] = bool(success)
+
+    production_auth_trace(stage, "project_boundary_audit", exc=exc, **metadata)
+    _record_project_ref_observation(stage, str(metadata.get("supabase_project_ref", "") or ""), client_purpose)
+
+
 # =========================================================
 # DATA MODELS
 # =========================================================
@@ -804,6 +884,11 @@ def is_admin_user(user: "SaaSUser | None") -> bool:
 
 def init_saas_state() -> None:
     _emit_phase10b_reachability_marker_once()
+    _project_boundary_trace(
+        "APPLICATION_STARTUP_CONFIGURATION",
+        "runtime_config",
+        success=True,
+    )
 
     st.session_state.setdefault("saas_logged_in", False)
     st.session_state.setdefault("saas_user", None)
@@ -1087,9 +1172,27 @@ def _rehydrate_authenticated_session() -> bool | None:
                 if refresh_material:
                     client = get_supabase_client()
                     if client is not None:
+                        refresh_started = time.perf_counter()
+                        _project_boundary_trace(
+                            "SESSION_RESTORATION",
+                            "browser/auth client",
+                            started_at=refresh_started,
+                        )
                         try:
                             restored = client.auth.refresh_session(refresh_material)
+                            _project_boundary_trace(
+                                "SESSION_RESTORATION",
+                                "browser/auth client",
+                                success=True,
+                                started_at=refresh_started,
+                            )
                         except Exception:
+                            _project_boundary_trace(
+                                "SESSION_RESTORATION",
+                                "browser/auth client",
+                                success=False,
+                                started_at=refresh_started,
+                            )
                             restored = None
 
                         session = _auth_response_session(restored)
@@ -1914,6 +2017,11 @@ def _service_role_headers() -> Dict[str, str]:
 def _trial_profile_snapshot() -> List[Dict[str, Any]]:
     url, key = _service_role_rest_config()
     if not url or not key:
+        _project_boundary_trace(
+            "TRIAL_LOOKUP",
+            "service-role client",
+            success=False,
+        )
         return []
 
     endpoint = f"{url}/rest/v1/user_profiles"
@@ -1925,6 +2033,8 @@ def _trial_profile_snapshot() -> List[Dict[str, Any]]:
     }
 
     try:
+        started = time.perf_counter()
+        _project_boundary_trace("TRIAL_LOOKUP", "service-role client", started_at=started)
         response = requests.get(
             endpoint,
             headers=_service_role_headers(),
@@ -1933,8 +2043,20 @@ def _trial_profile_snapshot() -> List[Dict[str, Any]]:
         )
         response.raise_for_status()
         data = response.json()
+        _project_boundary_trace(
+            "TRIAL_LOOKUP",
+            "service-role client",
+            success=True,
+            started_at=started,
+        )
         return data if isinstance(data, list) else []
-    except Exception:
+    except Exception as exc:
+        _project_boundary_trace(
+            "TRIAL_LOOKUP",
+            "service-role client",
+            success=False,
+            exc=exc,
+        )
         return []
 
 
@@ -2705,8 +2827,11 @@ def _profile_row_for_auth_user(client: Any, user_id: str, email: str) -> dict:
     Therefore app access must prefer this table after login.
     """
     if client is None:
+        _project_boundary_trace("PROFILE_LOOKUP", "anonymous database client", success=False)
         return {}
 
+    started = time.perf_counter()
+    _project_boundary_trace("PROFILE_LOOKUP", "anonymous database client", started_at=started)
     try:
         if user_id:
             response = (
@@ -2718,8 +2843,27 @@ def _profile_row_for_auth_user(client: Any, user_id: str, email: str) -> dict:
             )
             rows = _response_data(response)
             if rows:
+                _project_boundary_trace(
+                    "PROFILE_LOOKUP",
+                    "anonymous database client",
+                    success=True,
+                    started_at=started,
+                )
                 return rows[0] if isinstance(rows[0], dict) else {}
-    except Exception:
+        _project_boundary_trace(
+            "PROFILE_LOOKUP",
+            "anonymous database client",
+            success=False,
+            started_at=started,
+        )
+    except Exception as exc:
+        _project_boundary_trace(
+            "PROFILE_LOOKUP",
+            "anonymous database client",
+            success=False,
+            exc=exc,
+            started_at=started,
+        )
         return {}
 
     return {}
@@ -2807,7 +2951,15 @@ def _create_profile_record(
 
 
 def _create_subscription_record(client: Any, user_id: str, plan: str, status: str, email: str = "") -> list:
+    started = time.perf_counter()
+    _project_boundary_trace("SUBSCRIPTION_LOOKUP", "anonymous database client", started_at=started)
     existing = _verified_user_row(client, "subscriptions", user_id)
+    _project_boundary_trace(
+        "SUBSCRIPTION_LOOKUP",
+        "anonymous database client",
+        success=True,
+        started_at=started,
+    )
 
     payload = {
         "user_id": user_id,
@@ -2834,7 +2986,15 @@ def _create_subscription_record(client: Any, user_id: str, plan: str, status: st
 
 
 def _create_workspace_record(client: Any, user_id: str, workspace_name: str = "Personal Workspace") -> list:
+    started = time.perf_counter()
+    _project_boundary_trace("WORKSPACE_LOOKUP", "anonymous database client", started_at=started)
     existing = _verified_user_row(client, "workspaces", user_id)
+    _project_boundary_trace(
+        "WORKSPACE_LOOKUP",
+        "anonymous database client",
+        success=True,
+        started_at=started,
+    )
     if existing:
         return existing
 
@@ -3353,6 +3513,12 @@ def initialize_session(user: Any, session: Any, selected_plan: str | None = None
     user_id = _auth_user_id(user)
     cookie_write_ok = False
     if store is not None and user_id and refresh_material:
+        durable_started = time.perf_counter()
+        _project_boundary_trace(
+            "DURABLE_SESSION_CREATION",
+            "session-store client",
+            started_at=durable_started,
+        )
         browser_fingerprint = _browser_auth_cache_key()
         _revoke_superseded_browser_sessions(store, user_id, browser_fingerprint)
         remember_me = bool(st.session_state.get("saas_remember_me", False))
@@ -3368,9 +3534,20 @@ def initialize_session(user: Any, session: Any, selected_plan: str | None = None
             )
         )
         st.session_state["saas_app_session_id"] = created.record.id
+        _project_boundary_trace(
+            "DURABLE_SESSION_CREATION",
+            "session-store client",
+            success=True,
+            started_at=durable_started,
+        )
         cookie_write_ok = _set_session_cookie(created.raw_handle, remember_me=remember_me)
 
     _cache_authenticated_session(session_payload)
+    _project_boundary_trace(
+        "COOKIE_SESSION_PERSISTENCE",
+        "session-store client",
+        success=bool(cookie_write_ok and st.session_state.get("saas_auth_session")),
+    )
 
     _clear_cookie_readiness_state()
 
@@ -3725,6 +3902,11 @@ def _supabase_rest_password_login(
         thread_ident=thread_ident,
         script_run_context_id=script_run_context_id,
     )
+    _project_boundary_trace(
+        "PRE_SIGN_IN_WITH_PASSWORD",
+        "password authentication transport",
+        started_at=started,
+    )
 
     try:
         response = httpx.post(
@@ -3827,9 +4009,22 @@ def _supabase_rest_password_login(
             thread_ident=thread_ident,
             script_run_context_id=script_run_context_id,
         )
+        _project_boundary_trace(
+            "POST_SIGN_IN_WITH_PASSWORD",
+            "password authentication transport",
+            success=True,
+            started_at=started,
+        )
         return auth_response
     except Exception as exc:
         elapsed_ms = elapsed_ms or int((time.perf_counter() - started) * 1000)
+        _project_boundary_trace(
+            "POST_SIGN_IN_WITH_PASSWORD",
+            "password authentication transport",
+            success=False,
+            exc=exc,
+            started_at=started,
+        )
         if not isinstance(exc, RuntimeError):
             production_auth_trace(
                 "SUPABASE_REST_LOGIN_EXCEPTION",
@@ -3855,6 +4050,11 @@ def _supabase_rest_password_login(
 
 def supabase_login(email: str, password: str) -> tuple[bool, str]:
     production_auth_trace("LOGIN_BRANCH_ENTERED", "supabase_login")
+    _project_boundary_trace(
+        "SUPABASE_LOGIN_ENTRY",
+        "browser/auth client",
+        success=True,
+    )
     ready, message = supabase_ready()
     if not ready:
         production_auth_trace(
@@ -4287,6 +4487,11 @@ def require_page_access(page_name: str) -> bool:
     user = get_current_user()
 
     if user is None:
+        _project_boundary_trace(
+            "DASHBOARD_AUTHORIZATION_DECISION",
+            "authorization gate",
+            success=False,
+        )
         render_login_required(page_name)
         return False
 
@@ -4298,13 +4503,28 @@ def require_page_access(page_name: str) -> bool:
                 user = refreshed_user
 
     if not is_account_open(user):
+        _project_boundary_trace(
+            "DASHBOARD_AUTHORIZATION_DECISION",
+            "authorization gate",
+            success=False,
+        )
         render_account_locked(user)
         return False
 
     if not can_access_page(user, page_name):
+        _project_boundary_trace(
+            "DASHBOARD_AUTHORIZATION_DECISION",
+            "authorization gate",
+            success=False,
+        )
         render_upgrade_required(user, page_name)
         return False
 
+    _project_boundary_trace(
+        "DASHBOARD_AUTHORIZATION_DECISION",
+        "authorization gate",
+        success=True,
+    )
     return True
 
 
@@ -4641,14 +4861,46 @@ def render_auth_panel() -> None:
         st.markdown('<div class="saas-auth-form">', unsafe_allow_html=True)
         if mode == "Login":
             production_auth_trace("LOGIN_FORM_RENDERED", "render_auth_panel")
+            production_auth_trace(
+                "LOGIN_FORM_CONTEXT_ENTER",
+                "render_auth_panel",
+                thread_ident=_current_thread_ident(),
+                script_run_context_id=_current_script_run_context_id(),
+            )
             with st.form("saas_login_form"):
                 email = st.text_input("Email", value="")
                 password = st.text_input("Password", type="password")
                 remember_me = st.checkbox("Remember Me", value=False)
                 submitted = st.form_submit_button("Login", use_container_width=True)
+            production_auth_trace(
+                "LOGIN_SUBMIT_WIDGET_RETURNED",
+                "render_auth_panel",
+                submitted_boolean=bool(submitted),
+                thread_ident=_current_thread_ident(),
+                script_run_context_id=_current_script_run_context_id(),
+            )
 
+            production_auth_trace(
+                "LOGIN_SUBMIT_CONDITION_EVALUATION",
+                "render_auth_panel",
+                submitted_boolean=bool(submitted),
+                thread_ident=_current_thread_ident(),
+                script_run_context_id=_current_script_run_context_id(),
+            )
             if submitted:
+                production_auth_trace(
+                    "LOGIN_SUBMIT_TRUE_BRANCH",
+                    "render_auth_panel",
+                    submitted_boolean=True,
+                    thread_ident=_current_thread_ident(),
+                    script_run_context_id=_current_script_run_context_id(),
+                )
                 _new_auth_attempt_id()
+                _project_boundary_trace(
+                    "LOGIN_FORM_SUBMISSION",
+                    "browser/auth client",
+                    success=True,
+                )
                 production_auth_trace("LOGIN_FORM_SUBMITTED", "render_auth_panel")
                 production_auth_trace("LOGIN_BRANCH_ENTERED", "render_auth_panel")
                 st.session_state["saas_remember_me"] = bool(remember_me)
@@ -4659,6 +4911,14 @@ def render_auth_panel() -> None:
                     st.rerun()
                 else:
                     st.error(message)
+            else:
+                production_auth_trace(
+                    "LOGIN_SUBMIT_FALSE_BRANCH",
+                    "render_auth_panel",
+                    submitted_boolean=False,
+                    thread_ident=_current_thread_ident(),
+                    script_run_context_id=_current_script_run_context_id(),
+                )
 
         elif mode == "Create Account":
             signup_processing = bool(st.session_state.get("saas_signup_processing", False))
