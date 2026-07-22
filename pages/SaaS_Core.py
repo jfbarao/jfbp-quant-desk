@@ -4238,7 +4238,10 @@ def _supabase_rest_password_login(
             "timeout_pool_s": timeout_pool,
             "email_present": email_present,
             "password_present": password_present,
+            "authenticated": bool(st.session_state.get("saas_logged_in", False)),
+            "thread_id": thread_ident,
             "thread_ident": thread_ident,
+            "script_run_context": script_run_context_id,
             "script_run_context_id": script_run_context_id,
             "script_execution_id": script_execution_id,
         }
@@ -4290,6 +4293,7 @@ def _supabase_rest_password_login(
             has_auth_header=bool(request_headers.get("Authorization")),
             has_apikey_header=bool(request_headers.get("apikey")),
         )
+        transport_started = time.perf_counter()
         try:
             response = httpx.post(
                 endpoint,
@@ -4298,20 +4302,29 @@ def _supabase_rest_password_login(
                 json=request_json,
                 timeout=timeout,
             )
+            transport_ended = time.perf_counter()
+            transport_elapsed_ms = int((transport_ended - transport_started) * 1000)
             _trace(
                 "SUPABASE_REST_LOGIN_HTTPX_POST_RETURNED",
                 http_status=int(getattr(response, "status_code", 0) or 0),
+                elapsed_ms=transport_elapsed_ms,
             )
-        except BaseException as exc:
+        except Exception as exc:
+            transport_ended = time.perf_counter()
+            transport_elapsed_ms = int((transport_ended - transport_started) * 1000)
             _trace(
-                "SUPABASE_REST_LOGIN_BASE_EXCEPTION",
+                "SUPABASE_REST_LOGIN_HTTPX_POST_EXCEPTION",
                 exc=exc,
+                elapsed_ms=transport_elapsed_ms,
                 traceback=traceback.format_exc(),
             )
             raise
         finally:
+            transport_ended = time.perf_counter()
+            transport_elapsed_ms = int((transport_ended - transport_started) * 1000)
             _trace(
-                "SUPABASE_REST_LOGIN_TRANSPORT_FINALLY",
+                "SUPABASE_REST_LOGIN_HTTPX_POST_FINALLY",
+                elapsed_ms=transport_elapsed_ms,
             )
         elapsed_ms = int((time.perf_counter() - started) * 1000)
 

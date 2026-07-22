@@ -107,10 +107,21 @@ def test_rest_password_login_success(monkeypatch):
     assert any(t["stage"] == "SUPABASE_REST_LOGIN_HTTPX_ARGS_EVALUATION_START" for t in traces)
     assert any(t["stage"] == "SUPABASE_REST_LOGIN_HTTPX_POST_ENTER" for t in traces)
     assert any(t["stage"] == "SUPABASE_REST_LOGIN_HTTPX_POST_RETURNED" for t in traces)
+    assert any(t["stage"] == "SUPABASE_REST_LOGIN_HTTPX_POST_FINALLY" for t in traces)
     assert any(t["stage"] == "SUPABASE_REST_LOGIN_RESPONSE_BODY_READ_AFTER" for t in traces)
     assert any(t["stage"] == "SUPABASE_REST_LOGIN_JSON_PARSE_AFTER" for t in traces)
     assert any(t["stage"] == "SUPABASE_REST_LOGIN_CALL_RETURNED" for t in traces)
     assert any(t["stage"] == "SUPABASE_REST_LOGIN_FINALLY" for t in traces)
+    returned_trace = next(t for t in traces if t["stage"] == "SUPABASE_REST_LOGIN_HTTPX_POST_RETURNED")
+    finally_trace = next(t for t in traces if t["stage"] == "SUPABASE_REST_LOGIN_HTTPX_POST_FINALLY")
+    assert returned_trace["metadata"]["elapsed_ms"] >= 0
+    assert finally_trace["metadata"]["elapsed_ms"] >= 0
+    assert returned_trace["metadata"]["thread_id"] == 11
+    assert returned_trace["metadata"]["thread_ident"] == 11
+    assert returned_trace["metadata"]["script_execution_id"] == "exec-1"
+    assert returned_trace["metadata"]["script_run_context"] == "ctx-1"
+    assert returned_trace["metadata"]["script_run_context_id"] == "ctx-1"
+    assert returned_trace["metadata"]["authenticated"] is False
     trace = next(t for t in traces if t["stage"] == "SUPABASE_REST_LOGIN_HTTPX_ARGS_EVALUATION_START")
     assert trace["metadata"]["request_method"] == "POST"
     assert trace["metadata"]["request_url_host"] == "example.supabase.co"
@@ -173,6 +184,8 @@ def test_rest_password_login_timeout(monkeypatch):
     except RuntimeError as exc:
         assert "timed out" in str(exc).lower()
 
+    assert any(t["stage"] == "SUPABASE_REST_LOGIN_HTTPX_POST_EXCEPTION" for t in traces)
+    assert any(t["stage"] == "SUPABASE_REST_LOGIN_HTTPX_POST_FINALLY" for t in traces)
     assert any(t["stage"] == "SUPABASE_REST_LOGIN_EXCEPTION" for t in traces)
     assert any(t["stage"] == "SUPABASE_REST_LOGIN_FINALLY" for t in traces)
 
