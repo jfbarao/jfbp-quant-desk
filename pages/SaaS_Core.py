@@ -573,6 +573,108 @@ def _secret_value(name: str, default: str = "") -> str:
     return str(value or default).strip()
 
 
+def personal_mode_enabled() -> bool:
+    """Return whether owner-only Personal Mode is enabled.
+
+    Precedence is server-side only and deterministic:
+    1) Streamlit secrets PERSONAL_MODE
+    2) Environment variable PERSONAL_MODE
+    3) Default false
+    """
+    raw = _secret_value("PERSONAL_MODE", "")
+    return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def personal_mode_active() -> bool:
+    return bool(st.session_state.get("saas_personal_mode_active", False))
+
+
+def _personal_mode_owner_email() -> str:
+    explicit_email = str(_secret_value("PERSONAL_MODE_OWNER_EMAIL", "") or "").strip().lower()
+    if explicit_email:
+        return explicit_email
+
+    admin_csv = str(_secret_value("ADMIN_EMAILS", "") or "")
+    for value in admin_csv.replace(";", ",").split(","):
+        candidate = str(value or "").strip().lower()
+        if candidate:
+            return candidate
+
+    return str(_secret_value("FOUNDER_TRIAL_EMAIL", FOUNDER_TRIAL_EMAIL) or FOUNDER_TRIAL_EMAIL).strip().lower()
+
+
+def _personal_mode_owner_user_id(owner_email: str) -> str:
+    explicit_user_id = str(_secret_value("PERSONAL_MODE_OWNER_USER_ID", "") or "").strip()
+    if explicit_user_id:
+        return explicit_user_id
+
+    stable_seed = str(owner_email or "personal-mode-owner").strip().lower()
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"personal-mode:{stable_seed}"))
+
+
+def _personal_mode_owner_name(owner_email: str) -> str:
+    explicit_name = str(_secret_value("PERSONAL_MODE_OWNER_NAME", "") or "").strip()
+    if explicit_name:
+        return explicit_name
+
+    local_part = str(owner_email or "").split("@", 1)[0].strip()
+    if local_part:
+        return local_part.replace(".", " ").replace("_", " ").title()
+    return "Owner"
+
+
+def _personal_mode_owner_plan() -> str:
+    candidate = str(_secret_value("PERSONAL_MODE_OWNER_PLAN", PLAN_ELITE) or PLAN_ELITE).strip().upper()
+    if candidate in {PLAN_MARKET_PULSE, PLAN_PRO, PLAN_ELITE}:
+        return candidate
+    return PLAN_ELITE
+
+
+def initialize_personal_mode_owner_session() -> tuple[bool, str]:
+    """Initialize the minimum owner session contract needed by the app router."""
+    if not personal_mode_enabled():
+        st.session_state["saas_personal_mode_active"] = False
+        return False, "Personal Mode is disabled."
+
+    owner_email = _personal_mode_owner_email()
+    if not owner_email or "@" not in owner_email:
+        st.session_state["saas_personal_mode_active"] = False
+        return False, (
+            "Personal Mode owner identity is missing. "
+            "Set PERSONAL_MODE_OWNER_EMAIL (or ADMIN_EMAILS) in server-side configuration."
+        )
+
+    owner_user_id = _personal_mode_owner_user_id(owner_email)
+    owner_name = _personal_mode_owner_name(owner_email)
+    owner_plan = _personal_mode_owner_plan()
+    now = _utc_now()
+
+    st.session_state["saas_user"] = SaaSUser(
+        user_id=owner_user_id,
+        email=owner_email,
+        full_name=owner_name,
+        plan=owner_plan,
+        account_status=ACCOUNT_ACTIVE,
+        trial_start=now,
+        trial_end=now + timedelta(days=3650),
+        created_at=now,
+        source="personal_mode",
+        role="user",
+        subscription_status=ACCOUNT_ACTIVE,
+        provisioning_required=False,
+    )
+    st.session_state["saas_logged_in"] = True
+    st.session_state["saas_auth_session"] = None
+    st.session_state["saas_app_session_id"] = ""
+    st.session_state["saas_identity_bound_user_id"] = owner_user_id
+    st.session_state["saas_onboarding_ready"] = True
+    st.session_state["saas_auth_last_message"] = "Personal Mode owner session active."
+    st.session_state["saas_rehydrate_blocked"] = True
+    st.session_state["saas_admin_override"] = False
+    st.session_state["saas_personal_mode_active"] = True
+    return True, "Personal Mode owner session initialized."
+
+
 def _classify_redirect_value(value: str) -> str:
     raw = str(value or "").strip()
     if not raw:
@@ -1149,6 +1251,7 @@ def init_saas_state() -> None:
     st.session_state.setdefault("saas_rehydrate_blocked", False)
     st.session_state.setdefault("saas_login_in_progress", False)
     st.session_state.setdefault("saas_remember_me", False)
+    st.session_state.setdefault("saas_personal_mode_active", False)
     production_auth_trace(
         "SCRIPT_EXECUTION_AUTH_STATE_SNAPSHOT",
         "init_saas_state",
@@ -4100,6 +4203,9 @@ def clear_authenticated_session(*, revoke_current: bool = True, reason: str = "U
 # =========================================================
 
 def supabase_sign_up(email: str, password: str, full_name: str, plan: str) -> tuple[bool, str]:
+    if personal_mode_active():
+        return False, "Account creation is unavailable while Personal Mode is active."
+
     ready, message = supabase_ready()
     if not ready:
         return False, message
@@ -4758,6 +4864,14 @@ def supabase_logout_all() -> tuple[bool, str]:
 
 
 def supabase_reset_password(email: str) -> tuple[bool, str, Dict[str, Any]]:
+    if personal_mode_active():
+        return False, "Password reset is unavailable while Personal Mode is active.", {
+            "status_code": None,
+            "error_code": "personal_mode_disabled",
+            "body": "",
+            "headers": {},
+        }
+
     ready, message = supabase_ready()
     if not ready:
         return False, message, {"status_code": None, "error_code": "", "body": "", "headers": {}}
@@ -5118,6 +5232,9 @@ def create_stripe_checkout_session(user: SaaSUser, target_plan: str) -> tuple[bo
     This avoids hard-coded Payment Links and guarantees the Pro button uses the
     Pro Price ID, while the Elite button uses the Elite Price ID.
     """
+    if personal_mode_active():
+        return False, "Checkout is unavailable while Personal Mode is active."
+
     ready, message = stripe_checkout_config_ready(target_plan)
     if not ready:
         return False, message
@@ -5246,6 +5363,10 @@ def render_account_locked(user: SaaSUser) -> None:
 
 def render_upgrade_required(user: SaaSUser, page_name: str) -> None:
     inject_saas_css()
+
+    if personal_mode_active():
+        st.warning("Personal Mode is active. Customer upgrade and checkout operations are disabled.")
+        return
 
     st.markdown(
         f"""

@@ -149,6 +149,9 @@ try:
         get_current_user,
         admin_access_allowed,
         get_supabase_client,
+        personal_mode_enabled,
+        personal_mode_active,
+        initialize_personal_mode_owner_session,
         inject_saas_css,
         render_auth_panel,
         require_page_access,
@@ -179,6 +182,15 @@ except Exception as saas_import_error:
 
     def get_supabase_client():
         return None
+
+    def personal_mode_enabled():
+        return False
+
+    def personal_mode_active():
+        return False
+
+    def initialize_personal_mode_owner_session():
+        return False, "SaaS Core unavailable"
 
     def inject_saas_css():
         return None
@@ -1135,6 +1147,15 @@ def render_front_door() -> None:
 def enforce_app_login() -> bool:
     """Stop the app before sidebar/page rendering unless a real user is logged in."""
     init_saas_state()
+
+    if personal_mode_enabled():
+        ok, message = initialize_personal_mode_owner_session()
+        if ok:
+            return True
+        st.error(message)
+        st.stop()
+        return False
+
     if get_current_user() is not None:
         return True
 
@@ -1227,13 +1248,19 @@ def app():
         _render_sidebar_profile_card(current_user)
 
         with st.sidebar:
-            if st.button("🔒 Logout", width="stretch"):
-                ok, message = supabase_logout()
-                if ok:
-                    clear_active_page_cache()
-                    st.success(message)
-                    st.rerun()
-                st.error(message)
+            if personal_mode_active():
+                st.info(
+                    "Personal Mode\n"
+                    "Owner-only access. Public authentication is temporarily disabled."
+                )
+            else:
+                if st.button("🔒 Logout", width="stretch"):
+                    ok, message = supabase_logout()
+                    if ok:
+                        clear_active_page_cache()
+                        st.success(message)
+                        st.rerun()
+                    st.error(message)
 
             if is_admin_user(current_user):
                 diagnostics_expanded = bool(st.session_state.get("show_founder_diagnostics", False))
