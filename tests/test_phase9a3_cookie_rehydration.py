@@ -271,7 +271,8 @@ def test_cookie_manager_set_uses_supported_argument_contract(monkeypatch):
 
     assert ok is True
     assert manager.last_set is not None
-    assert manager.last_set["cookie"] == saas.SESSION_COOKIE_NAME
+    expected_cookie_name = f"{saas.SESSION_COOKIE_NAME}_prod"
+    assert manager.last_set["cookie"] == expected_cookie_name
     assert manager.last_set["path"] == "/"
     assert manager.last_set["secure"] is False
     assert manager.last_set["same_site"] == "lax"
@@ -298,16 +299,19 @@ def test_cookie_readiness_retries_once_then_accepts_present_cookie(monkeypatch):
     saas.st.session_state["saas_selected_plan"] = saas.PLAN_MARKET_PULSE
 
     first_result = saas._rehydrate_authenticated_session()
-    assert first_result is None
-    assert saas.st.session_state.get(saas.COOKIE_READINESS_STATE_KEY) == saas.COOKIE_READINESS_NOT_READY
-    assert saas.st.session_state.get(saas.COOKIE_READINESS_ATTEMPTS_KEY) == 1
+    assert first_result is True
+    # First read checks scoped name (empty) then falls back to legacy cookie in the same call.
+    assert manager.get_calls >= 2
+    assert saas.st.session_state.get(saas.COOKIE_READINESS_STATE_KEY) == saas.COOKIE_READINESS_PRESENT
+    assert saas.st.session_state.get(saas.COOKIE_READINESS_ATTEMPTS_KEY) == 0
+    assert saas.st.session_state.get("saas_logged_in") is True
+    assert store.counter == 1
 
     second_result = saas._rehydrate_authenticated_session()
     assert second_result is True
     assert saas.st.session_state.get(saas.COOKIE_READINESS_STATE_KEY) == saas.COOKIE_READINESS_PRESENT
     assert saas.st.session_state.get(saas.COOKIE_READINESS_ATTEMPTS_KEY) == 0
     assert saas.st.session_state.get("saas_logged_in") is True
-    assert store.counter == 1
 
 
 def test_cookie_readiness_bounded_when_cookie_absent(monkeypatch):
