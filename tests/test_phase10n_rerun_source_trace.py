@@ -55,6 +55,37 @@ def test_rehydrate_cookie_not_ready_emits_explicit_rerun_marker(monkeypatch):
     )
 
 
+def test_script_execution_enter_uses_distinct_execution_ids(monkeypatch):
+    traces = []
+
+    def _trace(stage, source_function, **metadata):
+        traces.append((stage, source_function, metadata))
+
+    monkeypatch.setattr(saas, "production_auth_trace", _trace)
+    monkeypatch.setattr(saas, "_rehydrate_authenticated_session", lambda: None)
+
+    saas.st.session_state.clear()
+    saas.init_saas_state()
+    first_enter = next(
+        metadata
+        for stage, source_function, metadata in traces
+        if stage == "SCRIPT_EXECUTION_ENTER" and source_function == "init_saas_state"
+    )
+
+    traces.clear()
+    saas.init_saas_state()
+    second_enter = next(
+        metadata
+        for stage, source_function, metadata in traces
+        if stage == "SCRIPT_EXECUTION_ENTER" and source_function == "init_saas_state"
+    )
+
+    assert first_enter["script_execution_id"]
+    assert second_enter["script_execution_id"]
+    assert first_enter["script_execution_id"] != second_enter["script_execution_id"]
+    assert second_enter["previous_script_execution_id"] == first_enter["script_execution_id"]
+
+
 def test_trace_component_cookie_read_does_not_log_cookie_value(monkeypatch):
     traces = []
     sensitive_cookie = "cookie-super-sensitive-value"

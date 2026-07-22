@@ -17,6 +17,7 @@ import re
 import threading
 import time
 import uuid
+import traceback
 from urllib.parse import urlparse
 from types import SimpleNamespace
 
@@ -274,6 +275,18 @@ def _current_auth_attempt_id() -> str:
     return str(st.session_state.get("saas_auth_attempt_id", "") or "").strip()
 
 
+def _current_script_execution_id() -> str:
+    return str(st.session_state.get("saas_script_execution_id", "") or "").strip()
+
+
+def _new_script_execution_id() -> tuple[str, str]:
+    previous_execution_id = _current_script_execution_id()
+    execution_id = uuid.uuid4().hex
+    st.session_state["saas_script_execution_id"] = execution_id
+    st.session_state["saas_script_execution_started_at"] = datetime.now(timezone.utc).isoformat()
+    return previous_execution_id, execution_id
+
+
 def _current_thread_ident() -> int:
     try:
         ident = threading.get_ident()
@@ -309,9 +322,20 @@ def production_auth_trace(stage: str, source_function: str, *, exc: Exception | 
         "attempt_id": _current_auth_attempt_id(),
     }
 
+    payload.setdefault("thread_ident", _current_thread_ident())
+    payload.setdefault("script_run_context_id", _current_script_run_context_id())
+    payload.setdefault("script_execution_id", _current_script_execution_id())
+    payload.setdefault("login_in_progress", bool(st.session_state.get("saas_login_in_progress", False)))
+
     payload.update(_trace_exception_fields(exc))
 
-    safe_metadata = {str(key): _trace_value(value) for key, value in metadata.items()}
+    safe_metadata = {}
+    for key, value in metadata.items():
+        key_text = str(key)
+        if key_text == "traceback" and isinstance(value, str):
+            safe_metadata[key_text] = value
+        else:
+            safe_metadata[key_text] = _trace_value(value)
     payload.update(safe_metadata)
 
     line = f"{PRODUCTION_AUTH_TRACE_PREFIX} {json.dumps(payload, sort_keys=True)}"
@@ -1090,9 +1114,12 @@ def is_admin_user(user: "SaaSUser | None") -> bool:
 
 def init_saas_state() -> None:
     script_started = time.perf_counter()
+    previous_script_execution_id, script_execution_id = _new_script_execution_id()
     production_auth_trace(
         "SCRIPT_EXECUTION_ENTER",
         "init_saas_state",
+        previous_script_execution_id=previous_script_execution_id,
+        script_execution_id=script_execution_id,
         thread_ident=_current_thread_ident(),
         script_run_context_id=_current_script_run_context_id(),
         **_auth_state_snapshot(),
@@ -4177,14 +4204,53 @@ def _supabase_rest_password_login(
     password: str,
     thread_ident: int,
     script_run_context_id: str,
+    script_execution_id: str,
 ) -> Any:
     url = str(_secret_value("SUPABASE_URL", "") or "").strip().rstrip("/")
     key = str(_secret_value("SUPABASE_ANON_KEY", "") or "").strip()
     endpoint = f"{url}/auth/v1/token"
     timeout = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=10.0)
+    request_method = "POST"
+    endpoint_host = str(urlparse(endpoint).hostname or "").strip().lower()
+    request_project_ref = endpoint_host.split(".", 1)[0] if endpoint_host else ""
+    email_present = bool(str(email or "").strip())
+    password_present = bool(str(password or "").strip())
+    timeout_connect = float(getattr(timeout, "connect", 0.0) or 0.0)
+    timeout_read = float(getattr(timeout, "read", 0.0) or 0.0)
+    timeout_write = float(getattr(timeout, "write", 0.0) or 0.0)
+    timeout_pool = float(getattr(timeout, "pool", 0.0) or 0.0)
 
     elapsed_ms = 0
     started = time.perf_counter()
+    current_trace_stage = "SUPABASE_REST_LOGIN_CALL_START"
+
+    def _trace(stage: str, *, exc: Exception | None = None, **metadata: Any) -> None:
+        nonlocal current_trace_stage
+        current_trace_stage = stage
+        base_metadata: Dict[str, Any] = {
+            "current_trace_stage": stage,
+            "request_method": request_method,
+            "request_url_host": endpoint_host,
+            "request_project_ref": request_project_ref,
+            "timeout_connect_s": timeout_connect,
+            "timeout_read_s": timeout_read,
+            "timeout_write_s": timeout_write,
+            "timeout_pool_s": timeout_pool,
+            "email_present": email_present,
+            "password_present": password_present,
+            "thread_ident": thread_ident,
+            "script_run_context_id": script_run_context_id,
+            "script_execution_id": script_execution_id,
+        }
+        base_metadata.update(metadata)
+        base_metadata.setdefault("elapsed_ms", int((time.perf_counter() - started) * 1000))
+        production_auth_trace(
+            stage,
+            "_supabase_rest_password_login",
+            exc=exc,
+            **base_metadata,
+        )
+
     production_auth_trace(
         "SUPABASE_REST_LOGIN_CALL_START",
         "_supabase_rest_password_login",
@@ -4198,12 +4264,13 @@ def _supabase_rest_password_login(
     )
 
     try:
-        production_auth_trace(
+        _trace(
             "SUPABASE_REST_LOGIN_HTTPX_ARGS_EVALUATION_START",
-            "_supabase_rest_password_login",
-            elapsed_ms=int((time.perf_counter() - started) * 1000),
-            thread_ident=thread_ident,
-            script_run_context_id=script_run_context_id,
+            request_params_count=1,
+            request_header_count=3,
+            request_json_count=2,
+            has_auth_header=True,
+            has_apikey_header=True,
         )
         request_params = {"grant_type": "password"}
         request_headers = {
@@ -4215,12 +4282,13 @@ def _supabase_rest_password_login(
             "email": email,
             "password": password,
         }
-        production_auth_trace(
+        _trace(
             "SUPABASE_REST_LOGIN_HTTPX_POST_ENTER",
-            "_supabase_rest_password_login",
-            elapsed_ms=int((time.perf_counter() - started) * 1000),
-            thread_ident=thread_ident,
-            script_run_context_id=script_run_context_id,
+            request_params_count=len(request_params),
+            request_header_count=len(request_headers),
+            request_json_count=len(request_json),
+            has_auth_header=bool(request_headers.get("Authorization")),
+            has_apikey_header=bool(request_headers.get("apikey")),
         )
         try:
             response = httpx.post(
@@ -4230,43 +4298,86 @@ def _supabase_rest_password_login(
                 json=request_json,
                 timeout=timeout,
             )
-            production_auth_trace(
+            _trace(
                 "SUPABASE_REST_LOGIN_HTTPX_POST_RETURNED",
-                "_supabase_rest_password_login",
-                elapsed_ms=int((time.perf_counter() - started) * 1000),
                 http_status=int(getattr(response, "status_code", 0) or 0),
-                thread_ident=thread_ident,
-                script_run_context_id=script_run_context_id,
             )
         except BaseException as exc:
-            production_auth_trace(
+            _trace(
                 "SUPABASE_REST_LOGIN_BASE_EXCEPTION",
-                "_supabase_rest_password_login",
                 exc=exc,
-                elapsed_ms=int((time.perf_counter() - started) * 1000),
-                thread_ident=thread_ident,
-                script_run_context_id=script_run_context_id,
+                traceback=traceback.format_exc(),
             )
             raise
         finally:
-            production_auth_trace(
+            _trace(
                 "SUPABASE_REST_LOGIN_TRANSPORT_FINALLY",
-                "_supabase_rest_password_login",
-                elapsed_ms=int((time.perf_counter() - started) * 1000),
-                thread_ident=thread_ident,
-                script_run_context_id=script_run_context_id,
             )
         elapsed_ms = int((time.perf_counter() - started) * 1000)
+
+        response_headers = getattr(response, "headers", {})
+        response_content_type = str(getattr(response_headers, "get", lambda _k, _d="": _d)("content-type", "") or "").strip()
+        _trace(
+            "SUPABASE_REST_LOGIN_RESPONSE_BODY_READ_BEFORE",
+            http_status=int(response.status_code),
+            response_content_type=response_content_type,
+        )
+        response_body = bytes(getattr(response, "content", b"") or b"")
+        _trace(
+            "SUPABASE_REST_LOGIN_RESPONSE_BODY_READ_AFTER",
+            http_status=int(response.status_code),
+            response_content_type=response_content_type,
+            response_body_length=len(response_body),
+        )
+
+        _trace(
+            "SUPABASE_REST_LOGIN_JSON_PARSE_BEFORE",
+            http_status=int(response.status_code),
+            response_content_type=response_content_type,
+            response_body_length=len(response_body),
+        )
+
+        payload: Any = {}
+        try:
+            payload = response.json()
+        except Exception as exc:
+            _trace(
+                "SUPABASE_REST_LOGIN_RESPONSE_JSON_EXCEPTION",
+                exc=exc,
+                traceback=traceback.format_exc(),
+                http_status=int(response.status_code),
+                response_content_type=response_content_type,
+                response_body_length=len(response_body),
+            )
+            payload = {}
+
+        payload_is_dict = isinstance(payload, dict)
+        user_payload = payload.get("user") if payload_is_dict else None
+        if not isinstance(user_payload, dict):
+            user_payload = {}
+
+        access_token = str(payload.get("access_token") or "").strip() if payload_is_dict else ""
+        refresh_token = str(payload.get("refresh_token") or "").strip() if payload_is_dict else ""
+        expires_in = payload.get("expires_in") if payload_is_dict else None
+        token_type = str(payload.get("token_type") or "").strip() if payload_is_dict else ""
+        expires_at = payload.get("expires_at") if payload_is_dict else None
+
+        _trace(
+            "SUPABASE_REST_LOGIN_JSON_PARSE_AFTER",
+            http_status=int(response.status_code),
+            response_content_type=response_content_type,
+            response_body_length=len(response_body),
+            payload_is_dict=payload_is_dict,
+            token_access_present=bool(access_token),
+            token_refresh_present=bool(refresh_token),
+            token_type_present=bool(token_type),
+            user_present=bool(str(user_payload.get("id") or "").strip()),
+        )
 
         if response.status_code < 200 or response.status_code >= 300:
             error_code = ""
             error_message = ""
-            try:
-                payload = response.json()
-            except Exception:
-                payload = {}
-
-            if isinstance(payload, dict):
+            if payload_is_dict:
                 error_code = str(payload.get("error_code") or payload.get("code") or "").strip().lower()
                 error_message = str(
                     payload.get("msg")
@@ -4276,30 +4387,25 @@ def _supabase_rest_password_login(
                     or ""
                 ).strip()
 
-            production_auth_trace(
+            _trace(
                 "SUPABASE_REST_LOGIN_HTTP_ERROR",
-                "_supabase_rest_password_login",
-                http_status=int(response.status_code),
-                elapsed_ms=elapsed_ms,
                 error_code=error_code,
                 error_message=error_message,
-                thread_ident=thread_ident,
-                script_run_context_id=script_run_context_id,
+                http_status=int(response.status_code),
+                response_content_type=response_content_type,
+                response_body_length=len(response_body),
+            )
+            _trace(
+                "SUPABASE_REST_LOGIN_HTTP_ERROR_BEFORE_RAISE",
+                error_code=error_code,
+                error_message=error_message,
+                http_status=int(response.status_code),
+                response_content_type=response_content_type,
+                response_body_length=len(response_body),
             )
             raise RuntimeError(error_message or f"HTTP {int(response.status_code)}")
 
         try:
-            payload = response.json()
-            user_payload = payload.get("user") if isinstance(payload, dict) else None
-            if not isinstance(user_payload, dict):
-                user_payload = {}
-
-            access_token = str(payload.get("access_token") or "").strip() if isinstance(payload, dict) else ""
-            refresh_token = str(payload.get("refresh_token") or "").strip() if isinstance(payload, dict) else ""
-            expires_in = payload.get("expires_in") if isinstance(payload, dict) else None
-            token_type = str(payload.get("token_type") or "").strip() if isinstance(payload, dict) else ""
-            expires_at = payload.get("expires_at") if isinstance(payload, dict) else None
-
             user_id = str(user_payload.get("id") or "").strip()
             if not access_token or not refresh_token or not user_id:
                 raise RuntimeError("Malformed Supabase Auth response")
@@ -4307,7 +4413,15 @@ def _supabase_rest_password_login(
             if not expires_at:
                 try:
                     expires_at = int(time.time()) + int(expires_in or 0)
-                except Exception:
+                except Exception as exc:
+                    _trace(
+                        "SUPABASE_REST_LOGIN_EXPIRES_AT_EXCEPTION",
+                        exc=exc,
+                        traceback=traceback.format_exc(),
+                        http_status=int(response.status_code),
+                        response_content_type=response_content_type,
+                        response_body_length=len(response_body),
+                    )
                     expires_at = None
 
             user_obj = SimpleNamespace(**user_payload)
@@ -4321,26 +4435,31 @@ def _supabase_rest_password_login(
             )
             auth_response = SimpleNamespace(user=user_obj, session=session_obj)
         except Exception as exc:
-            production_auth_trace(
+            _trace(
                 "SUPABASE_REST_LOGIN_EXCEPTION",
-                "_supabase_rest_password_login",
                 exc=exc,
-                elapsed_ms=elapsed_ms,
-                thread_ident=thread_ident,
-                script_run_context_id=script_run_context_id,
+                traceback=traceback.format_exc(),
+                http_status=int(response.status_code),
+                response_content_type=response_content_type,
+                response_body_length=len(response_body),
+                token_access_present=bool(access_token),
+                token_refresh_present=bool(refresh_token),
+                token_type_present=bool(token_type),
+                user_present=bool(user_id),
             )
             raise RuntimeError("Malformed Supabase Auth response") from exc
 
-        production_auth_trace(
+        _trace(
             "SUPABASE_REST_LOGIN_CALL_RETURNED",
-            "_supabase_rest_password_login",
             response_present=bool(auth_response),
             user_present=bool(user_id),
             session_present=True,
             http_status=int(response.status_code),
-            elapsed_ms=elapsed_ms,
-            thread_ident=thread_ident,
-            script_run_context_id=script_run_context_id,
+            response_content_type=response_content_type,
+            response_body_length=len(response_body),
+            token_access_present=bool(access_token),
+            token_refresh_present=bool(refresh_token),
+            token_type_present=bool(token_type),
         )
         _project_boundary_trace(
             "POST_SIGN_IN_WITH_PASSWORD",
@@ -4359,35 +4478,26 @@ def _supabase_rest_password_login(
             started_at=started,
         )
         if not isinstance(exc, RuntimeError):
-            production_auth_trace(
+            _trace(
                 "SUPABASE_REST_LOGIN_EXCEPTION",
-                "_supabase_rest_password_login",
                 exc=exc,
-                elapsed_ms=elapsed_ms,
-                thread_ident=thread_ident,
-                script_run_context_id=script_run_context_id,
+                traceback=traceback.format_exc(),
             )
             if isinstance(exc, httpx.TimeoutException):
                 raise RuntimeError("Authentication request timed out") from exc
         raise
     except BaseException as exc:
-        production_auth_trace(
+        _trace(
             "SUPABASE_REST_LOGIN_OUTER_BASE_EXCEPTION",
-            "_supabase_rest_password_login",
             exc=exc,
-            elapsed_ms=elapsed_ms or int((time.perf_counter() - started) * 1000),
-            thread_ident=thread_ident,
-            script_run_context_id=script_run_context_id,
+            traceback=traceback.format_exc(),
         )
         raise
     finally:
         final_elapsed_ms = elapsed_ms or int((time.perf_counter() - started) * 1000)
-        production_auth_trace(
+        _trace(
             "SUPABASE_REST_LOGIN_FINALLY",
-            "_supabase_rest_password_login",
             elapsed_ms=final_elapsed_ms,
-            thread_ident=thread_ident,
-            script_run_context_id=script_run_context_id,
         )
 
 
@@ -4431,11 +4541,13 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
 
     call_thread_ident = _current_thread_ident()
     call_script_ctx_id = _current_script_run_context_id()
+    call_script_execution_id = _current_script_execution_id()
     production_auth_trace(
         "POST_CLEAR_RETURNED_TO_CALLER",
         "supabase_login",
         thread_ident=call_thread_ident,
         script_run_context_id=call_script_ctx_id,
+        script_execution_id=call_script_execution_id,
     )
 
     production_auth_trace(
@@ -4443,6 +4555,7 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
         "supabase_login",
         thread_ident=call_thread_ident,
         script_run_context_id=call_script_ctx_id,
+        script_execution_id=call_script_execution_id,
     )
     login_has_url = bool(str(_secret_value("SUPABASE_URL", "") or "").strip())
     login_has_anon_key = bool(str(_secret_value("SUPABASE_ANON_KEY", "") or "").strip())
@@ -4453,6 +4566,7 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
         has_supabase_anon_key=login_has_anon_key,
         thread_ident=call_thread_ident,
         script_run_context_id=call_script_ctx_id,
+        script_execution_id=call_script_execution_id,
     )
 
     production_auth_trace(
@@ -4461,6 +4575,7 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
         email_present=bool(str(clean_email or "").strip()),
         thread_ident=call_thread_ident,
         script_run_context_id=call_script_ctx_id,
+        script_execution_id=call_script_execution_id,
     )
     clean_email = str(clean_email or "").strip().lower()
     password_value = password_value if isinstance(password_value, str) else str(password_value or "")
@@ -4471,6 +4586,7 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
         password_present=bool(password_value),
         thread_ident=call_thread_ident,
         script_run_context_id=call_script_ctx_id,
+        script_execution_id=call_script_execution_id,
     )
 
     try:
@@ -4485,6 +4601,7 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
             "supabase_login",
             thread_ident=call_thread_ident,
             script_run_context_id=call_script_ctx_id,
+            script_execution_id=call_script_execution_id,
         )
         try:
             production_auth_trace(
@@ -4492,12 +4609,14 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
                 "supabase_login",
                 thread_ident=call_thread_ident,
                 script_run_context_id=call_script_ctx_id,
+                script_execution_id=call_script_execution_id,
             )
             response = _supabase_rest_password_login(
                 email=clean_email,
                 password=password_value,
                 thread_ident=call_thread_ident,
                 script_run_context_id=call_script_ctx_id,
+                script_execution_id=call_script_execution_id,
             )
             production_auth_trace(
                 "SUPABASE_LOGIN_CALL_RETURNED",
@@ -4505,6 +4624,7 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
                 response_present=bool(response),
                 thread_ident=call_thread_ident,
                 script_run_context_id=call_script_ctx_id,
+                script_execution_id=call_script_execution_id,
             )
         except Exception:
             raise
@@ -4515,6 +4635,7 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
                 exc=exc,
                 thread_ident=call_thread_ident,
                 script_run_context_id=call_script_ctx_id,
+                script_execution_id=call_script_execution_id,
             )
             raise
         finally:
@@ -4523,6 +4644,7 @@ def supabase_login(email: str, password: str) -> tuple[bool, str]:
                 "supabase_login",
                 thread_ident=call_thread_ident,
                 script_run_context_id=call_script_ctx_id,
+                script_execution_id=call_script_execution_id,
             )
 
         diag_user = _auth_response_user(response)
