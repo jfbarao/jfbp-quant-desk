@@ -1842,11 +1842,44 @@ def run_page() -> None:
         st.caption(
             "Context table showing execution eligibility and whether the Pulse reading is fresh."
         )
-        st.dataframe(
-            pulse_table(),
-            width="stretch",
-            hide_index=True,
-            height=240,
+        pulse_frame = pulse_table()
+        pulse_table_html = pulse_frame.to_html(
+            index=False,
+            escape=True,
+            border=0,
+            classes="jfbp-pulse-table",
+        )
+
+        st.markdown(
+            """
+            <style>
+            .jfbp-pulse-table-wrap {
+                max-height: 240px;
+                overflow: auto;
+                width: 100%;
+            }
+
+            .jfbp-pulse-table {
+                border-collapse: collapse;
+                width: 100%;
+                font-size: 0.88rem;
+            }
+
+            .jfbp-pulse-table th,
+            .jfbp-pulse-table td {
+                border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+                padding: 0.4rem 0.55rem;
+                text-align: left;
+                white-space: nowrap;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        st.markdown(
+            f'<div class="jfbp-pulse-table-wrap">{pulse_table_html}</div>',
+            unsafe_allow_html=True,
         )
 
     with right:
